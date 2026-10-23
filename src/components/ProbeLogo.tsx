@@ -19,7 +19,10 @@ export type ProbeLogoProps = {
   size?: number | string;
   /** horizontal = 放进 Header 左上角；vertical = 参考稿那种上图下字（启动页 / 分享卡）。 */
   orientation?: "horizontal" | "vertical";
-  /** 节点色。默认品牌蓝 #0055FF；要并入站点青色 HUD 可传 "var(--accent)"。 */
+  /**
+   * 节点色。默认 #3b82f6 —— 与全站强调色同色、与纯黑底对比 5.7:1。
+   * 旧值 #0055FF 是更深的蓝，压在纯黑上只有 3.7:1，蓝点会「陷」进背景。
+   */
   nodeColor?: string;
   /** 轴线色。默认 90% 白。 */
   lineColor?: string;
@@ -48,7 +51,7 @@ const NODES = [0.2, 0.4, 0.58].map((t, i) => ({
 /** 只有图形没有字的版本（favicon / 极窄位置 / 加载态）。 */
 export function ProbeMark({
   size = 28,
-  nodeColor = "#0055FF",
+  nodeColor = "#3b82f6",
   lineColor = "rgba(255,255,255,0.9)",
   label = "探针",
   className,
@@ -105,7 +108,7 @@ export function ProbeMark({
 export default function ProbeLogo({
   size = 16,
   orientation = "horizontal",
-  nodeColor = "#0055FF",
+  nodeColor = "#3b82f6",
   lineColor = "rgba(255,255,255,0.9)",
   subtitle = "探针 · 高置信度情报终端",
   className,

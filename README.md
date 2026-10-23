@@ -237,7 +237,8 @@ graph 的 `from/to` 与 funnel 的 `stage` 正好绕过去，字段写错的结�
 （`compile.ts` 的 `PALETTE`）——颜色在图表里不该用来「好看」，只该用来区分。
 
 品牌只有一处：`src/components/ProbeLogo.tsx`（白轴线 + 三个蓝节点，`vectorEffect="non-scaling-stroke"`
-保证放大缩小时描边不跟着变粗），favicon `src/app/icon.svg` 用同一套语言重画。
+保证放大缩小时描边不跟着变粗），favicon `src/app/icon.svg` 用同一套语言重画。节点色就是强调色
+`#3b82f6`（纯黑上 5.7:1）；品牌蓝原先用更深的 `#0055FF`，在纯黑上只有 3.7:1，蓝点会陷进背景。
 
 验收方式是扫 DOM 而不是看截图：全站 `backdrop-filter !== none` 的元素 0 个、`box-shadow !== none`
 0 个、旧色值（青/琥珀/玫红）0 处；`.panel` 的 computed 值依次为 `rgb(17,17,17)` / `rgb(38,38,38)` /
