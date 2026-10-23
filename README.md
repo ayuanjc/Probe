@@ -12,7 +12,7 @@
 |---|---|
 | 阶段 | 设计定稿 + 工程脚手架（Phase 1 未开工） |
 | 现行 PRD | [V1.1](docs/PRD.md) |
-| 代码 | Next.js 16 / React 19 / TypeScript 5.9 / Tailwind 4 骨架，`src/` 尚未实现 |
+| 代码 | Phase 1 垂直切片已跑通：意图路由 → 多源检索（GDELT / HN / Wikipedia / Tavily）→ 分析（去重、owner 归并、三分量置信度）→ `ModuleSpec` 编译器 → SSE 工作台。未接 Supabase，布局不持久化 |
 | 许可 | 待定（未选定许可证前按保留所有权利处理） |
 
 ## 它是什么
@@ -88,6 +88,25 @@ route(query)     → Intent
   → retrieve(intent)  → RawSource[]        // 多源并发，单源超时 6s，失败隔离
   → analyze(raw)      → { datasets, confidence, sources }
   → compose(datasets) → ModuleSpec[]       // 受限 DSL，不产出 ECharts option
+```
+
+## 目录结构
+
+```
+src/
+  app/
+    page.tsx              # 搜索首页 → 工作台外壳
+    layout.tsx globals.css
+    api/search/route.ts   # SSE 端点：单连接多路事件（附录 A 契约）
+  agents/                 # 四步流水线，每步纯函数 + zod I/O
+    route.ts retrieve.ts analyze.ts compose.ts pipeline.ts
+  lib/
+    schemas.ts            # Intent / RawSource / Dataset / ModuleSpec / SSE 事件
+    confidence.ts heat.ts # 三分量置信度 / 热度公式与状态机
+    compile.ts            # ModuleSpec → EChartsOption（白名单校验，拒绝而非修正）
+    sse.ts entities.ts llm.ts text.ts fixtures.ts
+  components/             # Workspace / ModuleCard / ConfidenceBadge / SourceList / SearchBar
+  hooks/useProbe.ts       # SSE 消费 + 渐进式渲染状态
 ```
 
 ## 数据源（已实测，不是纸面推测）
