@@ -1,12 +1,14 @@
 
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useProbe } from "@/hooks/useProbe";
+import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
 import ModuleCard from "./ModuleCard";
 import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
+import TrendingBoard from "./TrendingBoard";
 
 const KIND_TEXT: Record<string, string> = {
   lookup: "事实查询",
@@ -48,10 +50,29 @@ function degradeText(item: string): string {
   return name;
 }
 
-export default function Workspace({ initialQuery = "" }: { initialQuery?: string }) {
+export default function Workspace({
+  initialQuery = "",
+  trending = null,
+}: {
+  initialQuery?: string;
+  trending?: TrendingSnapshot | null;
+}) {
   const { state, run } = useProbe();
+  const [input, setInput] = useState(initialQuery);
   const running = state.status === "running";
   const booted = useRef(false);
+
+  // 热榜点话题：填词、跑查询、同步 URL 要一起做，
+  // 否则刷新后回不到刚才那个结果。
+  const pickTopic = (name: string) => {
+    setInput(name);
+    void run(name);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("q", name);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
 
   // StrictMode 下 effect 会跑两次，用 ref 保证自动查询只发一次。
   useEffect(() => {
@@ -75,7 +96,7 @@ export default function Workspace({ initialQuery = "" }: { initialQuery?: string
         {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
       </header>
 
-      <SearchBar running={running} onRun={run} />
+      <SearchBar running={running} value={input} onChange={setInput} onRun={run} />
 
       {state.intent && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-l-2 border-[#5eead4]/30 pl-3 text-[10px] text-[#5c6675]">
@@ -91,7 +112,11 @@ export default function Workspace({ initialQuery = "" }: { initialQuery?: string
         </div>
       )}
 
-      {state.status === "idle" && (
+      {state.status === "idle" && trending && (
+        <TrendingBoard snapshot={trending} onPick={pickTopic} />
+      )}
+
+      {state.status === "idle" && !trending && (
         <div className="panel mt-2 px-4 py-10 text-center">
           <p className="text-[12px] text-[#5c6675]">
             输入一个需要证据的问题。系统会先做多源检索，再决定生成哪些面板。

@@ -77,14 +77,33 @@ score = 0.40 × 一手性 + 0.35 × 独立性 + 0.25 × 一致性
 （GDELT `startdatetime`、HN Algolia `numericFilters=created_at_i`、Tavily `start_date`），
 返回后本地再兜一层。宁可结果稀疏，也不拿六年前的旧闻凑数量。
 
+## 热点榜：一个只能搜索的产品没有回访理由
+
+无 query 时首屏给热榜，数据来自 Hacker News 近 24 小时的 story 聚合（`src/lib/trending.ts`）：
+
+- 抓过去 24 小时全部 story（实测约 994 条），只保留 `points >= 2` 的 553 条。
+  另外 442 条 points 为 0 —— 全是刚发布、无人评分的，把它们算进"提及数"等于让冷门词冒充热点。
+- 按词边界匹配实体词典，同一个话题被 **两条以上** 提到才上榜（一条不足以叫热点，只能叫新闻）。
+- **按提及条数排序，不按 points 之和**：三条爆款（TLS，1068 分）会盖过十三家在提的实体
+  （谷歌，411 分），那不是热度，是单篇运气。
+- 缓存 10 分钟；话题名与检索词分开（展示 `人工智能`，检索 `artificial intelligence`），
+  否则中文话题丢进英文索引必然 0 命中。
+
+榜单标题写死「Hacker News 前沿」而不是「实时热点」：GDELT 缺席时这里只有单一来源，
+「多少家媒体在报」这个维度并不存在，写成全网热度就是编。
+
+顺带修了一个连带缺陷：`kindOf` 原来按 `length < 5` 判 "需要澄清"，于是 `英伟达`、`人工智能`、
+`Rust` 这类主体明确的短查询全被判死，热榜点进来每一张卡都会撞墙。含糊不等于短 ——
+现在只拦真正的寒暄（`你好` / `hi` / `test`）。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
-  lib/        schemas · confidence · heat · compile · sse · llm · fixtures · entities · text
+  lib/        schemas · confidence · heat · compile · sse · llm · fixtures · entities · text · trending
   app/        layout · page · globals.css · api/search/route.ts
-  components/ Workspace · SearchBar · ModuleCard · ConfidenceBadge · SourceList
+  components/ Workspace · SearchBar · ModuleCard · ConfidenceBadge · SourceList · TrendingBoard
   hooks/      useProbe.ts
 ```
 
@@ -112,6 +131,8 @@ ECharts option 由前端编译器按白名单生成。让模型直出 option 的
 - **单用户假设**：限流与预算按进程内变量计，多实例部署会失效。
 - **限流会拦到你**：默认 3 次/分钟。本地反复调试时用 `PROBE_RATE_LIMIT_PER_MIN=50` 启动。
 - **GDELT 冷却只对限流与超时生效**：一条查询语法写错不该让后面所有查询一起停摆 5 分钟。
+- **热榜是单源**：只有 Hacker News，它偏技术圈；GDELT 恢复后「多少家媒体在报」才成立。
+  `heat.ts` 里的完整热度公式（median_30d / MAD_30d / 状态机）依赖历史累积，Phase 3 才接线。
 
 ## 验收口径（对应 PRD 附录 C）
 

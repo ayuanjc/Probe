@@ -13,7 +13,7 @@ type Alias = {
   type: Entity["type"];
 };
 
-const ALIASES: Alias[] = [
+export const ALIASES: Alias[] = [
   { zh: ["英伟达", "黄仁勋"], en: "NVIDIA", type: "org" },
   { zh: ["微软"], en: "Microsoft", type: "org" },
   { zh: ["苹果公司", "苹果"], en: "Apple Inc", type: "org" },
@@ -52,6 +52,34 @@ const ALIASES: Alias[] = [
   { zh: ["人形机器人"], en: "humanoid robot", type: "tech" },
   { zh: ["加息", "降息"], en: "interest rate", type: "event" },
   { zh: ["财报"], en: "earnings report", type: "event" },
+
+  // 技术话题：热榜展示中文，但检索必须用英文才可能命中。
+  // 这里刻意不放 "ai" / "js" / "ts" 这类两字母别名 —— 词典用的是 includes，
+  // "ai" 会命中 "maintain"、"said"，把无关查询全带偏。
+  { zh: ["人工智能", "artificial intelligence"], en: "artificial intelligence", type: "tech" },
+  { zh: ["大语言模型", "llm"], en: "large language model", type: "tech" },
+  { zh: ["rust"], en: "Rust", type: "tech" },
+  { zh: ["python"], en: "Python", type: "tech" },
+  { zh: ["javascript"], en: "JavaScript", type: "tech" },
+  { zh: ["typescript"], en: "TypeScript", type: "tech" },
+  { zh: ["kubernetes", "k8s"], en: "Kubernetes", type: "tech" },
+  { zh: ["docker"], en: "Docker", type: "tech" },
+  { zh: ["linux"], en: "Linux", type: "tech" },
+  { zh: ["postgresql", "postgres"], en: "PostgreSQL", type: "tech" },
+  { zh: ["sqlite"], en: "SQLite", type: "tech" },
+  { zh: ["webassembly", "wasm"], en: "WebAssembly", type: "tech" },
+  { zh: ["tls"], en: "TLS", type: "tech" },
+  { zh: ["dns"], en: "DNS", type: "tech" },
+  { zh: ["android"], en: "Android", type: "tech" },
+  { zh: ["ios"], en: "iOS", type: "tech" },
+  { zh: ["aws"], en: "AWS", type: "tech" },
+  { zh: ["cloudflare"], en: "Cloudflare", type: "tech" },
+  { zh: ["chrome"], en: "Chrome", type: "tech" },
+  { zh: ["firefox"], en: "Firefox", type: "tech" },
+  { zh: ["隐私", "privacy"], en: "privacy", type: "tech" },
+  { zh: ["安全", "security"], en: "security", type: "tech" },
+  { zh: ["加密", "encryption"], en: "encryption", type: "tech" },
+  { zh: ["欧盟", "eu"], en: "EU", type: "org" },
 ];
 
 const ZH_ALIAS = new Map<string, Alias>();
@@ -91,7 +119,10 @@ export function extractEntities(query: string): Entity[] {
   for (const a of ALIASES) {
     for (const z of a.zh) {
       if (query.toLowerCase().includes(z.toLowerCase())) {
-        push(z, a.type, [a.en]);
+        // 别名本身是英文小写时（rust / docker / tls），展示名用规范写法，
+        // 否则界面上会写着 "rust"。中文别名保持中文。
+        const display = /[\u4e00-\u9fa5]/.test(z) ? z : a.en;
+        push(display, a.type, [a.en]);
         break;
       }
     }
