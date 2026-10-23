@@ -142,7 +142,7 @@ export default function Workspace({
   }, [initialQuery]);
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1240px] flex-col gap-6 px-5 py-10 sm:px-8">
+    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-10 sm:px-8">
       <header className="flex flex-wrap items-end justify-between gap-6">
         <div>
           <div className="flex items-baseline gap-3.5">
@@ -195,105 +195,131 @@ export default function Workspace({
         </div>
       )}
 
-      {state.status === "idle" && trending && (
-        <TrendingBoard snapshot={trending} onPick={pickTopic} />
-      )}
-
-      {state.status === "idle" && !trending && (
-        <div className="panel p-10 text-center">
-          <p className="text-sm text-neutral-300">
-            输入一个需要证据的问题。系统会先做多源检索，再决定生成哪些面板。
-          </p>
-          <p className="mx-auto mt-3 max-w-2xl text-[11px] leading-relaxed text-neutral-600">
-            未配置 API key 也能跑通全链路：Hacker News 与 Wikipedia 免密钥可用，
-            其余来源视网络情况而定，抽不到证据时展示本地演示样本并明确标注。
-          </p>
-        </div>
-      )}
-
-      {state.text && (
-        <div className="panel p-6">
-          <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-200">
-            {state.text}
-            {running && <span className="caret" />}
-          </p>
-        </div>
-      )}
-
-      {running && state.modules.length === 0 && (
-        <div className="flex items-center gap-2 px-1 font-mono text-[11px] text-neutral-500">
-          <span className="h-1 w-1 animate-pulse rounded-sm bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]" />
-          正在检索多源…
-        </div>
-      )}
-
-      {state.modules.length > 0 && (
-        <ModuleGrid
-          modules={state.modules}
-          sources={state.sources}
-          query={state.query}
-          running={running}
-          animation={settings.animation}
-          gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
-        />
-      )}
-
-      {state.status === "done" && datasets.length > 0 && (
-        <ModulePrompt
-          datasets={datasets}
-          modules={state.modules}
-          confidence={state.confidence?.score ?? 0}
-          sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
-          headers={settingsHeaders(settings)}
-          onAdd={addModule}
-        />
-      )}
-
-      {state.sources.length > 0 && (
-        <section className="panel overflow-hidden">
-          <header className="flex items-center justify-between px-6 pb-1 pt-5">
-            <span className="text-sm font-semibold text-white">
-              原始信源
-              <span className="ml-2 font-mono text-xs font-bold tabular-nums text-cyan-400">
-                {state.sources.length}
-              </span>
-            </span>
-            <span className="font-mono text-[10px] text-neutral-600">
-              点开即原文 · 「对照原文」给逐段双语对照
-            </span>
-          </header>
-          <div className="scroll-thin max-h-[340px] overflow-auto pb-2">
-            <SourceList sources={state.sources} />
-          </div>
-        </section>
-      )}
-
-      {state.status === "done" && state.degraded.length > 0 && (
-        <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.06] px-4 py-3 text-[10px] leading-relaxed text-amber-300/85">
-          <Term k="degraded">降级项</Term>：
-          {state.degraded.map(degradeText).join(" · ")}
-          （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
-        </div>
-      )}
-
-      {state.status === "done" && state.elapsedMs !== null && (
-        <footer className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
-          <span>耗时 {state.elapsedMs} ms</span>
-          <span>模块 {state.modules.length} 个</span>
-          <span>信源 {state.sources.length} 条</span>
-          {state.confidence && (
-            <span>
-              <Term k="independence">独立稿源</Term> {state.confidence.nOwners} 个
-            </span>
+      {/*
+        两列：结果区在左，生成器固定在右。侧栏从 xl 起才是常驻的（1024–1279 之间
+        左列会被挤到 720px 的网格下限以下，那时把生成器放到结果下方更合适）。
+      */}
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-6">
+          {state.status === "idle" && trending && (
+            <TrendingBoard snapshot={trending} onPick={pickTopic} />
           )}
-        </footer>
-      )}
 
-      {state.status === "failed" && (
-        <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.07] px-4 py-3 text-[11px] text-rose-400">
-          请求失败：{state.error}
+          {state.status === "idle" && !trending && (
+            <div className="panel p-10 text-center">
+              <p className="text-sm text-neutral-300">
+                输入一个需要证据的问题。系统会先做多源检索，再决定生成哪些面板。
+              </p>
+              <p className="mx-auto mt-3 max-w-2xl text-[11px] leading-relaxed text-neutral-600">
+                未配置 API key 也能跑通全链路：Hacker News 与 Wikipedia 免密钥可用，
+                其余来源视网络情况而定，抽不到证据时展示本地演示样本并明确标注。
+              </p>
+            </div>
+          )}
+
+          {state.text && (
+            <div className="panel p-6">
+              <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-200">
+                {state.text}
+                {running && <span className="caret" />}
+              </p>
+            </div>
+          )}
+
+          {running && state.modules.length === 0 && (
+            <div className="flex items-center gap-2 px-1 font-mono text-[11px] text-neutral-500">
+              <span className="h-1 w-1 animate-pulse rounded-sm bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]" />
+              正在检索多源…
+            </div>
+          )}
+
+          {state.modules.length > 0 && (
+            <ModuleGrid
+              modules={state.modules}
+              sources={state.sources}
+              query={state.query}
+              running={running}
+              animation={settings.animation}
+              gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
+            />
+          )}
+
+          {state.sources.length > 0 && (
+            <section className="panel overflow-hidden">
+              <header className="flex items-center justify-between px-6 pb-1 pt-5">
+                <span className="text-sm font-semibold text-white">
+                  原始信源
+                  <span className="ml-2 font-mono text-xs font-bold tabular-nums text-cyan-400">
+                    {state.sources.length}
+                  </span>
+                </span>
+                <span className="font-mono text-[10px] text-neutral-600">
+                  点开即原文 · 「对照原文」给逐段双语对照
+                </span>
+              </header>
+              <div className="scroll-thin max-h-[340px] overflow-auto pb-2">
+                <SourceList sources={state.sources} />
+              </div>
+            </section>
+          )}
+
+          {state.status === "done" && state.degraded.length > 0 && (
+            <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.06] px-4 py-3 text-[10px] leading-relaxed text-amber-300/85">
+              <Term k="degraded">降级项</Term>：
+              {state.degraded.map(degradeText).join(" · ")}
+              （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
+            </div>
+          )}
+
+          {state.status === "done" && state.elapsedMs !== null && (
+            <footer className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
+              <span>耗时 {state.elapsedMs} ms</span>
+              <span>模块 {state.modules.length} 个</span>
+              <span>信源 {state.sources.length} 条</span>
+              {state.confidence && (
+                <span>
+                  <Term k="independence">独立稿源</Term> {state.confidence.nOwners} 个
+                </span>
+              )}
+            </footer>
+          )}
+
+          {state.status === "failed" && (
+            <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.07] px-4 py-3 text-[11px] text-rose-400">
+              请求失败：{state.error}
+            </div>
+          )}
         </div>
-      )}
+
+        <aside className="scroll-thin flex flex-col gap-4 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto">
+          {state.status === "done" && datasets.length > 0 ? (
+            <ModulePrompt
+              datasets={datasets}
+              modules={state.modules}
+              confidence={state.confidence?.score ?? 0}
+              sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
+              headers={settingsHeaders(settings)}
+              onAdd={addModule}
+            />
+          ) : (
+            <div className="panel p-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm font-semibold text-white">一句话生成面板</span>
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-600">
+                  {datasets.length} 份数据
+                </span>
+              </div>
+              <p className="mt-2 font-mono text-[10px] leading-relaxed text-neutral-600">
+                {running
+                  ? "检索中：面板生成器在 done 之后可用。"
+                  : state.status === "failed"
+                    ? "上一轮失败了：先重试一次，拿到数据才能出图。"
+                    : "先搜一个问题。生成器只从这一轮算出来的数据里挑，不重新检索。"}
+              </p>
+            </div>
+          )}
+        </aside>
+      </div>
 
       <SettingsPanel
         open={settingsOpen}

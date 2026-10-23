@@ -8,11 +8,13 @@ import { ModuleSpecSchema, type Dataset } from "@/lib/schemas";
 import type { ModuleState } from "@/hooks/useProbe";
 
 /**
- * 「一句话生成面板」（PRD 2.5）。
+ * 「一句话生成面板」（PRD 2.5），放在工作台右侧的常驻侧栏里。
  *
  * 边界：这个框只决定"看哪份数据、用哪种图形"，不写 ECharts option。
  * 服务端回一个 ModuleSpec，客户端还要自己过一遍 compile() —— 真正的白名单在
  * 本地。服务端拒绝和本地拒绝都要说出来：静默不出现，用户会以为功能坏了。
+ *
+ * 竖排布局是给 340px 侧栏定的：横排的输入框+按钮在窄栏里会把 placeholder 挤成四个字。
  */
 
 type Props = {
@@ -136,21 +138,19 @@ export default function ModulePrompt({ datasets, modules, confidence, sourceIds,
     .filter((d) => d.kind);
 
   return (
-    <section className="panel p-5">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-white">
-          一句话生成面板
-          <span className="ml-2 font-mono text-[10px] font-normal text-neutral-500">
-            从这一轮的 {datasets.length} 份数据里出图
-          </span>
-        </span>
-        <span className="font-mono text-[10px] text-neutral-600">
-          只说想看什么，字段由注册表挑
+    <section className="panel p-4">
+      <header className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-semibold text-white">一句话生成面板</span>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-600">
+          {datasets.length} 份数据
         </span>
       </header>
+      <p className="mt-1 font-mono text-[10px] leading-relaxed text-neutral-600">
+        只说想看什么，字段由注册表挑
+      </p>
 
-      <form onSubmit={submit} className="mt-3 flex items-stretch gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-cyan-500/25 bg-black/50 px-3 py-2 transition-[border-color,box-shadow] focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.18)]">
+      <form onSubmit={submit} className="mt-3 flex flex-col gap-2">
+        <div className="flex items-center gap-2 rounded-xl border border-cyan-500/25 bg-black/50 px-3 py-2 transition-[border-color,box-shadow] focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.18)]">
           <span aria-hidden className="font-mono text-xs leading-none text-cyan-400/80">
             ＋
           </span>
@@ -160,35 +160,39 @@ export default function ModulePrompt({ datasets, modules, confidence, sourceIds,
             maxLength={200}
             placeholder="用条形图看信源分布"
             aria-label="一句话生成面板"
-            className="w-full bg-transparent font-mono text-xs text-neutral-200 outline-none placeholder:text-neutral-600"
+            className="w-full min-w-0 bg-transparent font-mono text-xs text-neutral-200 outline-none placeholder:text-neutral-600"
           />
         </div>
         <button
           type="submit"
           disabled={busy || !instruction.trim()}
-          className="shrink-0 cursor-pointer rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 font-mono text-[11px] text-cyan-200 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-neutral-600"
+          className="w-full cursor-pointer rounded-xl border border-cyan-500/30 bg-cyan-500/10 py-2 font-mono text-[11px] text-cyan-200 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-neutral-600"
         >
           {busy ? "生成中…" : "生成"}
         </button>
       </form>
 
       {examples.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <div className="mt-3 flex flex-col gap-1">
           <span className="font-mono text-[10px] text-neutral-600">试试</span>
-          {examples.map((ex) => (
-            <button
-              key={ex.id}
-              type="button"
-              onClick={() => setInstruction("用" + KIND_ZH[ex.kind] + "看" + ex.name)}
-              className="cursor-pointer rounded-full border border-white/5 bg-white/[0.03] px-2 py-0.5 font-mono text-[10px] text-neutral-500 transition-colors hover:border-cyan-500/30 hover:text-neutral-300"
-            >
-              {"用" + KIND_ZH[ex.kind] + "看" + ex.name}
-            </button>
-          ))}
+          {examples.map((ex) => {
+            const text = "用" + KIND_ZH[ex.kind] + "看" + ex.name;
+            return (
+              <button
+                key={ex.id}
+                type="button"
+                title={text}
+                onClick={() => setInstruction(text)}
+                className="w-full cursor-pointer truncate rounded-md border border-white/5 bg-white/[0.03] px-2 py-1 text-left font-mono text-[10px] text-neutral-500 transition-colors hover:border-cyan-500/30 hover:text-neutral-300"
+              >
+                {text}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      <p className="mt-2 font-mono text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-3 font-mono text-[10px] leading-relaxed text-neutral-600">
         自定义面板跟着这一轮的数据走：刷新页面或换一个问题，它会一起消失。
       </p>
 
