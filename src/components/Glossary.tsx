@@ -140,10 +140,10 @@ export default function Term({
         // 首次渲染先隐身：位置要等量完尺寸才知道，露一下会闪。
         visibility: pos ? "visible" : "hidden",
       }}
-      className="z-[90] block rounded-lg border border-cyan-500/25 bg-[#08080b]/97 p-3.5 text-left text-[11px] font-normal leading-relaxed text-neutral-400 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.95)]"
+      className="z-[90] block rounded-md border border-neutral-700 bg-[#141414] p-3.5 text-left text-[11px] font-normal leading-relaxed text-neutral-400"
     >
       <span className="mb-1 flex items-baseline gap-2">
-        <span className="text-[11px] font-semibold tracking-wide text-cyan-300">
+        <span className="text-[11px] font-semibold tracking-wide text-white">
           {entry.label}
         </span>
       </span>
@@ -156,12 +156,12 @@ export default function Term({
         </span>
       ))}
       {entry.formula && (
-        <span className="mt-2 block rounded border border-white/10 bg-white/[0.04] px-2 py-1 font-mono text-[10px] text-cyan-300/90">
+        <span className="mt-2 block rounded border border-neutral-800 bg-[#0f0f0f] px-2 py-1 font-mono text-[10px] text-neutral-300">
           {entry.formula}
         </span>
       )}
       {entry.caveat && (
-        <span className="mt-2 block border-l-2 border-amber-400/40 pl-2 text-[10px] leading-relaxed text-amber-300/80">
+        <span className="mt-2 block border-l-2 border-yellow-500/50 pl-2 text-[10px] leading-relaxed text-yellow-500/85">
           {entry.caveat}
         </span>
       )}
@@ -193,7 +193,7 @@ export default function Term({
             setOpen((v) => !v);
           }
         }}
-        className="cursor-help underline decoration-dotted decoration-cyan-400/40 decoration-1 underline-offset-[3px] outline-none transition-colors hover:decoration-cyan-300 focus-visible:decoration-cyan-300"
+        className="cursor-help underline decoration-dotted decoration-neutral-600 decoration-1 underline-offset-[3px] outline-none transition-colors hover:decoration-neutral-400 focus-visible:decoration-neutral-400"
       >
         {children ?? entry.label}
       </span>

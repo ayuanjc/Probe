@@ -9,15 +9,19 @@ import type { Dataset, ModuleSpec } from "./schemas";
  * JSON.parse 抓不到，只能靠编译器白名单拒绝。拒绝优于修正。
  */
 
-/** 霓虹赛博色板：青色打头（品牌色），其余保持高饱和、低明度背景上可读。 */
+/**
+ * 图表色板：一个蓝，加它的明度阶梯，末尾一个中性灰。
+ * 情报工具里颜色不该用来「好看」—— 多出一色就多一个要解释的语义。
+ * 需要区分正负/风险时才动用语义色（见各处红/黄）。
+ */
 export const PALETTE = [
-  "#22d3ee",
-  "#818cf8",
-  "#f472b6",
-  "#fbbf24",
-  "#38bdf8",
-  "#a3e635",
-  "#fb923c",
+  "#3b82f6",
+  "#60a5fa",
+  "#93c5fd",
+  "#2563eb",
+  "#1d4ed8",
+  "#bfdbfe",
+  "#71717a",
 ];
 
 export type CompileError =
@@ -53,10 +57,11 @@ const BASE: Record<string, unknown> = {
   grid: { left: 48, right: 24, top: 48, bottom: 40, containLabel: true },
   tooltip: {
     trigger: "axis",
-    backgroundColor: "rgba(8,10,12,0.94)",
-    borderColor: "rgba(34,211,238,0.28)",
+    // 浮层用实色（与卡片同族），不用半透明玻璃：canvas 里没有真模糊，叠色只会发灰。
+    backgroundColor: "#141414",
+    borderColor: "#404040",
     borderWidth: 1,
-    textStyle: { color: "#e5e5e5", fontSize: 12 },
+    textStyle: { color: "#ededed", fontSize: 12 },
   },
 };
 
@@ -185,7 +190,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
             {
               type: "scatter",
               symbolSize: 6,
-              itemStyle: { color: "#22d3ee", opacity: 0.6 },
+              itemStyle: { color: "#3b82f6", opacity: 0.6 },
               data: dataset.rows.map((r) => [
                 Number(r[xField.name]),
                 Number(r[yField.name]),
@@ -303,7 +308,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
             itemWidth: 10,
             itemHeight: 60,
             textStyle: { color: "#737373", fontSize: 10 },
-            inRange: { color: ["#0b1e24", "#155e6b", "#0891b2", "#22d3ee", "#a5f3fc"] },
+            inRange: { color: ["#111827", "#1e3a8a", "#1d4ed8", "#3b82f6", "#93c5fd"] },
           },
           series: [
             {
@@ -352,9 +357,9 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
             {
               type: "radar",
               symbolSize: 3,
-              lineStyle: { width: 2, color: "#22d3ee" },
-              itemStyle: { color: "#22d3ee" },
-              areaStyle: { opacity: 0.14, color: "#22d3ee" },
+              lineStyle: { width: 2, color: "#3b82f6" },
+              itemStyle: { color: "#3b82f6" },
+              areaStyle: { opacity: 0.14, color: "#3b82f6" },
               data: [
                 {
                   value: radarRows.map((r) => Number(r[vField.name] ?? 0)),
@@ -405,11 +410,11 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
               draggable: false,
               force: { repulsion: 68, edgeLength: [30, 72], gravity: 0.12 },
               label: { show: true, color: "#cbd5e1", fontSize: 10, position: "right" },
-              lineStyle: { color: "rgba(34,211,238,0.22)", width: 1, curveness: 0.12 },
-              itemStyle: { color: "#22d3ee" },
+              lineStyle: { color: "rgba(59,130,246,0.22)", width: 1, curveness: 0.12 },
+              itemStyle: { color: "#3b82f6" },
               emphasis: {
                 focus: "adjacency",
-                lineStyle: { color: "#22d3ee", width: 2 },
+                lineStyle: { color: "#3b82f6", width: 2 },
               },
               data: nodes,
               links: edges.filter((e) => kept.has(e.source) && kept.has(e.target)),
@@ -490,7 +495,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
               max: gMax,
               radius: "82%",
               center: ["50%", "56%"],
-              progress: { show: true, width: 8, itemStyle: { color: "#22d3ee" } },
+              progress: { show: true, width: 8, itemStyle: { color: "#3b82f6" } },
               axisLine: { lineStyle: { width: 8, color: [[1, "rgba(255,255,255,0.08)"]] } },
               pointer: { show: false },
               axisTick: { show: false },
@@ -498,7 +503,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
               axisLabel: { show: false },
               detail: {
                 fontSize: 22,
-                color: "#22d3ee",
+                color: "#ffffff",
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                 offsetCenter: [0, "0%"],
                 formatter: isPct ? "{value}%" : "{value}",
@@ -546,7 +551,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
             {
               type: "scatter",
               symbolSize: 8,
-              itemStyle: { color: "#22d3ee", opacity: 0.72 },
+              itemStyle: { color: "#3b82f6", opacity: 0.72 },
               emphasis: { itemStyle: { opacity: 1 } },
               data: pts,
             },

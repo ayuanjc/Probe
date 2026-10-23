@@ -2,17 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  DEFAULT_SETTINGS,
-  THEMES,
-  isCustomized,
-  resetLocalData,
-  type Settings,
-} from "@/lib/settings";
+import { DEFAULT_SETTINGS, isCustomized, resetLocalData, type Settings } from "@/lib/settings";
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <section className="border-t border-white/[0.07] px-6 py-5">
+    <section className="border-t border-neutral-800 px-6 py-5">
       <h3 className="text-[13px] font-semibold tracking-wide text-white">{title}</h3>
       {hint && <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">{hint}</p>}
       <div className="mt-4 space-y-4">{children}</div>
@@ -29,9 +23,9 @@ function Label({ children }: { children: ReactNode }) {
 }
 
 const INPUT_CLASS =
-  "w-full rounded-lg border border-white/10 bg-black/50 px-3 py-2 font-mono text-[12px] " +
-  "text-neutral-200 outline-none transition-[border-color,box-shadow] " +
-  "placeholder:text-neutral-700 focus:border-[color:var(--accent)]/60";
+  "w-full rounded-md border border-neutral-800 bg-[#0f0f0f] px-3 py-2 font-mono text-[12px] " +
+  "text-white outline-none transition-colors " +
+  "placeholder:text-neutral-600 focus:border-neutral-600";
 
 function Secret({
   value,
@@ -57,7 +51,7 @@ function Secret({
       <button
         type="button"
         onClick={() => setShow((v) => !v)}
-        className="shrink-0 rounded-lg border border-white/10 px-2.5 py-2 font-mono text-[10px] text-neutral-500 transition-colors hover:border-white/20 hover:text-neutral-300"
+        className="shrink-0 rounded-md border border-neutral-800 px-2.5 py-2 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
       >
         {show ? "隐藏" : "显示"}
       </button>
@@ -78,12 +72,12 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-lg border px-3 py-1.5 font-mono text-[11px] transition-colors"
-      style={{
-        borderColor: active ? "var(--accent)" : "rgba(255,255,255,0.1)",
-        color: active ? "var(--accent)" : "rgb(163,163,163)",
-        background: active ? "rgba(255,255,255,0.04)" : "transparent",
-      }}
+      className={
+        "rounded border px-3 py-1.5 font-mono text-[11px] transition-colors " +
+        (active
+          ? "border-neutral-600 bg-neutral-800 text-white"
+          : "border-neutral-800 text-neutral-400 hover:border-neutral-600 hover:text-white")
+      }
     >
       {children}
     </button>
@@ -110,10 +104,10 @@ function Toggle({
     >
       <span
         className="relative h-4 w-7 rounded-full transition-colors"
-        style={{ background: on ? "var(--accent)" : "rgba(255,255,255,0.14)" }}
+        style={{ background: on ? "var(--accent)" : "#3f3f46" }}
       >
         <span
-          className="absolute top-0.5 h-3 w-3 rounded-full bg-[#050507] transition-all"
+          className="absolute top-0.5 h-3 w-3 rounded-full bg-[#0a0a0a] transition-all"
           style={{ left: on ? "14px" : "2px" }}
         />
       </span>
@@ -173,15 +167,15 @@ export default function SettingsPanel({
         type="button"
         aria-label="关闭设置"
         onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-black/70"
       />
       <aside
         role="dialog"
         aria-modal="true"
         aria-label="设置"
-        className="scroll-thin relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-white/10 bg-[#07080a] shadow-[-30px_0_80px_-40px_rgba(0,0,0,0.9)]"
+        className="scroll-thin relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-neutral-800 bg-[#0a0a0a]"
       >
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[#07080a]/95 px-6 py-4">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-800 bg-[#0a0a0a] px-6 py-4">
           <div>
             <h2 className="text-base font-semibold text-white">设置</h2>
             <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
@@ -191,7 +185,7 @@ export default function SettingsPanel({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-white/10 px-2.5 py-1 font-mono text-[11px] text-neutral-400 transition-colors hover:border-white/25 hover:text-white"
+            className="rounded-md border border-neutral-800 px-2.5 py-1 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
           >
             ESC
           </button>
@@ -229,35 +223,14 @@ export default function SettingsPanel({
               className={INPUT_CLASS}
             />
           </div>
-          <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2.5 text-[11px] leading-relaxed text-amber-300/80">
+          <p className="rounded border border-neutral-800 bg-[#141414] px-3 py-2.5 text-[11px] leading-relaxed text-neutral-400">
             key 存在这台浏览器的 localStorage 里，每次检索 / 翻译时随请求头发给本服务，
             服务端只在这一轮请求里用它调上游 —— 不写数据库、不写日志、不跨请求复用。
             换台设备或清站点数据就没了。
           </p>
         </Group>
 
-        <Group title="外观" hint="改的是 html 上的 data 属性与根字号，不碰任何组件。">
-          <div className="flex items-center justify-between gap-3">
-            <Label>主题色</Label>
-            <div className="flex gap-2">
-              {THEMES.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => patch({ theme: t.id })}
-                  aria-label={t.label}
-                  className="h-6 w-6 rounded-full border transition-transform hover:scale-110"
-                  style={{
-                    background: t.swatch,
-                    borderColor: settings.theme === t.id ? "#fff" : "transparent",
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-          <p className="-mt-1 font-mono text-[10px] leading-relaxed text-neutral-600">
-            标签、边框与 HUD 线跟随主题；图表配色画在 canvas 里，读不到 CSS 变量，所以不变。
-          </p>
+        <Group title="界面" hint="改的是 html 上的 data 属性与根字号，不碰任何组件。">
           <div className="flex items-center justify-between gap-3">
             <Label>字号</Label>
             <div className="flex gap-2">
@@ -294,11 +267,6 @@ export default function SettingsPanel({
             onChange={(v) => patch({ animation: v })}
             label="界面动画与图表入场"
           />
-          <Toggle
-            on={settings.effects}
-            onChange={(v) => patch({ effects: v })}
-            label="背景网格与扫描线"
-          />
           <p className="text-[11px] leading-relaxed text-neutral-600">
             字号改的是 rem 基准，所以间距会跟着等比缩放 —— 这正是 Tailwind 的工作方式。
             关掉动画后过渡被 CSS 直接掐断，图表入场时长归零。
@@ -310,19 +278,19 @@ export default function SettingsPanel({
           hint="把本应用在这台浏览器上留下的东西全部清掉，回到刚装好的样子。"
         >
           <ul className="space-y-1 font-mono text-[11px] leading-relaxed text-neutral-500">
-            <li>· 设置（密钥、外观）</li>
+            <li>· 设置（密钥、界面）</li>
             <li>· 每个查询词各自记住的拖拽布局</li>
             <li>· 双语对照的本地缓存</li>
           </ul>
           <button
             type="button"
             onClick={() => (armed ? doReset() : setArmed(true))}
-            className="w-full rounded-lg border px-4 py-2.5 font-mono text-[12px] transition-colors"
-            style={{
-              borderColor: armed ? "rgba(244,63,94,0.6)" : "rgba(255,255,255,0.12)",
-              color: armed ? "rgb(251,113,133)" : "rgb(212,212,212)",
-              background: armed ? "rgba(244,63,94,0.08)" : "transparent",
-            }}
+            className={
+              "w-full rounded-md border px-4 py-2.5 font-mono text-[12px] transition-colors " +
+              (armed
+                ? "border-red-500/60 bg-red-500/10 text-red-400"
+                : "border-neutral-800 text-neutral-300 hover:border-neutral-600 hover:text-white")
+            }
           >
             {armed ? "确定还原？再点一次（4 秒后取消）" : "一键还原默认"}
           </button>
@@ -331,7 +299,7 @@ export default function SettingsPanel({
           )}
         </Group>
 
-        <footer className="mt-auto border-t border-white/[0.07] px-6 py-4 font-mono text-[10px] leading-relaxed text-neutral-600">
+        <footer className="mt-auto border-t border-neutral-800 px-6 py-4 font-mono text-[10px] leading-relaxed text-neutral-600">
           所有数据都在你的浏览器里。服务端不保存任何设置。
         </footer>
       </aside>

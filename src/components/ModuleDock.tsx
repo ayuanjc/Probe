@@ -125,13 +125,13 @@ export default function ModuleDock({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="打开一句话生成面板"
-        className="panel group flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-[border-color,background-color] hover:border-cyan-500/30 hover:bg-cyan-500/[0.04]"
+        className="panel group flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-colors hover:border-neutral-600"
       >
         <span
           aria-hidden
-          className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/[0.06] transition-colors group-hover:border-cyan-400 group-hover:bg-cyan-500/[0.12]"
+          className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-neutral-800 bg-[#0f0f0f] transition-colors group-hover:border-neutral-600"
         >
-          <span className="font-mono text-[11px] font-bold tracking-[0.14em] text-cyan-200">
+          <span className="font-mono text-[11px] font-bold tracking-[0.14em] text-white">
             DIY
           </span>
         </span>
@@ -140,13 +140,13 @@ export default function ModuleDock({
           <span className="mt-1 block font-mono text-[10px] leading-relaxed text-neutral-500">
             说想看什么 · 图表和字段自动挑
           </span>
-          <span className="mt-1 block font-mono text-[10px] tabular-nums text-cyan-400/80">
+          <span className="mt-1 block font-mono text-[10px] tabular-nums text-blue-500">
             {datasets.length} 份数据可挑
           </span>
         </span>
         <span
           aria-hidden
-          className="shrink-0 font-mono text-[10px] text-neutral-600 transition-colors group-hover:text-cyan-300"
+          className="shrink-0 font-mono text-[10px] text-neutral-600 transition-colors group-hover:text-white"
         >
           {open ? "收起" : "点开 ›"}
         </span>

@@ -209,6 +209,38 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 graph 的 `from/to` 与 funnel 的 `stage` 正好绕过去，字段写错的结果是一块空白而不是报错。
 现在 encode 里任何值不在 fields 中就直接降级成表格，并在卡片上写原因。
 
+## 视觉：一套颜色，三个意思
+
+层级只靠两件事：**底色差**与**边框亮度**。页面 `#0a0a0a`、卡片 `#111`、边框 `#262626`、hover
+`#404040`、圆角 6px。没有 `backdrop-filter`、没有发光阴影、没有渐变背景、没有扫描线——
+这些在意式咖啡上很好看，在数据终端里每一个都在跟数字抢注意力。
+
+颜色只有三个意思，多一个都要解释：
+
+| 颜色 | 含义 | 出现位置 |
+| --- | --- | --- |
+| 蓝 `#3b82f6` | 强调 / 可操作 / 正常 | 主按钮、链接 hover、焦点环、图表主色、置信度 high |
+| 黄 `#eab308` | 降级 / 需要留意 | 检索降级条、疑似转载、置信度 medium、布局没存下、翻译歧义 mid |
+| 红 `#ef4444` | 出错 / 高危 | 查询失败、图表编译错误、置信度 low、翻译歧义 high |
+
+其余一律灰阶。**同一套语义用到三处**：置信度三档（high 蓝 / medium 黄 / low 红）、双语对照的
+歧义度（low 蓝 / mid 黄 / high 红）、请求状态（降级黄 / 失败红）——不另造第四种编码，
+用户学一次就够用三处。
+
+数字必须能竖着比：所有指标、ID、时间都是 `font-mono` + `tabular-nums`（等宽数字），
+不然列表里 `1` 和 `7` 宽度不同，上下两行的小数点就对不齐。正文用 Inter。
+
+以前有三套主题（青 / 紫 / 琥珀），靠覆盖 Tailwind 的 `--color-cyan-*` 变量换色。现在连
+`THEMES` 常量、`data-theme`、`data-fx` 一起删了：一套配色只要说清「这个颜色什么意思」，
+三套就得说清三遍，而第二遍开始就没人看说明了。图表色板也收成一个蓝的明度阶梯 + 一个中性灰
+（`compile.ts` 的 `PALETTE`）——颜色在图表里不该用来「好看」，只该用来区分。
+
+品牌只有一处：`src/components/ProbeLogo.tsx`（白轴线 + 三个蓝节点，`vectorEffect="non-scaling-stroke"`
+保证放大缩小时描边不跟着变粗），favicon `src/app/icon.svg` 用同一套语言重画。
+
+验收方式是扫 DOM 而不是看截图：全站 `backdrop-filter !== none` 的元素 0 个、`box-shadow !== none`
+0 个、旧色值（青/琥珀/玫红）0 处；`.panel` 的 computed 值依次为 `rgb(17,17,17)` / `rgb(38,38,38)` /
+`6px` / `layout style`，hover 后边框 `rgb(64,64,64)`。
 ## 设置：自己的 key、外观、一键还原
 
 三件事共用一个面板，全部只在本机：
@@ -216,7 +248,7 @@ graph 的 `from/to` 与 funnel 的 `stage` 正好绕过去，字段写错的结�
 | | 存在哪 | 走哪条路 |
 | --- | --- | --- |
 | OpenAI / Tavily key、模型名 | `localStorage` 的 `probe:settings:v1` | 每个请求带 `x-probe-openai-key` / `x-probe-tavily-key` / `x-probe-model` |
-| 主题、字号、密度、动画、背景网格 | 同上 | 写到 `<html>` 的 `data-theme` / `data-density` / `data-anim` / `data-fx` |
+| 字号、密度、动画 | 同上 | 写到 `<html>` 的 `data-density` / `data-anim`，字号直接改根 `font-size` |
 | 布局快照 | `probe:layout:*` | 见上一章 |
 
 key 走请求头而不是查询串：查询串会进服务端访问日志，也会留在浏览器历史里。
@@ -228,9 +260,10 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 这种情况会在摘要区明说"摘要没有生成"，而不是留一片空白让人以为数据不全——
 面板里的数字与信源不依赖模型，照常可读。
 
-主题不是换一套 CSS，而是覆盖 Tailwind v4 的 `--color-cyan-*` 变量：utility 读的就是这些变量，
-所以 `text-cyan-400`、`bg-cyan-500/10`、`border-cyan-500/40` 会一起变色，不必去几十个组件里找类名。
-**但图表不会跟着变**——ECharts 的调色板写在 `compile.ts` 里，canvas 读不到 CSS 变量，面板里照实写了这句。
+这里没有「主题切换」，只有一套配色。之前的青/紫/琥珀三套皮肤连 `THEMES` 常量一起删掉了：
+一套界面配色要能说清「这个颜色是什么意思」，三套就得说清三遍。图表色板同理，写在
+`compile.ts` 的 `PALETTE` 里，是蓝的明度阶梯加一个中性灰——canvas 读不到 CSS 变量，
+所以这一份必须和界面手对齐。
 
 字号改的是根字号（15/16/17px）：Tailwind 的间距与字号都是 rem，改根字号等于整站等比缩放。
 密度改的是网格间距（紧凑 16 / 标准 24），不是给卡片加一层更小的 padding——
@@ -261,11 +294,11 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 
 1. **流式合帧**（`src/hooks/useProbe.ts`）：原来每个 `text.delta` 都 `setState`，摘要每多一个字，整棵树（四张卡、两张图）就重渲染一次。现在攒进 ref、按 `requestAnimationFrame` 一帧只刷一次，并且遇到 `module.ready` / `done` 这类结构事件先强制 flush，保证顺序不乱。
 2. **ECharts 动画 1000ms → 240ms**（`src/lib/compile.ts`）：默认入场动画会在这 1 秒里每帧重绘 canvas；情报工具不需要「图表长出来」的仪式感。
-3. **`backdrop-filter` 查了一遍，最后留着**（`src/app/globals.css` 的 `.panel`）：一度以为「十几张卡各带一层 `blur(24px)`」是滚动掉帧的元凶，就去掉了。随后做 A/B（运行时注入/撤掉 `.panel` 的 blur，首页 12 张卡）——**去掉 blur 之后滚动 231fps、最长帧 8.4ms；带着 blur 是 234fps、最长帧还是 8.4ms**，4 倍 CPU 降频下也一样。之后又只针对流式段做了 A/B（页面启动前注入 `backdrop-filter: none`）：带 blur 最长帧 112.3–112.6ms，去掉是 104–108ms，差 4–8ms——有成本，但落在噪声里。原因大概是卡片背后只有一层静态渐变，Chrome 把这层采样缓存住了。所以这是冤枉的，blur 恢复（它是这套界面的一部分）。真正留下的是 `contain: layout style`——让卡片内部布局不外溢，拖拽时少一次全局布局计算。
-4. **hover 光晕改成常驻层 + 改透明度**：原来是把 `box-shadow` 从无过渡到一片大范围模糊阴影，指针扫过一排卡片时每张卡都要重新光栅化；现在阴影在一次绘制里、之后只切 `opacity`，非 hover 状态干脆 `visibility: hidden`（连绘制准备都跳过）。
-5. **背景渐变搬进 fixed 伪元素**：写在 `body` 上的 `background-image`，即使加了 `background-attachment: fixed`，滚动时浏览器仍会重绘整块视口背景。现在是两层固定的合成层（`body::before` 辉光 + 扫描线、`body::after` 网格 + mask），滚动只移动内容层。
+3. **`backdrop-filter` 的旧账**（`src/app/globals.css` 的 `.panel`）：旧皮肤上十几张卡各带一层 `blur(24px)`，我们做过 A/B（首页 12 张卡，运行时注入/撤掉 blur）——**去掉 blur 滚动 231fps、最长帧 8.4ms；带着 blur 234fps、最长帧还是 8.4ms**，4 倍降频下也一样；只测流式段（带 blur 112.3–112.6ms vs 去掉 104–108ms）差 4–8ms，落在噪声里。所以它当年不算性能问题。现在整套 `backdrop-filter` 随新设计一起删了：**干净不是为了省帧，省帧只是顺带**。留着的是 `contain: layout style`——卡片内部布局不外溢，拖拽时少一次全局布局计算。
+4. **hover 只改边框颜色**：旧版是让 `box-shadow` 从无过渡到一片大范围模糊阴影，指针扫过一排卡片时每张都要重新光栅化（后来改成常驻层切 `opacity`）。新版干脆不用阴影——hover 只把 1px 边框从 `#262626` 提到 `#404040`，`transition` 只有 `border-color 160ms`，颜色插值不新建任何绘制层。
+5. **背景只剩一个颜色**：`body` 上只有 `background-color: #0a0a0a`。中间那一版把辉光、扫描线、64px 网格铺在两个 `fixed` 伪元素上（滚动只移动内容层，确实是优化），但新设计里这三层一个都不该存在——**最省的重绘是不画**。
 6. **`ResizeObserver` 让 canvas 跟着卡片走**（`ModuleCard` 里的 `ChartBox`）：ECharts 只知道窗口尺寸，不知道卡片被拖大了——原来把卡从 4×8 拖到 6×11，图会被拉花。现在按帧去抖后 `resize()`。
-7. **拖拽期间降级**（`ModuleGrid` 在 `<body>` 上挂 `.grid-interacting`）：过渡、发丝光、外发光全关掉，只剩移动一个已光栅化的图层，松手恢复。
+7. **拖拽期间降级**（`ModuleGrid` 在 `<body>` 上挂 `.grid-interacting`）：拖起来的那张卡与邻居本来都要重画，期间把 `.panel` 的 `border-color` 过渡关掉，只搬动已光栅化的图层，松手恢复。
 8. **`memo` 挡在网格外**（`ModuleGrid` / `ModuleCard` / `SourceList`）：流式期间摘要每帧变，但 `modules` / `sources` 的引用没变，网格不必跟着重跑 `react-grid-layout` 的布局计算。
 9. **尊重 `prefers-reduced-motion`**：关掉光标闪烁与骨架流动。这不是性能，是礼貌。
 

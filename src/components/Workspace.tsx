@@ -161,36 +161,31 @@ export default function Workspace({
   }, [initialQuery]);
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-10 sm:px-8">
-      <header className="flex flex-wrap items-end justify-between gap-6">
-        <div>
-          <h1 className="flex items-center">
-            <ProbeLogo size={17} />
-          </h1>
-          <p className="mt-2 text-sm text-neutral-400">无源不显示 · 缺失不填 0</p>
-        </div>
+    <main className="mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-8 sm:px-8">
+      {/* 一条细线切出功能区：上面只有身份与状态，下面是输入与结果。 */}
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-neutral-800 pb-5">
+        <ProbeLogo size={17} />
         <div className="flex items-center gap-3">
           {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 font-mono text-[11px] text-neutral-300 transition-[border-color,background-color,color] hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
+            className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
             aria-haspopup="dialog"
           >
-            <span aria-hidden className="text-[10px] text-cyan-400">⚙</span>
+            <span aria-hidden className="text-neutral-600">
+              ⚙
+            </span>
             设置
           </button>
         </div>
       </header>
 
-      {/* HUD 分隔线：从青色渐隐到透明，给标题区和数据区一道分界。 */}
-      <div className="h-px w-full bg-gradient-to-r from-cyan-500/40 via-white/[0.06] to-transparent" />
-
       <SearchBar running={running} value={input} onChange={setInput} onRun={runWithSettings} />
 
       {state.intent && (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] px-4 py-2.5 font-mono text-[10px] text-neutral-400">
-          <span className="text-cyan-400/90">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-2.5 font-mono text-[10px] text-neutral-500">
+          <span className="text-blue-500">
             意图 · {KIND_TEXT[state.intent.kind] ?? state.intent.kind}
           </span>
           <span>
@@ -238,7 +233,7 @@ export default function Workspace({
 
           {state.text && (
             <div className="panel p-6">
-              <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-200">
+              <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-300">
                 {state.text}
                 {running && <span className="caret" />}
               </p>
@@ -247,7 +242,7 @@ export default function Workspace({
 
           {running && state.modules.length === 0 && (
             <div className="flex items-center gap-2 px-1 font-mono text-[11px] text-neutral-500">
-              <span className="h-1 w-1 animate-pulse rounded-sm bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]" />
+              <span className="h-1 w-1 animate-pulse bg-blue-500" />
               正在检索多源…
             </div>
           )}
@@ -265,10 +260,10 @@ export default function Workspace({
 
           {state.sources.length > 0 && (
             <section className="panel overflow-hidden">
-              <header className="flex items-center justify-between px-6 pb-1 pt-5">
+              <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pb-1 pt-4">
                 <span className="text-sm font-semibold text-white">
                   原始信源
-                  <span className="ml-2 font-mono text-xs font-bold tabular-nums text-cyan-400">
+                  <span className="ml-2 font-mono text-xs font-bold tabular-nums text-blue-500">
                     {state.sources.length}
                   </span>
                 </span>
@@ -283,7 +278,7 @@ export default function Workspace({
           )}
 
           {state.status === "done" && state.degraded.length > 0 && (
-            <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.06] px-4 py-3 text-[10px] leading-relaxed text-amber-300/85">
+            <div className="rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[10px] leading-relaxed text-yellow-500/90">
               <Term k="degraded">降级项</Term>：
               {state.degraded.map(degradeText).join(" · ")}
               （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
@@ -300,11 +295,12 @@ export default function Workspace({
                   <Term k="independence">独立稿源</Term> {state.confidence.nOwners} 个
                 </span>
               )}
+              <span className="text-neutral-700">无源不显示 · 缺失不填 0</span>
             </footer>
           )}
 
           {state.status === "failed" && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.07] px-4 py-3 text-[11px] text-rose-400">
+            <div className="rounded-md border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-[11px] text-red-400">
               请求失败：{state.error}
             </div>
           )}

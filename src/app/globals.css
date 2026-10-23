@@ -1,31 +1,35 @@
 @import "tailwindcss";
 
-/* 赛博朋克情报终端（Palantir console）：纯黑底 + 青色 HUD 高光 + 毛玻璃面板。
-   所有"边框"都用极低透明度白/青叠出来，不用实线，避免一眼看去像传统后台三栏表格。 */
+/* 极简数据终端（Vercel / Linear 那一套）：
+   纯黑页面 + 深灰卡片 + 1px 实线边框 + 单一强调色（蓝）。
+   这里没有毛玻璃、没有发光阴影、没有渐变背景、没有扫描线 —— 层级只靠
+   「底色差 + 边框亮度」两件事表达，其余交给留白。 */
+
 :root {
-  --bg: #050507;
-  --panel: rgba(10, 10, 12, 0.8);
-  --panel-hover: rgba(13, 13, 16, 0.88);
-  --line: rgba(255, 255, 255, 0.05);
-  --text: #ededf0;
-  --dim: #737373;
-  --dim-2: #a3a3a3;
-  --accent: #22d3ee;
-  /* 供伪元素与内联 style 拼 rgba 用（CSS 变量不能塞进 rgba() 的逗号语法）。 */
-  --accent-rgb: 34 211 238;
-  --accent-soft: rgb(var(--accent-rgb) / 0.1);
-  --good: #34d399;
-  --warn: #fbbf24;
-  --bad: #fb7185;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial,
-    sans-serif;
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --surface-2: #0f0f0f;
+  --line: #262626; /* neutral-800 */
+  --line-strong: #404040; /* neutral-700 */
+  --text: #ffffff;
+  --body: #a3a3a3; /* neutral-400 */
+  --dim: #525252; /* neutral-600 */
+  --accent: #3b82f6; /* blue-500，与 Logo 的节点蓝同族 */
+  /* 供内联 style 与伪元素拼 rgb() 用（CSS 变量不能塞进 rgba() 的逗号语法）。 */
+  --accent-rgb: 59 130 246;
+  /* 语义色只有两个：红 = 出错 / 高危，黄 = 降级 / 需要留意。其余一律蓝或灰。 */
+  --danger: #ef4444;
+  --warn: #eab308;
+  --radius: 6px;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+    "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
     "JetBrains Mono", "Liberation Mono", monospace;
 }
 
 /* 自定义基础规则必须放进 @layer base：无层级的元素选择器会压掉 utilities 层，
-   导致组件上的 text-neutral-300 / hover:text-white 全部失效（踩过一次）。 */
+   导致组件上的 text-neutral-400 / hover:text-white 全部失效（踩过一次）。 */
 @layer base {
   * {
     box-sizing: border-box;
@@ -37,61 +41,29 @@
     padding: 0;
     color: var(--text);
     font-family: var(--font-sans);
-    font-feature-settings: "ss01" 1;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
-  /* 底色只留纯色。
-     渐变原来画在 body 的 background-image 上：即使写了 background-attachment: fixed，
-     滚动时 Chrome 仍会重绘整块视口背景（大面积渐变 + 混合），这是滚动掉帧的头号来源。
-     移到 fixed 伪元素后，它成为一个不动的合成层，滚动只需要移动内容层。 */
+  /* 一整块纯色，没有背景图 —— 滚动时不需要重绘任何背景层。 */
   body {
     background-color: var(--bg);
   }
 
-  /* 辉光 + 扫描线合到同一层：三层 radial 打出正上方的青色光与两侧冷色，
-     4px 周期的横向扫描线给一点"CRT"质感。合成层固定，滚动不重绘。 */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background-image: repeating-linear-gradient(
-        to bottom,
-        rgba(255, 255, 255, 0.014) 0 1px,
-        transparent 1px 4px
-      ),
-      radial-gradient(1100px 640px at 50% -18%, rgb(var(--accent-rgb) / 0.1), transparent 62%),
-      radial-gradient(900px 520px at 6% 6%, rgba(56, 189, 248, 0.055), transparent 64%),
-      radial-gradient(760px 480px at 98% 0%, rgba(168, 85, 247, 0.05), transparent 62%);
-    background-repeat: no-repeat;
-    background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-  }
-
-  /* 底纹：细网格，用 mask 从顶部向下淡出。
-     原来网格和扫描线是两层全屏 fixed 伪元素 —— 每帧多一次全屏 alpha 混合，白给的。 */
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background-image: linear-gradient(rgb(var(--accent-rgb) / 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.03) 1px, transparent 1px);
-    background-size: 64px 64px;
-    mask-image: radial-gradient(ellipse at 50% 0%, black 8%, transparent 70%);
-  }
-
   ::selection {
-    background: rgb(var(--accent-rgb) / 0.26);
+    background: rgb(var(--accent-rgb) / 0.3);
     color: #ffffff;
   }
 
   a {
     color: inherit;
     text-decoration: none;
+  }
+
+  /* 焦点环统一成 1px 蓝，不用浏览器默认的双色描边。 */
+  :focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
   }
 }
 
@@ -105,7 +77,7 @@ kbd {
 
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: rgb(var(--accent-rgb) / 0.22) transparent;
+  scrollbar-color: #333333 transparent;
 }
 
 .scroll-thin::-webkit-scrollbar {
@@ -114,94 +86,36 @@ kbd {
 }
 
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: rgb(var(--accent-rgb) / 0.18);
-  border-radius: 4px;
+  background: #333333;
+  border-radius: 2px;
 }
 
 .scroll-thin::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--accent-rgb) / 0.34);
+  background: var(--line-strong);
 }
 
-/* 情报面板：卡片、弹层、KPI 格共用同一套表面。
-   顶部一条青色渐变发丝光 + hover 时外扩青光，是这套界面唯一的"装饰"。
-
-   毛玻璃（backdrop-filter）曾经被当成性能炸弹，实测是冤枉的：
-   把 .panel 的 blur(24px) 去掉做 A/B，首页滚动 231fps vs 234fps、最长帧都是 8.4ms，
-   4 倍 CPU 降频下也一样 —— 卡片背后只有一层静态渐变，Chrome 把它缓存住了。
-   所以 blur 留着（它是这套界面的一部分），只留下真正有收益的改动：
-   contain: layout style 让卡片内部布局不外溢，拖拽时少一次全局布局计算。 */
+/* ——— 表面 ———
+   卡片、弹层、KPI 格共用同一个表面：#111 + 1px 实线 + 6px 圆角。
+   hover 只把边框从 neutral-800 提到 neutral-700，不发光、不改底色、不加阴影。 */
 .panel {
   position: relative;
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 42%);
-  background-color: var(--panel);
-  backdrop-filter: blur(24px) saturate(150%);
+  background-color: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  isolation: isolate;
+  border-radius: var(--radius);
   contain: layout style;
-  transition: border-color 200ms ease, background-color 200ms ease;
-}
-
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  border-radius: 12px 12px 0 0;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    rgb(var(--accent-rgb) / 0.6),
-    rgb(var(--accent-rgb) / 0.14) 42%,
-    transparent 72%
-  );
-  opacity: 0.75;
-  transition: opacity 220ms ease;
+  transition: border-color 160ms ease;
 }
 
 .panel:hover {
-  background-color: var(--panel-hover);
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--line-strong);
 }
 
-.panel:hover::before {
-  opacity: 1;
-}
-
-/* hover 的外扩青光单独放一层、只动画 opacity。
-   原来直接把 box-shadow 从"无"过渡到"大范围模糊阴影"：阴影是整张卡面积的外扩模糊，
-   指针扫过一排卡片时，浏览器要为每张卡重新光栅化一片大模糊。改成常驻层 + 改透明度，
-   光栅化一次就够，之后只是合成 —— 这是 hover 掉帧最省事的解法。 */
-.panel::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.05), 0 28px 70px -52px rgb(var(--accent-rgb) / 0.55);
-  opacity: 0;
-  /* 不只是透明：visibility: hidden 的元素连绘制准备都跳过。
-     首页一屏就有十几张卡，只靠 opacity: 0 的话，每张卡那片大模糊阴影仍在场景里；
-     用 visibility 才能真正把非 hover 的阴影从渲染里拿掉。延时切换是为了让淡出跑完。 */
-  visibility: hidden;
-  transition: opacity 200ms ease, visibility 0s linear 200ms;
-}
-
-.panel:hover::after {
-  opacity: 1;
-  visibility: visible;
-  transition: opacity 200ms ease, visibility 0s linear 0s;
-}
-
-/*
- * 侧栏（DIY 入口）是随流结束才出现的块：从下方 6px 升起一次，告诉用户
- * 「这个区域刚才有内容」。只跑一次、200ms，不做循环动画（循环动画会一直占合成器）。
- */
+/* 侧栏（DIY 入口）随流结束才出现：从下方 4px 升起一次，200ms。
+   只跑一次，不做循环动画（循环动画会一直占合成器）。 */
 @keyframes panel-rise {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -213,40 +127,34 @@ kbd {
   animation: panel-rise 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* 新加的卡片闪一下：给出位置，比弹 toast 更少打断。 */
+/* 新加的卡片给一圈 1px 蓝描边停 1.4 秒 —— 不用发光，也不用 toast 打断。 */
 .card-flash {
-  box-shadow:
-    0 0 0 2px rgb(var(--accent-rgb) / 0.55),
-    0 0 44px -10px rgb(var(--accent-rgb) / 0.5);
-  transition: box-shadow 180ms ease;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .skeleton {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.03) 25%,
-    rgb(var(--accent-rgb) / 0.09) 37%,
-    rgba(255, 255, 255, 0.03) 63%
-  );
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  background: #171717;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: 100% 50%;
-  }
+@keyframes skeleton-pulse {
+  0%,
   100% {
-    background-position: 0 50%;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
   }
 }
 
-/* 拖拽布局（react-grid-layout）：默认占位块是醒目的红色，会盖住卡片内容。 */
+/* ——— 拖拽布局（react-grid-layout）———
+   默认占位块是醒目的红色，会盖住卡片内容；这里换成蓝的极淡描边。 */
 .react-grid-item.react-grid-placeholder {
-  background: rgb(var(--accent-rgb) / 0.08);
+  background: rgb(var(--accent-rgb) / 0.06);
+  border: 1px solid rgb(var(--accent-rgb) / 0.4);
+  border-radius: var(--radius);
   opacity: 1;
-  border: 1px dashed rgb(var(--accent-rgb) / 0.45);
-  border-radius: 12px;
   transition-duration: 80ms;
 }
 
@@ -256,30 +164,19 @@ kbd {
   transition: none;
 }
 
-/* 拖起来的卡片要浮在其余卡片之上：抬阴影 + 抬青光，而不是加更粗的边。 */
+/* 拖起来的卡片靠「更亮的边框 + 更亮一档的底色 + 中性黑阴影」浮起来：
+   阴影是黑的，不是发光的 —— 它只负责分层，不抢注意力。 */
 .react-grid-item.react-draggable-dragging > .panel,
 .react-grid-item.resizing > .panel,
 .react-grid-item.react-draggable-dragging .panel {
-  border-color: rgb(var(--accent-rgb) / 0.35);
-  box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.95), 0 0 24px -6px rgb(var(--accent-rgb) / 0.35);
+  border-color: var(--line-strong);
+  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.9);
 }
 
 /* 拖拽/缩放进行中：ModuleGrid 会在 <body> 上挂 .grid-interacting。
-   这时候指针每动一帧，被拖的卡和它身边的卡都要重绘；只要把"装饰"全关掉，
-   浏览器就只剩搬动一个已光栅化的图层。松手后一切恢复，观感只是"手里的卡更亮"。 */
+   指针每动一帧，被拖的卡与邻居都要重画；期间关掉边框过渡，只搬动已光栅化的图层。 */
 .grid-interacting .panel {
   transition: none;
-}
-
-.grid-interacting .panel::after,
-.grid-interacting .panel::before {
-  opacity: 0;
-  visibility: hidden;
-  transition: none;
-}
-
-.grid-interacting .react-grid-item:not(.react-draggable-dragging):not(.resizing) > .panel {
-  box-shadow: none;
 }
 
 .react-grid-item > .react-resizable-handle {
@@ -288,7 +185,7 @@ kbd {
 }
 
 .react-grid-item:hover > .react-resizable-handle {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 /* 拖拽把手：可抓取时才有 grab 光标，流式期间不渲染这个元素。 */
@@ -305,7 +202,6 @@ kbd {
   margin-left: 3px;
   vertical-align: -0.15em;
   background: var(--accent);
-  box-shadow: 0 0 10px rgb(var(--accent-rgb) / 0.9);
   animation: blink 1s step-end infinite;
 }
 
@@ -320,61 +216,22 @@ kbd {
   }
 }
 
-/* 系统里开了"减少动态效果"的人，不该被闪烁的光标和流动的骨架条晃到。
-   这不是性能优化，是尊重 —— 顺手也省掉两个常驻动画的合成开销。 */
+/* 系统里开了"减少动态效果"的人，不该被闪烁的光标和呼吸的骨架块晃到。 */
 @media (prefers-reduced-motion: reduce) {
   .skeleton,
-  .caret::after {
+  .caret::after,
+  .rise {
     animation: none;
   }
 
   .panel,
-  .panel::before,
-  .panel::after,
   .react-grid-item {
     transition: none;
   }
 }
-/* ——— 主题 ———
-   Tailwind v4 的 utility 全部读 --color-cyan-*，所以换主题只要改这些变量，
-   不需要在几十个组件里找 text-cyan-400。--accent 给内联 style 与伪元素用。
-   注：ECharts 图表的调色板写在 src/lib/compile.ts 里（canvas 读不到 CSS 变量），
-   所以切主题后图表仍是青色系 —— 面板里照实写了这一点。 */
-[data-theme="violet"] {
-  --accent: #a78bfa;
-  --accent-rgb: 167 139 250;
-  --accent-soft: rgb(167 139 250 / 0.1);
-  --color-cyan-100: #ede9fe;
-  --color-cyan-200: #ddd6fe;
-  --color-cyan-300: #c4b5fd;
-  --color-cyan-400: #a78bfa;
-  --color-cyan-500: #8b5cf6;
-  --color-cyan-600: #7c3aed;
-  --color-cyan-700: #6d28d9;
-  --color-cyan-800: #5b21b6;
-  --color-cyan-900: #4c1d95;
-  --color-cyan-950: #2e1065;
-}
-
-[data-theme="amber"] {
-  --accent: #fbbf24;
-  --accent-rgb: 251 191 36;
-  --accent-soft: rgb(251 191 36 / 0.1);
-  --color-cyan-100: #fef3c7;
-  --color-cyan-200: #fde68a;
-  --color-cyan-300: #fcd34d;
-  --color-cyan-400: #fbbf24;
-  --color-cyan-500: #f59e0b;
-  --color-cyan-600: #d97706;
-  --color-cyan-700: #b45309;
-  --color-cyan-800: #92400e;
-  --color-cyan-900: #78350f;
-  --color-cyan-950: #451a03;
-}
 
 /* ——— 关掉动效 ———
-   不删规则只把时长压到 0：最终状态（hover 的光晕、骨架条的静止渐变）都还在，
-   但不再有任何一帧在动。比逐个组件判断 prefers-reduced-motion 可靠。 */
+   不删规则只把时长压到 0：最终状态都还在，但不再有任何一帧在动。 */
 [data-anim="off"] *,
 [data-anim="off"] *::before,
 [data-anim="off"] *::after {
@@ -383,11 +240,4 @@ kbd {
   animation-duration: 0s !important;
   animation-delay: 0s !important;
   animation-iteration-count: 1 !important;
-}
-
-/* ——— 关掉背景网格与扫描线 ———
-   两层都是 fixed 全屏合成层。低端设备上这不是装饰，是每帧一次全屏混合。 */
-[data-fx="off"] body::before,
-[data-fx="off"] body::after {
-  display: none;
 }

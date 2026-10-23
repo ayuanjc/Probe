@@ -140,7 +140,7 @@ function ModuleGrid({
   // SSR / 首次测量前：先按顺序铺一遍，避免和水合后的网格位置对不上。
   if (!mounted || width < GRID_MIN_WIDTH) {
     return (
-      <div className="flex flex-col gap-6" ref={containerRef}>
+      <div className="flex flex-col gap-4" ref={containerRef}>
         {width > 0 && width < GRID_MIN_WIDTH && (
           <div className="px-1 font-mono text-[10px] text-neutral-600">
             窗口较窄：卡片单列排布，拖拽已停用。
@@ -154,7 +154,7 @@ function ModuleGrid({
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-6">
+    <div ref={containerRef} className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10px] text-neutral-600">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {unlocked ? (
@@ -175,13 +175,13 @@ function ModuleGrid({
             <span>结果生成中：布局已锁定，完成之后可拖拽。</span>
           )}
           {notice && <span className="text-neutral-500">{notice}</span>}
-          {saveFailed && <span className="text-amber-400">本机存储写入失败，布局不会被记住。</span>}
+          {saveFailed && <span className="text-yellow-500">本机存储写入失败，布局不会被记住。</span>}
         </span>
         {unlocked && (
           <button
             type="button"
             onClick={reset}
-            className="cursor-pointer rounded border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
+            className="cursor-pointer rounded border border-neutral-800 px-2.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
           >
             重置布局
           </button>

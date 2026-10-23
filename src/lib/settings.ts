@@ -9,7 +9,6 @@ import { CONFIG_HEADERS } from "@/lib/config-headers";
  * 不落盘、不写日志、不跨请求复用。别人的浏览器拿不到你的 key。
  */
 
-export type ThemeId = "cyan" | "violet" | "amber";
 export type Density = "compact" | "normal";
 export type FontSize = "sm" | "md" | "lg";
 
@@ -17,11 +16,9 @@ export type Settings = {
   openaiKey: string;
   tavilyKey: string;
   model: string;
-  theme: ThemeId;
   density: Density;
   fontSize: FontSize;
   animation: boolean;
-  effects: boolean;
 };
 
 export const SETTINGS_KEY = "probe:settings:v1";
@@ -31,18 +28,10 @@ export const DEFAULT_SETTINGS: Settings = {
   openaiKey: "",
   tavilyKey: "",
   model: "",
-  theme: "cyan",
   density: "normal",
   fontSize: "md",
   animation: true,
-  effects: true,
 };
-
-export const THEMES: { id: ThemeId; label: string; swatch: string; accent: string }[] = [
-  { id: "cyan", label: "青色", swatch: "#22d3ee", accent: "#22d3ee" },
-  { id: "violet", label: "紫色", swatch: "#a78bfa", accent: "#a78bfa" },
-  { id: "amber", label: "琥珀", swatch: "#fbbf24", accent: "#fbbf24" },
-];
 
 /** 卡片间距（px）：紧凑 16 / 标准 24。面板文案与网格读同一个常量，避免两处对不上。 */
 export const GRID_GAP: Record<Density, number> = { compact: 16, normal: 24 };
@@ -66,11 +55,9 @@ export function readSettings(): Settings {
       openaiKey: str(o.openaiKey, 400),
       tavilyKey: str(o.tavilyKey, 400),
       model: str(o.model, 64),
-      theme: pick(o.theme, ["cyan", "violet", "amber"] as const, DEFAULT_SETTINGS.theme),
       density: pick(o.density, ["compact", "normal"] as const, DEFAULT_SETTINGS.density),
       fontSize: pick(o.fontSize, ["sm", "md", "lg"] as const, DEFAULT_SETTINGS.fontSize),
       animation: typeof o.animation === "boolean" ? o.animation : DEFAULT_SETTINGS.animation,
-      effects: typeof o.effects === "boolean" ? o.effects : DEFAULT_SETTINGS.effects,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -88,14 +75,12 @@ export function writeSettings(s: Settings): boolean {
   }
 }
 
-/** 主题、字号、密度、动效都通过 <html> 上的 data 属性 + 根字号驱动，不碰组件。 */
+/** 字号、密度、动效都通过 <html> 上的 data 属性 + 根字号驱动，不碰组件。 */
 export function applySettings(s: Settings): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.dataset.theme = s.theme;
   root.dataset.density = s.density;
   root.dataset.anim = s.animation ? "on" : "off";
-  root.dataset.fx = s.effects ? "on" : "off";
   // Tailwind 的间距/字号都是 rem，改根字号等于整站等比缩放。
   root.style.fontSize = s.fontSize === "sm" ? "15px" : s.fontSize === "lg" ? "17px" : "16px";
 }

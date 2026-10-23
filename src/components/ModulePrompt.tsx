@@ -165,8 +165,8 @@ export default function ModulePrompt({
       </p>
 
       <form onSubmit={submit} className="mt-3 flex flex-col gap-2">
-        <div className="flex items-center gap-2 rounded-xl border border-cyan-500/25 bg-black/50 px-3 py-2 transition-[border-color,box-shadow] focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.18)]">
-          <span aria-hidden className="font-mono text-xs leading-none text-cyan-400/80">
+        <div className="flex items-center gap-2 rounded-md border border-neutral-800 bg-[#0f0f0f] px-3 py-2 transition-colors focus-within:border-neutral-600">
+          <span aria-hidden className="font-mono text-xs leading-none text-neutral-600">
             ＋
           </span>
           <input
@@ -181,7 +181,7 @@ export default function ModulePrompt({
         <button
           type="submit"
           disabled={busy || !instruction.trim()}
-          className="w-full cursor-pointer rounded-xl border border-cyan-500/30 bg-cyan-500/10 py-2 font-mono text-[11px] text-cyan-200 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-neutral-600"
+          className="w-full cursor-pointer rounded-md border border-neutral-700 bg-neutral-800 py-2 font-mono text-[11px] text-white transition-colors hover:border-neutral-600 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-[#0f0f0f] disabled:text-neutral-600" 
         >
           {busy ? "生成中…" : "生成"}
         </button>
@@ -198,7 +198,7 @@ export default function ModulePrompt({
                 type="button"
                 title={text}
                 onClick={() => setInstruction(text)}
-                className="w-full cursor-pointer truncate rounded-md border border-white/5 bg-white/[0.03] px-2 py-1 text-left font-mono text-[10px] text-neutral-500 transition-colors hover:border-cyan-500/30 hover:text-neutral-300"
+                className="w-full cursor-pointer truncate rounded border border-neutral-800 px-2 py-1 text-left font-mono text-[10px] text-neutral-500 transition-colors hover:border-neutral-600 hover:text-neutral-300"
               >
                 {text}
               </button>
@@ -212,14 +212,14 @@ export default function ModulePrompt({
       </p>
 
       {error && (
-        <p className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.07] px-3 py-2 text-[11px] leading-relaxed text-rose-300/90">
+        <p className="mt-3 rounded border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-red-400">
           {error}
         </p>
       )}
 
       {ok && (
-        <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] px-3 py-2">
-          <p className="font-mono text-[10px] leading-relaxed text-cyan-200/85">
+        <div className="mt-3 rounded border border-blue-500/25 bg-blue-500/[0.05] px-3 py-2">
+          <p className="font-mono text-[10px] leading-relaxed text-blue-400">
             已加入网格：{ok.title} ·{" "}
             {ok.engine === "llm" ? "模型在已有数据集里挑的" : "本地关键词规则挑的"} · {ok.reason}
           </p>
@@ -227,7 +227,7 @@ export default function ModulePrompt({
             <button
               type="button"
               onClick={() => onReveal(ok.id)}
-              className="mt-2 cursor-pointer rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 font-mono text-[10px] text-cyan-200 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20"
+              className="mt-2 cursor-pointer rounded border border-neutral-700 bg-neutral-800 px-2.5 py-1 font-mono text-[10px] text-white transition-colors hover:border-neutral-600 hover:bg-neutral-700"
             >
               去看看 →
             </button>
