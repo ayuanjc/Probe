@@ -1,0 +1,24 @@
+# deps
+node_modules/
+.pnp
+.pnp.js
+
+# next build
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# misc
+.DS_Store
+Thumbs.db
+*.log
+.vercel
+coverage/
