@@ -87,8 +87,8 @@ export default function TrendingBoard({
               </div>
 
               <ul className="mt-4 space-y-3">
-                {t.stories.map((s) => (
-                  <li key={s.url} className="flex items-start gap-2.5">
+                {t.stories.map((s, i) => (
+                  <li key={s.url + "::" + i} className="flex items-start gap-2.5">
                     <span
                       className="mt-[7px] h-1 w-1 shrink-0 rounded-sm bg-cyan-500 shadow-[0_0_6px_rgba(34,211,238,0.85)]"
                       aria-hidden
