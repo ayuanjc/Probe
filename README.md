@@ -86,6 +86,10 @@ score = 0.40 × 一手性 + 0.35 × 独立性 + 0.25 × 一致性
 - 按词边界匹配实体词典，同一个话题被 **两条以上** 提到才上榜（一条不足以叫热点，只能叫新闻）。
 - **按提及条数排序，不按 points 之和**：三条爆款（TLS，1068 分）会盖过十三家在提的实体
   （谷歌，411 分），那不是热度，是单篇运气。
+- 同一话题内按 **URL 去重**：HN 上同一篇稿子被重复提交是常态（多条 story、不同 objectID、
+  外链一模一样）。不收敛的后果是列表里同一链接出现两次（React 列表 key 冲突）加上
+  「N 条在提」把同一篇稿子数两遍 —— 那是提交次数，不是报道数。去重保留 points 最高的那条，
+  去重后不足两条的话题不上榜。
 - 缓存 10 分钟；话题名与检索词分开（展示 `人工智能`，检索 `artificial intelligence`），
   否则中文话题丢进英文索引必然 0 命中。
 
@@ -123,14 +127,102 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 - **窗口 < 720px 退回单列**并说明拖拽已停用。12 列在这个宽度下每列不到 40px，
   拖出来的位置没有任何意义。
 
+## 术语解释：把"行话"摊开在鼠标下面
+
+「一手性」「独立性」「歧义」这些词是产品的核心口径，也是用户最容易误读的地方——
+把「置信度 0.74」看成「74% 正确」的人不止一个。所以每个术语都是一个可展开的
+`Term`（`src/components/Glossary.tsx`，词条在 `src/lib/glossary.ts`）：
+
+- **三通道打开**：hover（鼠标）、focus（Tab 到）、点击（触屏）。只做 hover 等于
+  把触屏和平板用户挡在外面。
+- **不用原生 `title`**：原生提示延迟一秒、不可选中、不能换行，塞不下"公式 + 口径 + 已知盲点"三段。
+- **弹层写在 DOM 里**（不是 portal），`role="tooltip"` + 内层 `aria-label`；
+  Escape 与点外部关闭。
+- 词条正文写清**它不是什么**（"置信度是证据强度，不是正确概率"），比只写定义有用。
+
+## 双语对照：颜色标的是"可核对的差异"，不是翻译质量
+
+点任一条信源的「对照原文」，服务端抓正文、分段、翻译，逐段左边原文右边译文
+（`src/lib/translate.ts` + `src/components/BilingualCompare.tsx`）。
+
+**歧义度由机械比对算出来，不问模型。** 让模型给自己的译文打分歧分，它永远给 0.9——
+那是自评，不是证据。实际用的是可核对、可复现的五类信号：
+
+| 信号 | 触发条件 |
+| --- | --- |
+| 数字丢失 | 原文里的数字在译文里找不到（正则排除 `Q3` / `H200` 这类编号里的数字） |
+| 专名未保留 | 公司/产品/人名被意译掉，读者搜不到原始出处 |
+| 未译残留 | 译文里还留着成串英文（单句首大写词如 `Rust` 不算——那本来就该保留） |
+| 篇幅比例异常 | 英译中落在 0.22–1.05 之外，通常意味着漏译或自我发挥 |
+| 原文本身含糊 | may / could / 据称 / 消息源模糊 —— 翻得再准，读者也会读成确定结论 |
+
+`risk = 1 - Π(1 - w)`，分档 <0.30 低（青）、<0.60 中（琥珀）、否则高（玫红）。
+图例里写死了"不是质量评分"：青色只代表数字和专名都对得上，不代表这段话可信。
+
+几条必须守住的边界：
+
+- **内网地址不抓**（localhost / `.local` / `10.` / `192.168.` / `172.16-31` / `169.254.`）——
+  这个接口是"让服务器替我访问任意 URL"，不收口就是 SSRF 跳板。
+- **抓不到正文就退回标题与片段**，并在面板里写明"只对照了标题与片段"，
+  而不是默默拿标题当全文翻。
+- **原文本来就是中文时不翻**（`targetFor` 恒为 `zh`）：把中文报告"翻译"成英文
+  对读中文的人没有价值，只会多一层机器改写，于是单栏出原文、不给颜色。
+- **没译成不记 0 分**：0 分在界面上等于"没问题"，而这一段恰恰最该被怀疑。
+- 引擎分级写清楚：有 `OPENAI_API_KEY` 走模型，否则用 MyMemory 公共接口，
+  都不行就只给原文分段。面板里永远标注**谁翻的**。
+- 公共接口有每日配额，长文只翻得成前一部分（实测 41 段里翻成 20 段）：
+  剩下的如实标成"未翻成，保留原文"，并在降级条里写 X/Y。
+
+**一个非写不可的坑**：本机 `NODE_USE_ENV_PROXY=1` 时，Node 的 `fetch` 会走
+`HTTPS_PROXY`，而那条链路对 `api.mymemory.translated.net` 会 `ECONNRESET`
+（实测 6/6 失败；同一 URL 直连 100% 成功，curl 走代理也正常）。所以抓正文与调翻译
+都不走 `fetch`，改用 `node:https` 的 `getDirect`（`src/lib/http.ts`）——
+它默认不读代理环境变量。附带好处是重定向、超时、字节上限都握在自己手里。
+
+## 性能：帧率按「最长的那一帧」算，不按平均值
+
+平均值骗人。240Hz 屏上一秒 240 帧，只要有 3 帧掉了 60ms，手感就是「卡一下」，而平均帧率仍然是 230fps。所以这里的验收口径是 **LoAF（long-animation-frame）**：浏览器原生告诉你「这一帧超过 50ms 了吗、渲染开始得多晚、里面脚本占多少」。
+
+测量方式（`PerformanceObserver({ type: "long-animation-frame" })` + rAF 帧间隔采样），1440×1000、`next start` 生产构建、每档跑 3 次看区间：
+
+| 场景 | 改前 最长帧 (ms) | 改后 最长帧 (ms) | 说明 |
+| --- | --- | --- | --- |
+| 流式输出期间 | 413 / 262 / 229 | 246 / 229 / 213 | 中位 262 → 229（−13%）。**单次测量本身就能差 ±80ms**，所以只敢说中位，不敢说峰值 |
+| 流式 jank 帧（>33.4ms） | 5 / 6 / 6 | 5 / 5 / 6 | 每 2000 帧里 5 帧，0.3%，没变 |
+| 空闲 | 8.3 / **62.5** / 4.4 | 8.4 / **62.3** / 8.4 | 那 62ms 是偶发的，改前改后都会撞上一次 |
+| 滚动 | 16.7 / 8.4 / 12.6 | 8.4 / 8.3 / 8.5 | 三次都一样：首次滚动不再掉一帧 |
+| 拖拽 | 50.1 / 45.9 / 66.6 | 45.8 / 74.7 / 62.4 | **没有实质改善**，见下 |
+
+真正稳定的改善是**滚动**：三次测量全部 8.3–8.5ms（= 120Hz 的一帧，本机屏 240Hz 所以是四分之一帧），改前有一半的跑法会掉到 12–17ms。空闲与拖拽的帧率都在 200fps 以上。拖拽没变好：`react-grid-layout` 拖动时是 transform 位移，本来就该是合成层的事，但每次松手前它都要测一遍所有卡片的占位——这段成本它的 API 不给钩子，我们改不动。
+
+流式那 5 个 jank 帧也别指望消掉：那是 8.6 秒里 SSE 事件把三张卡依次塞进网格造成的，属于「内容真的变多了」，不是渲染浪费。
+
+### 具体做了什么
+
+1. **流式合帧**（`src/hooks/useProbe.ts`）：原来每个 `text.delta` 都 `setState`，摘要每多一个字，整棵树（四张卡、两张图）就重渲染一次。现在攒进 ref、按 `requestAnimationFrame` 一帧只刷一次，并且遇到 `module.ready` / `done` 这类结构事件先强制 flush，保证顺序不乱。
+2. **ECharts 动画 1000ms → 240ms**（`src/lib/compile.ts`）：默认入场动画会在这 1 秒里每帧重绘 canvas；情报工具不需要「图表长出来」的仪式感。
+3. **`backdrop-filter` 查了一遍，最后留着**（`src/app/globals.css` 的 `.panel`）：一度以为「十几张卡各带一层 `blur(24px)`」是滚动掉帧的元凶，就去掉了。随后做 A/B（运行时注入/撤掉 `.panel` 的 blur，首页 12 张卡）——**去掉 blur 之后滚动 231fps、最长帧 8.4ms；带着 blur 是 234fps、最长帧还是 8.4ms**，4 倍 CPU 降频下也一样。之后又只针对流式段做了 A/B（页面启动前注入 `backdrop-filter: none`）：带 blur 最长帧 112.3–112.6ms，去掉是 104–108ms，差 4–8ms——有成本，但落在噪声里。原因大概是卡片背后只有一层静态渐变，Chrome 把这层采样缓存住了。所以这是冤枉的，blur 恢复（它是这套界面的一部分）。真正留下的是 `contain: layout style`——让卡片内部布局不外溢，拖拽时少一次全局布局计算。
+4. **hover 光晕改成常驻层 + 改透明度**：原来是把 `box-shadow` 从无过渡到一片大范围模糊阴影，指针扫过一排卡片时每张卡都要重新光栅化；现在阴影在一次绘制里、之后只切 `opacity`，非 hover 状态干脆 `visibility: hidden`（连绘制准备都跳过）。
+5. **背景渐变搬进 fixed 伪元素**：写在 `body` 上的 `background-image`，即使加了 `background-attachment: fixed`，滚动时浏览器仍会重绘整块视口背景。现在是两层固定的合成层（`body::before` 辉光 + 扫描线、`body::after` 网格 + mask），滚动只移动内容层。
+6. **`ResizeObserver` 让 canvas 跟着卡片走**（`ModuleCard` 里的 `ChartBox`）：ECharts 只知道窗口尺寸，不知道卡片被拖大了——原来把卡从 4×8 拖到 6×11，图会被拉花。现在按帧去抖后 `resize()`。
+7. **拖拽期间降级**（`ModuleGrid` 在 `<body>` 上挂 `.grid-interacting`）：过渡、发丝光、外发光全关掉，只剩移动一个已光栅化的图层，松手恢复。
+8. **`memo` 挡在网格外**（`ModuleGrid` / `ModuleCard` / `SourceList`）：流式期间摘要每帧变，但 `modules` / `sources` 的引用没变，网格不必跟着重跑 `react-grid-layout` 的布局计算。
+9. **尊重 `prefers-reduced-motion`**：关掉光标闪烁与骨架流动。这不是性能，是礼貌。
+
+### 一个必须说清的坑
+
+`npm run dev` 下的数字**不能**用来判断渲染性能。Turbopack 的按需编译、React 开发版的双次渲染，都会在首次交互时塞进几百毫秒的长任务；同一个页面在 `next start` 下这些数字会凭空少一半。要复现上表，先 `npm run build` 再 `npm start`，且不要和 `next dev` 同时跑（两者共用 `.next`）。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
   lib/        schemas · confidence · heat · compile · layout · sse · llm · fixtures · entities · text · trending
-  app/        layout · page · globals.css · api/search/route.ts
+              glossary · lang · translate · translate-risk · translate-types · http
+  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
+              Glossary · BilingualCompare
   hooks/      useProbe.ts
 ```
 

@@ -9,8 +9,9 @@ import type { Dataset, ModuleSpec } from "./schemas";
  * JSON.parse 抓不到，只能靠编译器白名单拒绝。拒绝优于修正。
  */
 
+/** 霓虹赛博色板：青色打头（品牌色），其余保持高饱和、低明度背景上可读。 */
 export const PALETTE = [
-  "#5eead4",
+  "#22d3ee",
   "#818cf8",
   "#f472b6",
   "#fbbf24",
@@ -32,17 +33,27 @@ export type CompileResult = CompileOk | CompileError;
 
 const BASE: Record<string, unknown> = {
   backgroundColor: "transparent",
+  /**
+   * ECharts 默认入场 1000ms、更新 300ms。多张卡同时上线时，那一秒里每帧都在重绘
+   * canvas —— 实测滚动/交互的长动画帧就卡在这段动画尾巴上。情报工具不需要
+   * "图表长出来"的仪式感，240ms 够看出变化，也够看清方向。
+   */
+  animationDuration: 240,
+  animationDurationUpdate: 160,
+  animationEasing: "cubicOut",
+  animationEasingUpdate: "cubicOut",
   color: PALETTE,
   textStyle: {
-    color: "#cbd5e1",
+    color: "#a3a3a3",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   },
   grid: { left: 48, right: 24, top: 48, bottom: 40, containLabel: true },
   tooltip: {
     trigger: "axis",
-    backgroundColor: "rgba(10,12,16,0.92)",
-    borderColor: "rgba(255,255,255,0.12)",
-    textStyle: { color: "#e2e8f0", fontSize: 12 },
+    backgroundColor: "rgba(8,10,12,0.94)",
+    borderColor: "rgba(34,211,238,0.28)",
+    borderWidth: 1,
+    textStyle: { color: "#e5e5e5", fontSize: 12 },
   },
 };
 
@@ -50,8 +61,8 @@ function categoryAxis(name: string, unit?: string) {
   return {
     type: "category",
     name: unit ? name + " (" + unit + ")" : name,
-    axisLine: { lineStyle: { color: "rgba(255,255,255,0.14)" } },
-    axisLabel: { color: "#94a3b8", fontSize: 11 },
+    axisLine: { lineStyle: { color: "rgba(255,255,255,0.12)" } },
+    axisLabel: { color: "#737373", fontSize: 11 },
     splitLine: { show: false },
   };
 }
@@ -169,7 +180,7 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
             {
               type: "scatter",
               symbolSize: 6,
-              itemStyle: { color: "#5eead4", opacity: 0.55 },
+              itemStyle: { color: "#22d3ee", opacity: 0.6 },
               data: dataset.rows.map((r) => [
                 Number(r[xField.name]),
                 Number(r[yField.name]),

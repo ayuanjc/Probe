@@ -3,12 +3,13 @@
 
 import "react-grid-layout/css/styles.css";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GridLayout, useContainerWidth, type LayoutItem } from "react-grid-layout";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
 import {
   GRID_COLS,
+  GRID_MARGIN,
   GRID_ROW_HEIGHT,
   autoLayout,
   clearLayout,
@@ -29,7 +30,7 @@ const GRID_MIN_WIDTH = 720;
  * 锁定不是靠 CSS pointer-events 假装，而是真的把 drag/resize 关掉：
  * 半透明的拖拽把手上写着"禁用"，用户还是会去拖。
  */
-export default function ModuleGrid({
+function ModuleGrid({
   modules,
   sources,
   query,
@@ -73,6 +74,18 @@ export default function ModuleGrid({
 
   const unlocked = !running && modules.length > 0;
 
+  /**
+   * 拖拽/缩放期间给 <body> 挂一个标记：
+   * 卡片上的外发光阴影、发丝光过渡在指针每动一次时都会重绘整张卡（阴影是昂贵的
+   * 大范围模糊）。松手再恢复，观感上只是"手里那张卡更亮"，但每帧省下一次全卡重绘。
+   */
+  useEffect(() => {
+    const mark = (on: boolean) => document.body.classList.toggle("grid-interacting", on);
+    return () => {
+      mark(false);
+    };
+  }, []);
+
   const commit = useCallback(
     (next: readonly LayoutItem[]) => {
       setLayout([...next]);
@@ -95,9 +108,11 @@ export default function ModuleGrid({
   // SSR / 首次测量前：先按顺序铺一遍，避免和水合后的网格位置对不上。
   if (!mounted || width < GRID_MIN_WIDTH) {
     return (
-      <div className="flex flex-col gap-3" ref={containerRef}>
+      <div className="flex flex-col gap-6" ref={containerRef}>
         {width > 0 && width < GRID_MIN_WIDTH && (
-          <div className="text-[10px] text-[#3f4854]">窗口较窄：卡片单列排布，拖拽已停用。</div>
+          <div className="px-1 font-mono text-[10px] text-neutral-600">
+            窗口较窄：卡片单列排布，拖拽已停用。
+          </div>
         )}
         {modules.map((m) => (
           <ModuleCard key={m.id} module={m} sources={sources} />
@@ -107,20 +122,20 @@ export default function ModuleGrid({
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#3f4854]">
+    <div ref={containerRef} className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10px] text-neutral-600">
         <span>
           {unlocked
             ? "可拖拽卡片标题调整位置、拖右下角改尺寸；布局按查询词存在本机。"
             : "结果生成中：布局已锁定，done 之后可拖拽。"}
-          {notice && <span className="ml-2 text-[#5c6675]">{notice}</span>}
-          {saveFailed && <span className="ml-2 text-[#fbbf24]">本机存储写入失败，布局不会被记住。</span>}
+          {notice && <span className="ml-2 text-neutral-500">{notice}</span>}
+          {saveFailed && <span className="ml-2 text-amber-400">本机存储写入失败，布局不会被记住。</span>}
         </span>
         {unlocked && (
           <button
             type="button"
             onClick={reset}
-            className="cursor-pointer rounded border border-white/10 px-2 py-0.5 text-[10px] text-[#7b8798] hover:border-white/25 hover:text-[#cbd5e1]"
+            className="cursor-pointer rounded border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
           >
             重置布局
           </button>
@@ -133,7 +148,7 @@ export default function ModuleGrid({
         gridConfig={{
           cols: GRID_COLS,
           rowHeight: GRID_ROW_HEIGHT,
-          margin: [12, 12],
+          margin: [GRID_MARGIN, GRID_MARGIN],
           containerPadding: [0, 0],
         }}
         dragConfig={{
@@ -144,8 +159,16 @@ export default function ModuleGrid({
           threshold: 3,
         }}
         resizeConfig={{ enabled: unlocked, handles: ["se", "sw"] }}
-        onDragStop={(next) => commit(next)}
-        onResizeStop={(next) => commit(next)}
+        onDragStart={() => document.body.classList.add("grid-interacting")}
+        onDragStop={(next) => {
+          document.body.classList.remove("grid-interacting");
+          commit(next);
+        }}
+        onResizeStart={() => document.body.classList.add("grid-interacting")}
+        onResizeStop={(next) => {
+          document.body.classList.remove("grid-interacting");
+          commit(next);
+        }}
       >
         {modules.map((m) => (
           <div key={m.id} className="h-full">
@@ -156,3 +179,10 @@ export default function ModuleGrid({
     </div>
   );
 }
+
+/**
+ * 流式期间摘要每帧更新，Workspace 每帧重渲染。没有 memo 时整个网格（以及
+ * react-grid-layout 内部的布局计算）都跟着跑一遍，虽然每张卡自己已经 memo 过。
+ * 这里挡在网格外面：modules / sources 的引用在流式期间不变，网格直接跳过。
+ */
+export default memo(ModuleGrid);

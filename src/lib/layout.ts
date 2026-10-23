@@ -18,10 +18,12 @@ import { z } from "zod";
 
 export const LAYOUT_SCHEMA_VERSION = 1;
 
-/** 网格几何：12 列 / 行高 28px / 间距 12px。改了这里必须升 layoutVersion。 */
-export const LAYOUT_VERSION = "rgl12x28-v1";
+/** 网格几何：12 列 / 行高 28px / 间距 24px。改了这里必须升 layoutVersion。 */
+export const LAYOUT_VERSION = "rgl12x28m24-v2";
 export const GRID_COLS = 12;
 export const GRID_ROW_HEIGHT = 28;
+/** 间距 24px（gap-6）。旧版本是 12px，坐标无法平移复用，所以跟着 layoutVersion 一起升。 */
+export const GRID_MARGIN = 24;
 
 const KEY_PREFIX = "probe:layout";
 

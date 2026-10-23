@@ -172,16 +172,27 @@ function aggregate(stories: TrendingStory[]): TrendingTopic[] {
 
   const topics: TrendingTopic[] = [];
   for (const [name, bucket] of buckets) {
-    // 只出现过一条 story 的话题没有"热点"含义，只会把榜单稀释成新闻列表
-    if (bucket.stories.length < 2) continue;
+    // 同一条外链在 24 小时内被重复提交很常见（HN 上同一篇文章会有多条 story、
+    // 不同 objectID、URL 一模一样）。不去重的话：列表里同一链接出现两次（React
+    // key 冲突），而且"N 条在提"把同一篇稿子数了两遍 —— 那是提交次数，不是报道数。
+    // 按 url 收敛，保留 points 最高的那条。
     const sorted = [...bucket.stories].sort((a, b) => b.points - a.points);
+    const seenUrl = new Set<string>();
+    const unique: TrendingStory[] = [];
+    for (const story of sorted) {
+      if (seenUrl.has(story.url)) continue;
+      seenUrl.add(story.url);
+      unique.push(story);
+    }
+    // 只出现过一条 story 的话题没有"热点"含义，只会把榜单稀释成新闻列表
+    if (unique.length < 2) continue;
     topics.push({
       key: name,
       name,
       type: bucket.term.type,
-      articles24h: bucket.stories.length,
-      heat: bucket.stories.reduce((sum, s) => sum + s.points, 0),
-      stories: sorted.slice(0, STORIES_PER_TOPIC),
+      articles24h: unique.length,
+      heat: unique.reduce((sum, s) => sum + s.points, 0),
+      stories: unique.slice(0, STORIES_PER_TOPIC),
     });
   }
 
