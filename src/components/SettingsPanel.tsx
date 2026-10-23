@@ -107,7 +107,7 @@ function Toggle({
         style={{ background: on ? "var(--accent)" : "#3f3f46" }}
       >
         <span
-          className="absolute top-0.5 h-3 w-3 rounded-full bg-[#0a0a0a] transition-all"
+          className="absolute top-0.5 h-3 w-3 rounded-full bg-black transition-all"
           style={{ left: on ? "14px" : "2px" }}
         />
       </span>
@@ -173,9 +173,9 @@ export default function SettingsPanel({
         role="dialog"
         aria-modal="true"
         aria-label="设置"
-        className="scroll-thin relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-neutral-800 bg-[#0a0a0a]"
+        className="scroll-thin relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-neutral-800 bg-black"
       >
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-800 bg-[#0a0a0a] px-6 py-4">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-800 bg-black px-6 py-4">
           <div>
             <h2 className="text-base font-semibold text-white">设置</h2>
             <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
