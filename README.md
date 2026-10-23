@@ -123,14 +123,68 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 - **窗口 < 720px 退回单列**并说明拖拽已停用。12 列在这个宽度下每列不到 40px，
   拖出来的位置没有任何意义。
 
+## 术语解释：把"行话"摊开在鼠标下面
+
+「一手性」「独立性」「歧义」这些词是产品的核心口径，也是用户最容易误读的地方——
+把「置信度 0.74」看成「74% 正确」的人不止一个。所以每个术语都是一个可展开的
+`Term`（`src/components/Glossary.tsx`，词条在 `src/lib/glossary.ts`）：
+
+- **三通道打开**：hover（鼠标）、focus（Tab 到）、点击（触屏）。只做 hover 等于
+  把触屏和平板用户挡在外面。
+- **不用原生 `title`**：原生提示延迟一秒、不可选中、不能换行，塞不下"公式 + 口径 + 已知盲点"三段。
+- **弹层写在 DOM 里**（不是 portal），`role="tooltip"` + 内层 `aria-label`；
+  Escape 与点外部关闭。
+- 词条正文写清**它不是什么**（"置信度是证据强度，不是正确概率"），比只写定义有用。
+
+## 双语对照：颜色标的是"可核对的差异"，不是翻译质量
+
+点任一条信源的「对照原文」，服务端抓正文、分段、翻译，逐段左边原文右边译文
+（`src/lib/translate.ts` + `src/components/BilingualCompare.tsx`）。
+
+**歧义度由机械比对算出来，不问模型。** 让模型给自己的译文打分歧分，它永远给 0.9——
+那是自评，不是证据。实际用的是可核对、可复现的五类信号：
+
+| 信号 | 触发条件 |
+| --- | --- |
+| 数字丢失 | 原文里的数字在译文里找不到（正则排除 `Q3` / `H200` 这类编号里的数字） |
+| 专名未保留 | 公司/产品/人名被意译掉，读者搜不到原始出处 |
+| 未译残留 | 译文里还留着成串英文（单句首大写词如 `Rust` 不算——那本来就该保留） |
+| 篇幅比例异常 | 英译中落在 0.22–1.05 之外，通常意味着漏译或自我发挥 |
+| 原文本身含糊 | may / could / 据称 / 消息源模糊 —— 翻得再准，读者也会读成确定结论 |
+
+`risk = 1 - Π(1 - w)`，分档 <0.30 低（青）、<0.60 中（琥珀）、否则高（玫红）。
+图例里写死了"不是质量评分"：青色只代表数字和专名都对得上，不代表这段话可信。
+
+几条必须守住的边界：
+
+- **内网地址不抓**（localhost / `.local` / `10.` / `192.168.` / `172.16-31` / `169.254.`）——
+  这个接口是"让服务器替我访问任意 URL"，不收口就是 SSRF 跳板。
+- **抓不到正文就退回标题与片段**，并在面板里写明"只对照了标题与片段"，
+  而不是默默拿标题当全文翻。
+- **原文本来就是中文时不翻**（`targetFor` 恒为 `zh`）：把中文报告"翻译"成英文
+  对读中文的人没有价值，只会多一层机器改写，于是单栏出原文、不给颜色。
+- **没译成不记 0 分**：0 分在界面上等于"没问题"，而这一段恰恰最该被怀疑。
+- 引擎分级写清楚：有 `OPENAI_API_KEY` 走模型，否则用 MyMemory 公共接口，
+  都不行就只给原文分段。面板里永远标注**谁翻的**。
+- 公共接口有每日配额，长文只翻得成前一部分（实测 41 段里翻成 20 段）：
+  剩下的如实标成"未翻成，保留原文"，并在降级条里写 X/Y。
+
+**一个非写不可的坑**：本机 `NODE_USE_ENV_PROXY=1` 时，Node 的 `fetch` 会走
+`HTTPS_PROXY`，而那条链路对 `api.mymemory.translated.net` 会 `ECONNRESET`
+（实测 6/6 失败；同一 URL 直连 100% 成功，curl 走代理也正常）。所以抓正文与调翻译
+都不走 `fetch`，改用 `node:https` 的 `getDirect`（`src/lib/http.ts`）——
+它默认不读代理环境变量。附带好处是重定向、超时、字节上限都握在自己手里。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
   lib/        schemas · confidence · heat · compile · layout · sse · llm · fixtures · entities · text · trending
-  app/        layout · page · globals.css · api/search/route.ts
+              glossary · lang · translate · translate-risk · translate-types · http
+  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
+              Glossary · BilingualCompare
   hooks/      useProbe.ts
 ```
 

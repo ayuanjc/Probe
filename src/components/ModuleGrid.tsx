@@ -9,6 +9,7 @@ import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
 import {
   GRID_COLS,
+  GRID_MARGIN,
   GRID_ROW_HEIGHT,
   autoLayout,
   clearLayout,
@@ -95,9 +96,11 @@ export default function ModuleGrid({
   // SSR / 首次测量前：先按顺序铺一遍，避免和水合后的网格位置对不上。
   if (!mounted || width < GRID_MIN_WIDTH) {
     return (
-      <div className="flex flex-col gap-3" ref={containerRef}>
+      <div className="flex flex-col gap-6" ref={containerRef}>
         {width > 0 && width < GRID_MIN_WIDTH && (
-          <div className="text-[10px] text-[#3f4854]">窗口较窄：卡片单列排布，拖拽已停用。</div>
+          <div className="px-1 font-mono text-[10px] text-neutral-600">
+            窗口较窄：卡片单列排布，拖拽已停用。
+          </div>
         )}
         {modules.map((m) => (
           <ModuleCard key={m.id} module={m} sources={sources} />
@@ -107,20 +110,20 @@ export default function ModuleGrid({
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#3f4854]">
+    <div ref={containerRef} className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10px] text-neutral-600">
         <span>
           {unlocked
             ? "可拖拽卡片标题调整位置、拖右下角改尺寸；布局按查询词存在本机。"
             : "结果生成中：布局已锁定，done 之后可拖拽。"}
-          {notice && <span className="ml-2 text-[#5c6675]">{notice}</span>}
-          {saveFailed && <span className="ml-2 text-[#fbbf24]">本机存储写入失败，布局不会被记住。</span>}
+          {notice && <span className="ml-2 text-neutral-500">{notice}</span>}
+          {saveFailed && <span className="ml-2 text-amber-400">本机存储写入失败，布局不会被记住。</span>}
         </span>
         {unlocked && (
           <button
             type="button"
             onClick={reset}
-            className="cursor-pointer rounded border border-white/10 px-2 py-0.5 text-[10px] text-[#7b8798] hover:border-white/25 hover:text-[#cbd5e1]"
+            className="cursor-pointer rounded border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
           >
             重置布局
           </button>
@@ -133,7 +136,7 @@ export default function ModuleGrid({
         gridConfig={{
           cols: GRID_COLS,
           rowHeight: GRID_ROW_HEIGHT,
-          margin: [12, 12],
+          margin: [GRID_MARGIN, GRID_MARGIN],
           containerPadding: [0, 0],
         }}
         dragConfig={{

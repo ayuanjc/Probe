@@ -1,4 +1,3 @@
-
 "use client";
 
 import dynamic from "next/dynamic";
@@ -20,7 +19,7 @@ const REASON_TEXT: Record<string, string> = {
 
 const Chart = dynamic(() => import("echarts-for-react"), {
   ssr: false,
-  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded" />,
+  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-lg" />,
 });
 
 export default function ModuleCard({
@@ -53,41 +52,41 @@ export default function ModuleCard({
   }, [module.spec, dataset]);
 
   return (
-    <section className="panel relative flex h-full flex-col overflow-hidden">
-      <header className="flex items-center justify-between border-b border-white/6 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
+    <section className="panel flex h-full flex-col overflow-hidden">
+      <header className="flex items-center justify-between gap-3 px-6 pb-2 pt-5">
+        <div className="flex min-w-0 items-center gap-2.5">
           {draggable && (
             <span
-              className="card-drag-handle shrink-0 cursor-grab select-none px-0.5 text-[#3f4854] hover:text-[#7b8798]"
+              className="card-drag-handle shrink-0 cursor-grab select-none text-neutral-600 transition-colors hover:text-cyan-400"
               title="拖拽移动；拖右下角改尺寸"
               aria-hidden
             >
               ⠿
             </span>
           )}
-          <span className="truncate text-[13px] text-[#cbd5e1]">{module.title}</span>
-          <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-[#5c6675]">
+          <span className="truncate text-base font-semibold text-white">{module.title}</span>
+          <span className="shrink-0 rounded border border-white/10 bg-white/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-neutral-300">
             {module.kind}
           </span>
         </div>
         {module.status === "plan" && (
-          <span className="text-[10px] text-[#5c6675]">加载中…</span>
+          <span className="shrink-0 font-mono text-[10px] text-neutral-600">加载中…</span>
         )}
         {module.status !== "plan" && cited.length > 0 && (
           // PRD 附录 C：模块里的每个数字都要能在两次点击内回到原文。
           // 这里给出该模块实际引用的条目，不是全量信源 —— 全量等于没指认。
-          <details className="relative">
-            <summary className="cursor-pointer select-none list-none rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#7b8798] hover:border-white/25 hover:text-[#cbd5e1]">
+          <details className="relative shrink-0">
+            <summary className="cursor-pointer select-none list-none rounded border border-white/10 bg-white/[0.04] px-2.5 py-0.5 font-mono text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300">
               溯源 {cited.length} 条
             </summary>
-            <div className="scroll-thin absolute right-0 top-6 z-20 max-h-56 w-80 overflow-auto rounded border border-white/12 bg-[#0b0d11] p-1 shadow-lg">
+            <div className="scroll-thin absolute right-0 top-7 z-20 max-h-56 w-80 overflow-auto rounded-lg border border-white/10 bg-[#0a0a0c]/95 p-1.5 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl">
               {cited.map((s) => (
                 <a
                   key={s.id}
                   href={s.url}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="block truncate px-2 py-1 text-[11px] text-[#94a3b8] hover:bg-white/5 hover:text-[#5eead4]"
+                  className="block truncate rounded px-2 py-1.5 text-[11px] text-neutral-300 transition-colors hover:bg-cyan-500/10 hover:text-cyan-300"
                   title={s.title}
                 >
                   {s.title}
@@ -97,14 +96,14 @@ export default function ModuleCard({
           </details>
         )}
         {module.status === "error" && (
-          <span className="text-[10px] text-[#fb7185]">
+          <span className="shrink-0 font-mono text-[10px] text-[#fb7185]">
             降级为表格：{REASON_TEXT[module.errorDetail ?? ""] ?? module.errorDetail}
           </span>
         )}
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
-        {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded" />}
+      <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-2">
+        {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded-lg" />}
 
         {module.status !== "plan" && module.spec?.kind === "kpi" && (
           <KpiGrid rows={module.rows ?? []} />
@@ -141,9 +140,7 @@ export default function ModuleCard({
           )}
 
         {module.spec?.note && (
-          <p className="mt-2 border-t border-white/6 pt-2 text-[10px] leading-relaxed text-[#5c6675]">
-            {module.spec.note}
-          </p>
+          <p className="mt-3 text-[10px] leading-relaxed text-neutral-600">{module.spec.note}</p>
         )}
       </div>
     </section>
@@ -154,11 +151,14 @@ function KpiGrid({ rows }: { rows: Record<string, string | number | null>[] }) {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {rows.map((r, i) => (
-        <div key={i} className="rounded border border-white/8 bg-white/[0.02] px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wider text-[#5c6675]">
+        <div
+          key={i}
+          className="rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3 transition-colors hover:border-cyan-500/20 hover:bg-cyan-500/[0.04]"
+        >
+          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-neutral-500">
             {String(r.label ?? "—")}
           </div>
-          <div className="mt-1 text-xl text-[#e2e8f0]">
+          <div className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-cyan-400">
             {typeof r.value === "number" ? r.value.toLocaleString("en-US") : (r.value ?? "—")}
           </div>
         </div>
@@ -175,15 +175,18 @@ function DataTable({
   rows: Record<string, string | number | null>[];
 }) {
   if (fields.length === 0 || rows.length === 0) {
-    return <div className="text-[11px] text-[#5c6675]">无数据</div>;
+    return <div className="text-[11px] text-neutral-500">无数据</div>;
   }
   return (
     <div className="scroll-thin h-full min-h-0 overflow-auto">
       <table className="w-full border-collapse text-[11px]">
         <thead>
-          <tr className="text-left text-[#5c6675]">
+          <tr className="text-left">
             {fields.map((f) => (
-              <th key={f.name} className="border-b border-white/8 py-1 pr-3 font-normal">
+              <th
+                key={f.name}
+                className="border-b border-white/10 pb-1.5 pr-3 font-mono text-[10px] font-normal uppercase tracking-[0.12em] text-cyan-400/80"
+              >
                 {f.name}
                 {f.unit ? " (" + f.unit + ")" : ""}
               </th>
@@ -192,9 +195,9 @@ function DataTable({
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="text-[#cbd5e1]">
+            <tr key={i} className="text-neutral-300 transition-colors hover:bg-cyan-500/[0.05]">
               {fields.map((f) => (
-                <td key={f.name} className="border-b border-white/4 py-1 pr-3">
+                <td key={f.name} className="border-b border-white/5 py-1.5 pr-3 font-mono tabular-nums">
                   {r[f.name] === null || r[f.name] === undefined ? "—" : String(r[f.name])}
                 </td>
               ))}

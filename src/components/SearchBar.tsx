@@ -9,6 +9,9 @@ const EXAMPLES = [
 /**
  * 受控组件：热榜点话题也要把词填进输入框，
  * 否则用户看到结果却不知道"我是用什么问出来的"。
+ *
+ * 视觉上当命令面板（Command Palette）做：左侧终端提示符、纯黑底、
+ * 青色边框只在聚焦时发一次光 —— 整行就是产品的入口。
  */
 export default function SearchBar({
   running,
@@ -28,8 +31,10 @@ export default function SearchBar({
 
   return (
     <div className="w-full">
-      <div className="flex items-center gap-2 rounded-lg border border-white/12 bg-[#0b0d11] px-3 py-2 focus-within:border-[#5eead4]/45">
-        <span className="select-none text-[#3f4854]">&gt;</span>
+      <div className="flex items-center gap-3 rounded-2xl border border-cyan-500/30 bg-black/50 px-4 py-3 backdrop-blur-xl transition-all duration-200 focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+        <span className="select-none font-mono text-sm font-bold text-cyan-400" aria-hidden>
+          ❯
+        </span>
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -37,20 +42,26 @@ export default function SearchBar({
             if (e.key === "Enter") submit();
           }}
           placeholder="问一个需要证据的问题 —— 每个数字都会标注来源"
-          className="min-w-0 flex-1 bg-transparent text-[13px] text-[#e2e8f0] outline-none placeholder:text-[#3f4854]"
+          className="min-w-0 flex-1 bg-transparent text-sm text-white caret-cyan-400 outline-none placeholder:text-neutral-500"
           spellCheck={false}
         />
+        <kbd className="hidden shrink-0 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 sm:block">
+          ↵
+        </kbd>
         <button
           type="button"
           onClick={submit}
           disabled={running || !value.trim()}
-          className="shrink-0 rounded border border-[#5eead4]/35 bg-[#5eead4]/10 px-3 py-1 text-[11px] text-[#5eead4] transition hover:bg-[#5eead4]/18 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-[#3f4854]"
+          className="shrink-0 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-1.5 font-mono text-[11px] text-cyan-300 transition-all hover:border-cyan-400/60 hover:bg-cyan-500/20 hover:text-cyan-200 disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-transparent disabled:text-neutral-600"
         >
           {running ? "检索中" : "检索"}
         </button>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+          试试
+        </span>
         {EXAMPLES.map((q) => (
           <button
             key={q}
@@ -59,7 +70,7 @@ export default function SearchBar({
               onChange(q);
               if (!running) onRun(q);
             }}
-            className="rounded border border-white/8 px-2 py-1 text-[10px] text-[#5c6675] transition hover:border-white/20 hover:text-[#94a3b8]"
+            className="rounded border border-white/10 bg-white/10 px-2 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
           >
             {q}
           </button>
