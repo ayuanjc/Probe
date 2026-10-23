@@ -162,22 +162,28 @@ export default function Workspace({
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-8 sm:px-8">
-      {/* 一条细线切出功能区：上面只有身份与状态，下面是输入与结果。 */}
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-neutral-800 pb-5">
-        <ProbeLogo size={17} />
-        <div className="flex items-center gap-3">
-          {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
-            aria-haspopup="dialog"
-          >
-            <span aria-hidden className="text-neutral-600">
-              ⚙
-            </span>
-            设置
-          </button>
+      {/* 一条细线切出功能区：上面只有身份与状态，下面是输入与结果。
+          锁标落在页面中线上（不是「扣掉工具之后剩下的空间」的中线），所以工具
+          在 sm 以上脱离文档流钉在右上角；窄到放不下时两者上下叠，工具居中居中。 */}
+      <header className="border-b border-neutral-800 pb-5">
+        <div className="flex flex-col items-center gap-4 sm:relative sm:block">
+          <div className="flex justify-center">
+            <ProbeLogo size={28} />
+          </div>
+          <div className="flex items-center gap-3 sm:absolute sm:right-0 sm:top-2">
+            {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+              aria-haspopup="dialog"
+            >
+              <span aria-hidden className="text-neutral-600">
+                ⚙
+              </span>
+              设置
+            </button>
+          </div>
         </div>
       </header>
 
