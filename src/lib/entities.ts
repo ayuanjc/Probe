@@ -17,7 +17,7 @@ const ALIASES: Alias[] = [
   { zh: ["英伟达", "黄仁勋"], en: "NVIDIA", type: "org" },
   { zh: ["微软"], en: "Microsoft", type: "org" },
   { zh: ["苹果公司", "苹果"], en: "Apple Inc", type: "org" },
-  { zh: ["谷歌", " Alphabet"], en: "Google", type: "org" },
+  { zh: ["谷歌", "Alphabet"], en: "Google", type: "org" },
   { zh: ["亚马逊"], en: "Amazon", type: "org" },
   { zh: ["特斯拉"], en: "Tesla", type: "org" },
   { zh: ["台积电"], en: "TSMC", type: "org" },

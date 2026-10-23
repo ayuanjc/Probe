@@ -6,13 +6,34 @@ import { useMemo } from "react";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
+import type { SourceRef } from "@/lib/sse";
+
+/** compile() 的原因码，翻成人能读的一句。 */
+const REASON_TEXT: Record<string, string> = {
+  unknown_kind: "未知图表类型",
+  unknown_dataset: "数据集缺失",
+  unknown_field: "字段对不上",
+  pie_constraint: "饼图约束不满足",
+  mixed_units: "存在多个量纲",
+  time_order: "时间轴无法排序",
+};
 
 const Chart = dynamic(() => import("echarts-for-react"), {
   ssr: false,
   loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded" />,
 });
 
-export default function ModuleCard({ module }: { module: ModuleState }) {
+export default function ModuleCard({
+  module,
+  sources = [],
+}: {
+  module: ModuleState;
+  sources?: SourceRef[];
+}) {
+  const cited = useMemo(() => {
+    const ids = new Set(module.sourceIds ?? []);
+    return sources.filter((s) => ids.has(s.id));
+  }, [module.sourceIds, sources]);
   const dataset: Dataset | undefined = useMemo(() => {
     if (!module.spec || !module.rows || !module.fields) return undefined;
     return {
@@ -40,8 +61,33 @@ export default function ModuleCard({ module }: { module: ModuleState }) {
         {module.status === "plan" && (
           <span className="text-[10px] text-[#5c6675]">加载中…</span>
         )}
+        {module.status !== "plan" && cited.length > 0 && (
+          // PRD 附录 C：模块里的每个数字都要能在两次点击内回到原文。
+          // 这里给出该模块实际引用的条目，不是全量信源 —— 全量等于没指认。
+          <details className="relative">
+            <summary className="cursor-pointer select-none list-none rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#7b8798] hover:border-white/25 hover:text-[#cbd5e1]">
+              溯源 {cited.length} 条
+            </summary>
+            <div className="scroll-thin absolute right-0 top-6 z-20 max-h-56 w-80 overflow-auto rounded border border-white/12 bg-[#0b0d11] p-1 shadow-lg">
+              {cited.map((s) => (
+                <a
+                  key={s.id}
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="block truncate px-2 py-1 text-[11px] text-[#94a3b8] hover:bg-white/5 hover:text-[#5eead4]"
+                  title={s.title}
+                >
+                  {s.title}
+                </a>
+              ))}
+            </div>
+          </details>
+        )}
         {module.status === "error" && (
-          <span className="text-[10px] text-[#fb7185]">降级：{module.errorDetail}</span>
+          <span className="text-[10px] text-[#fb7185]">
+            降级为表格：{REASON_TEXT[module.errorDetail ?? ""] ?? module.errorDetail}
+          </span>
         )}
       </header>
 

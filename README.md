@@ -1,151 +1,127 @@
 # 探针 · Probe
 
-**搜索即生成数据面板的情报终端 —— 每个数字都能点回它的原文出处。**
+面向 Geek 的 AI 原生高置信度情报终端：搜索返回一个数据面板，而不是一串链接。
 
-> Geek-oriented, AI-native intelligence terminal: search returns a dashboard, not a link list.
+**差异化不是"更聪明的分析"，而是"不撒谎"**：页面上的每个数字都能点回原文，
+没有来源就不显示，缺失就留空而不是填 0。默认只呈数据，追问才做分析。
 
 ---
-
-## 状态
-
-| 项 | 值 |
-|---|---|
-| 阶段 | 设计定稿 + 工程脚手架（Phase 1 未开工） |
-| 现行 PRD | [V1.1](docs/PRD.md) |
-| 代码 | Phase 1 垂直切片已跑通：意图路由 → 多源检索（GDELT / HN / Wikipedia / Tavily）→ 分析（去重、owner 归并、三分量置信度）→ `ModuleSpec` 编译器 → SSE 工作台。未接 Supabase，布局不持久化 |
-| 许可 | 待定（未选定许可证前按保留所有权利处理） |
-
-## 它是什么
-
-传统搜索返回十条链接；探针返回一块**可交互的数据面板**：KPI 卡片、趋势折线、地域分布、信源列表，由意图路由 + 多 Agent 流水线实时生成（Generative UI）。
-
-三条差异化：
-
-1. **高置信度** —— 不编造事实。每个数字背后是「哪些独立信源、互相印证到什么程度」，而不是一句"AI 认为"。
-2. **生成式 UI** —— 搜索即生成仪表盘，而不是返回死板网页。
-3. **克制分析** —— 默认只给高密度数据与图表；要解读，用户主动追问。
-
-### 边界（写死，不可协商）
-
-> 本产品**不做事实裁决，只做来源透明度**。输出的是"这些数字来自哪些独立信源、印证到什么程度"，不是"这是真的"。
-
-四条硬规则：
-
-1. **可溯源**：任意数字 ≤ 2 次点击看到原文出处（URL + 片段 + 抓取时间）。
-2. **无源不显示**：抽不出原文支撑的数字不显示，绝不显示为 0。
-3. **缺失不填 0**：缺失显示"数据缺失 / 该源不可用"，不写"暂无数据"。
-4. **徽章可展开**：置信度徽章展开即信源清单（owner、一手/转载标记、各分量值）。不可展开 = 未实现。
-
-## 核心算法
-
-**置信度**（三分量加权，替代"信源收敛度"——后者会奖励转载抄袭，即假共识）：
-
-| 分量 | 含义 | 权重 |
-|---|---|---|
-| 一手性 P | 一手发布 vs 转载（canonical 相同 / 标题相似 > 0.90 / 晚于首条 > 6h 且内容重合 > 0.8 判转载） | 0.40 |
-| 独立性 I | 域名归并为 owner 后的互不隶属信源数，`I = 1 - exp(-n_owners/3)` | 0.35 |
-| 一致性 C | 去重后独立源在 (实体, 数值, 时间) 上的吻合度 | 0.25 |
-
-`confidence = 0.40P + 0.35I + 0.25C`；`n_owners < 2` 时强制 `min(confidence, 0.45)`。
-分档：**≥0.75 高**（绿，数字正常展示）／**0.50–0.75 中**（琥珀，标"待印证"）／**<0.50 低**（灰，只展示原文列表，不展示聚合数字）。
-
-**热度**（同量纲 + 整体衰减，替代量纲不可加的旧式）：
-
-```
-Mag   = log1p(articles_24h)
-Dev   = (articles_24h - median_30d) / (MAD_30d + 1e-6)
-raw   = 0.6 * pct90(Mag) + 0.4 * pct90(Dev)
-score = raw * exp(-age_hours / 36)
-```
-
-状态阈值：`r7 = 近 7 日均值 / 前 30 日均值` → `>2.0` 且 90 天 Top 5% 为**爆发期**；`1.3–2.0` 升温期；`0.8–1.3` 平稳期；`<0.8` 回落期。**争议态**为正交标签：负向 owner 占比 0.30–0.70 且 `n_owners >= 5`，情感取 GDELT GKG 原生 `tone` 字段，不自建分类器。
-
-## 文档地图
-
-| 文档 | 内容 |
-|---|---|
-| [docs/PRD.md](docs/PRD.md) | 产品需求文档 **V1.1（现行）**：意图澄清卡、三分量置信度、热度公式、受限图表 DSL、SSE 契约、降级矩阵、非功能需求、验收标准 |
-| [docs/PRD-评审建议.md](docs/PRD-评审建议.md) | 对 V1.0 的工程/产品评审：四条致命问题与可直接落地的改法 |
-| [docs/可行性分析.md](docs/可行性分析.md) | 数据源实测、开源选型（A 档可直接用 / B 档组件）、参考架构、成本与硬风险 |
-| [docs/PRD-v1.0.md](docs/PRD-v1.0.md) | V1.0 原始需求存档（不增删需求） |
-
-## 技术栈
-
-| 层 | 选型 |
-|---|---|
-| 框架 | Next.js 16（App Router）+ React 19 + TypeScript |
-| 样式 | Tailwind CSS 4 |
-| AI 编排 | Vercel AI SDK 7（`streamText` / `streamObject`），**不使用 LangChain** |
-| 校验 | zod 4（Agent 每步 I/O 强校验） |
-| 图表 | ECharts 6 + echarts-for-react，由受限 DSL 编译；模型不直出 option |
-| 布局 | react-grid-layout |
-| 存储 | Supabase（Postgres + pgvector），Phase 2 起接入 |
-
-流水线（每步纯函数 + zod I/O）：
-
-```
-route(query)     → Intent
-  → retrieve(intent)  → RawSource[]        // 多源并发，单源超时 6s，失败隔离
-  → analyze(raw)      → { datasets, confidence, sources }
-  → compose(datasets) → ModuleSpec[]       // 受限 DSL，不产出 ECharts option
-```
-
-## 目录结构
-
-```
-src/
-  app/
-    page.tsx              # 搜索首页 → 工作台外壳
-    layout.tsx globals.css
-    api/search/route.ts   # SSE 端点：单连接多路事件（附录 A 契约）
-  agents/                 # 四步流水线，每步纯函数 + zod I/O
-    route.ts retrieve.ts analyze.ts compose.ts pipeline.ts
-  lib/
-    schemas.ts            # Intent / RawSource / Dataset / ModuleSpec / SSE 事件
-    confidence.ts heat.ts # 三分量置信度 / 热度公式与状态机
-    compile.ts            # ModuleSpec → EChartsOption（白名单校验，拒绝而非修正）
-    sse.ts entities.ts llm.ts text.ts fixtures.ts
-  components/             # Workspace / ModuleCard / ConfidenceBadge / SourceList / SearchBar
-  hooks/useProbe.ts       # SSE 消费 + 渐进式渲染状态
-```
-
-## 数据源（已实测，不是纸面推测）
-
-| 源 | 状态 | 限制 |
-|---|---|---|
-| GDELT DOC 2.0 API | ✅ 200，无 key | **1 req / 5s**，超限直接 429 |
-| GDELT v2 15 分钟增量 | ✅ | 约 474 MB/天（压缩）；GEO 2.0 端点已 404，地图用 `export.CSV` 的 ActionGeo 自聚合 |
-| Wikipedia pageviews | ✅ 逐月时序 | — |
-| HN Algolia | ✅ | — |
-| BBC / 通用 RSS | ✅ | — |
-| Reddit 直连 | ❌ 需 OAuth | — |
-| 微博热搜 | ❌ 403 | 中文社媒层需自建采集 + 代理池，属持续运维成本 |
-
-## 路线图
-
-**Phase 1 · MVP 闭环（1 个月）**
-暗黑搜索框 + 工作台外壳；Tavily 单源 + `generateObject` 结构化抽取（校验失败降级原文列表，不留空白面板）；文本流式 + 一张折线图（走 `ModuleSpec` 编译器）；单列卡片流；SSE 契约先跑通 `text.delta` / `module.plan` / `module.ready` / `done`。
-**验收**：任意词能出面板；抽不出数据的词降级为原文列表而非空白；每个数字可溯源。
-
-**Phase 2 · 多源 / 拖拽 / 热点榜 v0（2 个月）**
-GDELT + Wikipedia + HN 接入与单源失败隔离；三分量置信度上线 + 徽章可展开 + 四条硬规则全量落实；`react-grid-layout` 拖拽与布局快照；"一句话生成模块"（只产出 `ModuleSpec`）；热点榜 v0（静态 Top N，不做状态标签）。
-
-**Phase 3 · 热度算法 / 状态机 / 实体图（3 个月）**
-Cron 热度计算 + 状态阈值表 + 争议态；实体图先用 Postgres 邻接表 + pgvector 做两跳查询，Neo4j 仅触到性能上限后再评估；可观测性面板（耗时 / token / 降级率 / 置信度分布）。
 
 ## 快速开始
 
 ```bash
 npm install
-cp .env.example .env.local   # 不填任何 key 也能跑：流水线回退到确定性 fixture provider
-npm run dev                  # http://localhost:3000
-npm run typecheck
+cp .env.example .env.local   # 可选，不配 key 也能跑
+npm run dev                  # http://localhost:3210
 ```
 
-## 仓库约定
+不配 `OPENAI_API_KEY` 时：检索与图表全部真实，摘要走本地模板，**断言抽取关闭**（不是用假数据填空）。
 
-- **分支**：`main` 即发布线；改动小步提交，一个提交只做一件事。
-- **提交信息**：`feat:` / `fix:` / `docs:` / `chore:` + 一句话中文描述。
-- **文档先行**：PRD 正文改动必须同步更新文档内「0. 变更记录」表并升版本号（V1.1 → V1.2）。
-- **文档与实现不一致**：先改文档再改代码，分歧记进 PRD 附录，不靠口口相传。
-- **合规线**：只存 metadata + 摘要 + 原文链接，不落库新闻正文；GDELT 结果需署名。
+配了之后可额外得到：
+
+| 变量 | 作用 |
+| --- | --- |
+| `OPENAI_API_KEY` | 意图精修、断言抽取、流式摘要 |
+| `PROBE_MODEL` | 默认 `gpt-4.1-mini` |
+| `TAVILY_API_KEY` | 补一路通用搜索，显著提升信源多样性 |
+| `PROBE_RATE_LIMIT_PER_MIN` | 单用户每分钟检索上限，默认 3（PRD 附录 B） |
+
+## 四个阶段
+
+```
+route    → intent（规则先行，模型精修，模型失败自动回落）
+retrieve → 4 路并发检索，逐源隔离，任何一路挂掉只记 degraded
+analyze  → 去重 → 置信度 → 断言抽取 → 数据集
+compose  → 数据集映射成 ModuleSpec，过 compile() 白名单校验
+```
+
+前端通过 SSE 收 `intent / text.delta / module.plan / module.ready / module.error / sources / done`，
+`module.plan` 先落骨架卡、`module.ready` 再换内容，所以不会盯着空白等。
+
+## 置信度：为什么不用"多信源收敛度"
+
+收敛度高只能证明各家的说法一致——十家媒体转载同一篇通稿即可满分，那是假共识。
+这里改成三个可测量的分量：
+
+```
+score = 0.40 × 一手性 + 0.35 × 独立性 + 0.25 × 一致性
+一手性 P = 1 - 转载数 / 总数
+独立性 I = 1 - e^(-独立稿源数 / 3)      // 3 家 0.63，6 家 0.86，之后饱和
+一致性 C = 1 - 冲突数 / 可比对数         // 无可比断言时取中性 0.5，不是 1
+```
+
+一致性按 `attr + unit` 分组：只按 attr 分组时，"营收 $3.2B" 与 "营收 3.2 million"
+都会被归一成 `3.2`，三个数量级的差距被判为"完全一致"。单位不同即不同组，
+组内不足两条就不参与比对。
+
+分档 ≥0.75 高、0.50–0.75 中、<0.50 低；**低档直接抑制聚合数字与分布图**，只留原文列表。
+
+三条硬约束写死在代码里：
+
+1. 独立稿源 < 2 时封顶 0.45。
+2. 整批都是本地演示样本时封顶 0.34，并在正文里明说"这不是实时抓取的结果"；样本不进模型，
+   由代码写死的事实说明替代——只靠 prompt 叮嘱"记得说这不是实时结果"是不可靠的。
+3. 没有模型时断言数为空——**不用模板编造 claim**，否则界面上会出现几句谁也没说过的"可核验断言"。
+4. **一条断言都没交叉核对过（`nChecked === 0`）时封顶 0.74。**
+   一致性给中性 0.5、乘 0.25 权重后，只要一手性和独立性接近满分就会越过 0.75——
+   可那个分数里没有任何一条事实被两个来源对上过。独立性靠域名数量堆得动，
+   一手性靠"没识别出转载"就能满分，只有一致性真正代表"核验过"。
+
+`ownerOf` 的口径必须全链路一致（`confidence.ts` 与 `analyze.ts` 同源），
+否则 KPI 的"独立信源"数和信源分布柱的分组数会对不上。二级公共后缀要单独成表，
+`bbc.co.uk` / `ft.co.uk` 若按 `slice(-2)` 切成 `co.uk`，十几家无关英国媒体会被并成一个稿源。
+
+## 时间窗必须真过滤
+
+用户的"最近三个月"是显式约束。每个 provider 都在服务端带窗口参数
+（GDELT `startdatetime`、HN Algolia `numericFilters=created_at_i`、Tavily `start_date`），
+返回后本地再兜一层。宁可结果稀疏，也不拿六年前的旧闻凑数量。
+
+## 目录
+
+```
+src/
+  agents/     route · retrieve · analyze · compose · pipeline
+  lib/        schemas · confidence · heat · compile · sse · llm · fixtures · entities · text
+  app/        layout · page · globals.css · api/search/route.ts
+  components/ Workspace · SearchBar · ModuleCard · ConfidenceBadge · SourceList
+  hooks/      useProbe.ts
+```
+
+`src/lib/compile.ts` 是图表的安全边界：模型只能产出受限 `ModuleSpec`，
+ECharts option 由前端编译器按白名单生成。让模型直出 option 的失败方式不是语法错，
+而是"语法合法、语义胡说"——那种错没有人能一眼看出来。
+
+## 数据源实测
+
+| 源 | 状态 | 说明 |
+| --- | --- | --- |
+| Hacker News (Algolia) | ✅ 可用 | **发现层**：每条 story 指向各自原站，owner 从真实域名取，否则独立性永远是 1 |
+| Wikipedia pageviews | ✅ 可用 | 单条目，做热度旁证 |
+| GDELT DOC 2.0 | ⚠️ 长期 429 | 按 IP 限流 1 req/5s，超限时拖 12–14 秒才回纯文本。2.5s 软超时 + 300s 冷却 |
+| Tavily | 🔑 需 key | 未配置时静默跳过，不算降级 |
+| Google News RSS / Bing News RSS | ❌ 不可达 | 本机网络环境下连接超时 |
+
+## 已知限制
+
+- **HN 不是新闻媒体**：它是聚合入口，返回的条目里含博客、GitHub、个人站。
+  信源多样性是真实的，但"媒体机构"这个语义不成立。
+- **GDELT 长期被限流**：这台机器的出口 IP 基本拿不到数据，实时面板实际上只由
+  HN + Wiki 支撑；同一 IP 短时间反复查同一实体，结果会高度重合。
+- **没有向量检索与缓存**：Phase 1 每次查询都重新抓取，TTL 缓存留给下一阶段。
+- **单用户假设**：限流与预算按进程内变量计，多实例部署会失效。
+- **限流会拦到你**：默认 3 次/分钟。本地反复调试时用 `PROBE_RATE_LIMIT_PER_MIN=50` 启动。
+- **GDELT 冷却只对限流与超时生效**：一条查询语法写错不该让后面所有查询一起停摆 5 分钟。
+
+## 验收口径（对应 PRD 附录 C）
+
+- 数字点击 ≤ 2 次到原文 ✅ 每个模块头部有「溯源 N 条」抽屉（列出该模块实际引用的条目，
+  不是全量信源），`SourceList` 另有全量直链
+- 无源数字出现率 0 ✅ 低置信档禁止聚合数字；KPI 只数已抓到的条目
+- 徽章可展开且与数字一一对应 ✅ `ConfidenceBadge` 用 `<details>` 展开三分量
+- 单源失败仍渲染 ≥ 1 模块 ✅ 四路 `Promise.allSettled` 隔离 + 全空落样本
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run build
+```
