@@ -96,14 +96,41 @@ score = 0.40 × 一手性 + 0.35 × 独立性 + 0.25 × 一致性
 `Rust` 这类主体明确的短查询全被判死，热榜点进来每一张卡都会撞墙。含糊不等于短 ——
 现在只拦真正的寒暄（`你好` / `hi` / `test`）。
 
+## 拖拽布局：快照为什么先落在本机
+
+Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，但那个 key 至今空着——
+没有鉴权、没有表结构，写进去只能先造一张谁都能读的表。所以这一版把快照存在
+`localStorage`，键是 `probe:layout:<layoutVersion>:<query>`，**结构仍按 PRD**：
+
+```
+{ schemaVersion, layoutVersion, query, savedAt, items: [{ i, x, y, w, h }] }
+```
+
+换存储层只改 `src/lib/layout.ts` 的读写，形状不变；界面文案如实写着"按查询词存在本机"。
+
+几个不显眼但会咬人的点：
+
+- **流式期间锁拖拽**，不是靠 CSS 假装。`module.plan` 一路到达就重排一次，
+  用户在拖到一半的卡片会跳走；锁是真的把 `dragConfig.enabled` 关掉，且不渲染拖拽把手。
+- **只在 `onDragStop` / `onResizeStop` 提交**。跟 `onLayoutChange` 提交的区别不是性能洁癖：
+  每帧 setState 会重渲染整棵树，ECharts 实例跟着重建，拖起来像在拖一张图片。
+- **快照不复活已消失的卡片**。`reconcile` 以本轮默认布局为准，只把能对上的 id 的位置搬过来；
+  上一轮有的模块这一轮没有，就直接不出现，不硬渲染一个没有数据的空壳。
+- **版本不匹配整份丢弃**并给一句中文提示，而不是逐项迁移——布局数据不值钱，
+  读错的布局会让人以为卡片丢了。
+- **卡片高度交给网格单元**（行高 28、间距 12），图表容器 `height:100%`：
+  拖高卡片图跟着长，拖矮则保住 `min-h` 不压成一条缝。
+- **窗口 < 720px 退回单列**并说明拖拽已停用。12 列在这个宽度下每列不到 40px，
+  拖出来的位置没有任何意义。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
-  lib/        schemas · confidence · heat · compile · sse · llm · fixtures · entities · text · trending
+  lib/        schemas · confidence · heat · compile · layout · sse · llm · fixtures · entities · text · trending
   app/        layout · page · globals.css · api/search/route.ts
-  components/ Workspace · SearchBar · ModuleCard · ConfidenceBadge · SourceList · TrendingBoard
+  components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
   hooks/      useProbe.ts
 ```
 
@@ -129,6 +156,8 @@ ECharts option 由前端编译器按白名单生成。让模型直出 option 的
   HN + Wiki 支撑；同一 IP 短时间反复查同一实体，结果会高度重合。
 - **没有向量检索与缓存**：Phase 1 每次查询都重新抓取，TTL 缓存留给下一阶段。
 - **单用户假设**：限流与预算按进程内变量计，多实例部署会失效。
+- **布局只在本机**：快照在 `localStorage`，换设备、换浏览器、清站点数据都会回到默认排布；
+  换查询词也不共享（按 query 做键）。跨设备同步等 Supabase 鉴权就绪。
 - **限流会拦到你**：默认 3 次/分钟。本地反复调试时用 `PROBE_RATE_LIMIT_PER_MIN=50` 启动。
 - **GDELT 冷却只对限流与超时生效**：一条查询语法写错不该让后面所有查询一起停摆 5 分钟。
 - **热榜是单源**：只有 Hacker News，它偏技术圈；GDELT 恢复后「多少家媒体在报」才成立。
@@ -141,6 +170,8 @@ ECharts option 由前端编译器按白名单生成。让模型直出 option 的
 - 无源数字出现率 0 ✅ 低置信档禁止聚合数字；KPI 只数已抓到的条目
 - 徽章可展开且与数字一一对应 ✅ `ConfidenceBadge` 用 `<details>` 展开三分量
 - 单源失败仍渲染 ≥ 1 模块 ✅ 四路 `Promise.allSettled` 隔离 + 全空落样本
+- 拖拽保存刷新仍在 ✅ `done` 后解锁拖拽，位置/尺寸落 `localStorage`，重查同一个词原样恢复；
+  流式期间拖不动也存不下（已用 Playwright 断言把手不渲染、位置不变、无快照写入）
 
 ```bash
 npm run typecheck   # tsc --noEmit

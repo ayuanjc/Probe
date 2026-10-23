@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useProbe } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
-import ModuleCard from "./ModuleCard";
+import ModuleGrid from "./ModuleGrid";
 import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TrendingBoard from "./TrendingBoard";
@@ -142,13 +142,12 @@ export default function Workspace({
       )}
 
       {state.modules.length > 0 && (
-        <div className="module-grid">
-          {state.modules.map((m) => (
-            <div key={m.id} style={{ gridColumn: "span " + m.w }}>
-              <ModuleCard module={m} sources={state.sources} />
-            </div>
-          ))}
-        </div>
+        <ModuleGrid
+          modules={state.modules}
+          sources={state.sources}
+          query={state.query}
+          running={running}
+        />
       )}
 
       {state.sources.length > 0 && (

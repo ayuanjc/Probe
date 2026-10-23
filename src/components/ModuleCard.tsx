@@ -26,9 +26,12 @@ const Chart = dynamic(() => import("echarts-for-react"), {
 export default function ModuleCard({
   module,
   sources = [],
+  draggable = false,
 }: {
   module: ModuleState;
   sources?: SourceRef[];
+  /** 仅在布局解锁（done 之后）时为 true；false 时不渲染拖拽把手。 */
+  draggable?: boolean;
 }) {
   const cited = useMemo(() => {
     const ids = new Set(module.sourceIds ?? []);
@@ -50,10 +53,19 @@ export default function ModuleCard({
   }, [module.spec, dataset]);
 
   return (
-    <section className="panel relative overflow-hidden">
+    <section className="panel relative flex h-full flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b border-white/6 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] text-[#cbd5e1]">{module.title}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          {draggable && (
+            <span
+              className="card-drag-handle shrink-0 cursor-grab select-none px-0.5 text-[#3f4854] hover:text-[#7b8798]"
+              title="拖拽移动；拖右下角改尺寸"
+              aria-hidden
+            >
+              ⠿
+            </span>
+          )}
+          <span className="truncate text-[13px] text-[#cbd5e1]">{module.title}</span>
           <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-[#5c6675]">
             {module.kind}
           </span>
@@ -91,8 +103,8 @@ export default function ModuleCard({
         )}
       </header>
 
-      <div className="px-3 py-3">
-        {module.status === "plan" && <div className="skeleton h-[160px] w-full rounded" />}
+      <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
+        {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded" />}
 
         {module.status !== "plan" && module.spec?.kind === "kpi" && (
           <KpiGrid rows={module.rows ?? []} />
@@ -108,12 +120,15 @@ export default function ModuleCard({
           module.spec.kind !== "table" && (
             <>
               {compiled && compiled.ok ? (
-                <Chart
-                  option={compiled.option}
-                  style={{ height: 240, width: "100%" }}
-                  notMerge
-                  opts={{ renderer: "canvas" }}
-                />
+                // 高度交给网格单元：卡片被拖高时图跟着长，而不是留一块空白。
+                <div className="min-h-[180px] flex-1">
+                  <Chart
+                    option={compiled.option}
+                    style={{ height: "100%", width: "100%" }}
+                    notMerge
+                    opts={{ renderer: "canvas" }}
+                  />
+                </div>
               ) : (
                 <>
                   <div className="mb-2 text-[11px] text-[#fb7185]">
@@ -163,7 +178,7 @@ function DataTable({
     return <div className="text-[11px] text-[#5c6675]">无数据</div>;
   }
   return (
-    <div className="scroll-thin max-h-[240px] overflow-auto">
+    <div className="scroll-thin h-full min-h-0 overflow-auto">
       <table className="w-full border-collapse text-[11px]">
         <thead>
           <tr className="text-left text-[#5c6675]">

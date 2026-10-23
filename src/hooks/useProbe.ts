@@ -23,6 +23,8 @@ export type ModuleState = {
 
 export type ProbeState = {
   status: "idle" | "running" | "done" | "failed";
+  /** 产生这批模块的查询词 —— 布局快照按它做键，不能拿输入框里的当前值。 */
+  query: string;
   intent: Intent | null;
   text: string;
   modules: ModuleState[];
@@ -35,6 +37,7 @@ export type ProbeState = {
 
 const IDLE: ProbeState = {
   status: "idle",
+  query: "",
   intent: null,
   text: "",
   modules: [],
@@ -57,7 +60,7 @@ export function useProbe() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setState({ ...IDLE, status: "running" });
+    setState({ ...IDLE, status: "running", query: q });
 
     try {
       const res = await fetch("/api/search", {

@@ -65,14 +65,19 @@ function specFor(ds: Dataset): ModuleSpec | null {
   }
 }
 
+/**
+ * 默认尺寸的单位是"网格单元"：12 列、行高 28px、间距 12px（见 src/lib/layout.ts）。
+ * 这里只给建议值 —— 用户拖过的布局以本机快照为准，reconcile 会覆盖这些数字。
+ * KPI 铺满一行；折线要横向空间；条形与饼图窄而高；树图与表格半行；地图最高。
+ */
 const SIZE: Record<ModuleSpec["kind"], { w: number; h: number }> = {
-  kpi: { w: 12, h: 2 },
-  line: { w: 8, h: 4 },
-  bar: { w: 4, h: 4 },
-  pie: { w: 4, h: 4 },
-  treemap: { w: 6, h: 4 },
-  map: { w: 8, h: 5 },
-  table: { w: 6, h: 4 },
+  kpi: { w: 12, h: 4 },
+  line: { w: 8, h: 8 },
+  bar: { w: 4, h: 8 },
+  pie: { w: 4, h: 8 },
+  treemap: { w: 6, h: 8 },
+  map: { w: 8, h: 10 },
+  table: { w: 6, h: 8 },
 };
 
 export function compose(analysis: AnalysisResult): ComposeResult {
