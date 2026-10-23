@@ -35,11 +35,17 @@ function ModuleGrid({
   sources,
   query,
   running,
+  animation = true,
+  gap = GRID_MARGIN,
 }: {
   modules: ModuleState[];
   sources: SourceRef[];
   query: string;
   running: boolean;
+  /** 设置里的「图表入场动画」开关。关掉时图表直接出终态，省一次逐帧重绘。 */
+  animation?: boolean;
+  /** 卡片间距（px）：紧凑 16 / 标准 24。 */
+  gap?: number;
 }) {
   const { width, containerRef, mounted } = useContainerWidth({
     measureBeforeMount: true,
@@ -115,7 +121,7 @@ function ModuleGrid({
           </div>
         )}
         {modules.map((m) => (
-          <ModuleCard key={m.id} module={m} sources={sources} />
+          <ModuleCard key={m.id} module={m} sources={sources} animation={animation} />
         ))}
       </div>
     );
@@ -148,7 +154,7 @@ function ModuleGrid({
         gridConfig={{
           cols: GRID_COLS,
           rowHeight: GRID_ROW_HEIGHT,
-          margin: [GRID_MARGIN, GRID_MARGIN],
+          margin: [gap, gap],
           containerPadding: [0, 0],
         }}
         dragConfig={{
@@ -172,7 +178,7 @@ function ModuleGrid({
       >
         {modules.map((m) => (
           <div key={m.id} className="h-full">
-            <ModuleCard module={m} sources={sources} draggable={unlocked} />
+            <ModuleCard module={m} sources={sources} draggable={unlocked} animation={animation} />
           </div>
         ))}
       </GridLayout>

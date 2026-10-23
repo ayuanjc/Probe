@@ -3,6 +3,7 @@ import type { Intent, RawSource } from "@/lib/schemas";
 import { hostOf } from "@/lib/text";
 import { searchTermFor } from "@/lib/entities";
 import { fixtureSources } from "@/lib/fixtures";
+import { resolvedTavilyKey } from "@/lib/runtime-config";
 
 /**
  * 检索层。四个 provider 之间完全隔离：任何一个失败只记入 degraded，
@@ -284,7 +285,8 @@ async function fetchWiki(intent: Intent, outer?: AbortSignal): Promise<RawSource
 /* ---------------------------------------------------------------- Tavily */
 
 async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSource[]> {
-  const key = process.env.TAVILY_API_KEY;
+  // 用户自带的 key 优先（请求头 → AsyncLocalStorage），其次才是服务端 env。
+  const key = resolvedTavilyKey();
   if (!key) return [];
 
   const res = await fetch("https://api.tavily.com/search", {

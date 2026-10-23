@@ -11,7 +11,9 @@
   --dim: #737373;
   --dim-2: #a3a3a3;
   --accent: #22d3ee;
-  --accent-soft: rgba(34, 211, 238, 0.1);
+  /* 供伪元素与内联 style 拼 rgba 用（CSS 变量不能塞进 rgba() 的逗号语法）。 */
+  --accent-rgb: 34 211 238;
+  --accent-soft: rgb(var(--accent-rgb) / 0.1);
   --good: #34d399;
   --warn: #fbbf24;
   --bad: #fb7185;
@@ -61,7 +63,7 @@
         rgba(255, 255, 255, 0.014) 0 1px,
         transparent 1px 4px
       ),
-      radial-gradient(1100px 640px at 50% -18%, rgba(34, 211, 238, 0.1), transparent 62%),
+      radial-gradient(1100px 640px at 50% -18%, rgb(var(--accent-rgb) / 0.1), transparent 62%),
       radial-gradient(900px 520px at 6% 6%, rgba(56, 189, 248, 0.055), transparent 64%),
       radial-gradient(760px 480px at 98% 0%, rgba(168, 85, 247, 0.05), transparent 62%);
     background-repeat: no-repeat;
@@ -76,14 +78,14 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background-image: linear-gradient(rgba(34, 211, 238, 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(34, 211, 238, 0.03) 1px, transparent 1px);
+    background-image: linear-gradient(rgb(var(--accent-rgb) / 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.03) 1px, transparent 1px);
     background-size: 64px 64px;
     mask-image: radial-gradient(ellipse at 50% 0%, black 8%, transparent 70%);
   }
 
   ::selection {
-    background: rgba(34, 211, 238, 0.26);
+    background: rgb(var(--accent-rgb) / 0.26);
     color: #ffffff;
   }
 
@@ -103,7 +105,7 @@ kbd {
 
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: rgba(34, 211, 238, 0.22) transparent;
+  scrollbar-color: rgb(var(--accent-rgb) / 0.22) transparent;
 }
 
 .scroll-thin::-webkit-scrollbar {
@@ -112,12 +114,12 @@ kbd {
 }
 
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: rgba(34, 211, 238, 0.18);
+  background: rgb(var(--accent-rgb) / 0.18);
   border-radius: 4px;
 }
 
 .scroll-thin::-webkit-scrollbar-thumb:hover {
-  background: rgba(34, 211, 238, 0.34);
+  background: rgb(var(--accent-rgb) / 0.34);
 }
 
 /* 情报面板：卡片、弹层、KPI 格共用同一套表面。
@@ -149,8 +151,8 @@ kbd {
   pointer-events: none;
   background: linear-gradient(
     90deg,
-    rgba(34, 211, 238, 0.6),
-    rgba(34, 211, 238, 0.14) 42%,
+    rgb(var(--accent-rgb) / 0.6),
+    rgb(var(--accent-rgb) / 0.14) 42%,
     transparent 72%
   );
   opacity: 0.75;
@@ -177,7 +179,7 @@ kbd {
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.05), 0 28px 70px -52px rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.05), 0 28px 70px -52px rgb(var(--accent-rgb) / 0.55);
   opacity: 0;
   /* 不只是透明：visibility: hidden 的元素连绘制准备都跳过。
      首页一屏就有十几张卡，只靠 opacity: 0 的话，每张卡那片大模糊阴影仍在场景里；
@@ -196,7 +198,7 @@ kbd {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.03) 25%,
-    rgba(34, 211, 238, 0.09) 37%,
+    rgb(var(--accent-rgb) / 0.09) 37%,
     rgba(255, 255, 255, 0.03) 63%
   );
   background-size: 400% 100%;
@@ -214,9 +216,9 @@ kbd {
 
 /* 拖拽布局（react-grid-layout）：默认占位块是醒目的红色，会盖住卡片内容。 */
 .react-grid-item.react-grid-placeholder {
-  background: rgba(34, 211, 238, 0.08);
+  background: rgb(var(--accent-rgb) / 0.08);
   opacity: 1;
-  border: 1px dashed rgba(34, 211, 238, 0.45);
+  border: 1px dashed rgb(var(--accent-rgb) / 0.45);
   border-radius: 12px;
   transition-duration: 80ms;
 }
@@ -231,8 +233,8 @@ kbd {
 .react-grid-item.react-draggable-dragging > .panel,
 .react-grid-item.resizing > .panel,
 .react-grid-item.react-draggable-dragging .panel {
-  border-color: rgba(34, 211, 238, 0.35);
-  box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.95), 0 0 24px -6px rgba(34, 211, 238, 0.35);
+  border-color: rgb(var(--accent-rgb) / 0.35);
+  box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.95), 0 0 24px -6px rgb(var(--accent-rgb) / 0.35);
 }
 
 /* 拖拽/缩放进行中：ModuleGrid 会在 <body> 上挂 .grid-interacting。
@@ -276,7 +278,7 @@ kbd {
   margin-left: 3px;
   vertical-align: -0.15em;
   background: var(--accent);
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.9);
+  box-shadow: 0 0 10px rgb(var(--accent-rgb) / 0.9);
   animation: blink 1s step-end infinite;
 }
 
@@ -305,4 +307,60 @@ kbd {
   .react-grid-item {
     transition: none;
   }
+}
+/* ——— 主题 ———
+   Tailwind v4 的 utility 全部读 --color-cyan-*，所以换主题只要改这些变量，
+   不需要在几十个组件里找 text-cyan-400。--accent 给内联 style 与伪元素用。
+   注：ECharts 图表的调色板写在 src/lib/compile.ts 里（canvas 读不到 CSS 变量），
+   所以切主题后图表仍是青色系 —— 面板里照实写了这一点。 */
+[data-theme="violet"] {
+  --accent: #a78bfa;
+  --accent-rgb: 167 139 250;
+  --accent-soft: rgb(167 139 250 / 0.1);
+  --color-cyan-100: #ede9fe;
+  --color-cyan-200: #ddd6fe;
+  --color-cyan-300: #c4b5fd;
+  --color-cyan-400: #a78bfa;
+  --color-cyan-500: #8b5cf6;
+  --color-cyan-600: #7c3aed;
+  --color-cyan-700: #6d28d9;
+  --color-cyan-800: #5b21b6;
+  --color-cyan-900: #4c1d95;
+  --color-cyan-950: #2e1065;
+}
+
+[data-theme="amber"] {
+  --accent: #fbbf24;
+  --accent-rgb: 251 191 36;
+  --accent-soft: rgb(251 191 36 / 0.1);
+  --color-cyan-100: #fef3c7;
+  --color-cyan-200: #fde68a;
+  --color-cyan-300: #fcd34d;
+  --color-cyan-400: #fbbf24;
+  --color-cyan-500: #f59e0b;
+  --color-cyan-600: #d97706;
+  --color-cyan-700: #b45309;
+  --color-cyan-800: #92400e;
+  --color-cyan-900: #78350f;
+  --color-cyan-950: #451a03;
+}
+
+/* ——— 关掉动效 ———
+   不删规则只把时长压到 0：最终状态（hover 的光晕、骨架条的静止渐变）都还在，
+   但不再有任何一帧在动。比逐个组件判断 prefers-reduced-motion 可靠。 */
+[data-anim="off"] *,
+[data-anim="off"] *::before,
+[data-anim="off"] *::after {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+/* ——— 关掉背景网格与扫描线 ———
+   两层都是 fixed 全屏合成层。低端设备上这不是装饰，是每帧一次全屏混合。 */
+[data-fx="off"] body::before,
+[data-fx="off"] body::after {
+  display: none;
 }

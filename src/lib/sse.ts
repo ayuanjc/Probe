@@ -34,6 +34,8 @@ export type ProbeEvent =
         id: string;
         spec: ModuleSpec;
         datasetId: string;
+        /** 数据集的中文名。前端拿它重建 Dataset 元信息，供「一句话生成模块」使用。 */
+        datasetName: string;
         rows: Record<string, string | number | null>[];
         fields: Field[];
         sources: string[];

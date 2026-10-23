@@ -179,6 +179,58 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 都不走 `fetch`，改用 `node:https` 的 `getDirect`（`src/lib/http.ts`）——
 它默认不读代理环境变量。附带好处是重定向、超时、字节上限都握在自己手里。
 
+## 数据模块：不是"多画几种图"，是"多几种能算准的形状"
+
+第二批 6 种图形全部由 `analyze()` 里真算出来的 dataset 驱动，没有一种是装饰性占位。
+共同原则：**凑不出就整张图不出**——不画空图，也不补 0。
+
+| 模块 | 形状 | 数据从哪来 | 出不来的时候 |
+| --- | --- | --- | --- |
+| `m-hours` | heatmap 星期×小时 | `hourParts()` 拆 `publishedAt`（Asia/Hong_Kong；`hour12:false` 下午夜给 24，要再 `%24`） | 只有 1 个格子时不出 |
+| `m-weekday` | radar 7 维 | 同一份解析结果按星期计数 | 有数据不满 3 个星期时不出（三维以下没有形状可言） |
+| `m-terms` | graph 共现网络 | `titleTerms()` 抽标题里的专名，两两共现计数 | 高频专名 <4 个或边 <3 条时不出：几根散线不叫网络 |
+| `m-flow` | funnel 检索收敛 | 命中条目 → 去重后 → 有发布时间 → 24h 内 | 一条都没有发布时间时整张不出 |
+| `m-fresh` | gauge 24h 新鲜度 | `fresh / dated` | 同上 |
+| `m-tone-scatter` | scatter 时距×情感 | GDELT 的 tone 与距今天数（0–7 天） | 不足 3 个点、或本轮没有 tone 时不出 |
+
+漏斗那四级是刻意选的：`fresh ⊆ dated ⊆ sources ⊆ raw` 是集合包含关系，
+所以这张图**不可能自相矛盾**。断言数没有放进来——claim 可以来自没有发布时间的条目，
+放进去会破坏包含关系，画出来就会出现"后一级比前一级多"。
+
+`compile.ts` 的字段校验这批改成了**全量**：以前只查 x/y/value/series 四个键，
+graph 的 `from/to` 与 funnel 的 `stage` 正好绕过去，字段写错的结果是一块空白而不是报错。
+现在 encode 里任何值不在 fields 中就直接降级成表格，并在卡片上写原因。
+
+## 设置：自己的 key、外观、一键还原
+
+三件事共用一个面板，全部只在本机：
+
+| | 存在哪 | 走哪条路 |
+| --- | --- | --- |
+| OpenAI / Tavily key、模型名 | `localStorage` 的 `probe:settings:v1` | 每个请求带 `x-probe-openai-key` / `x-probe-tavily-key` / `x-probe-model` |
+| 主题、字号、密度、动画、背景网格 | 同上 | 写到 `<html>` 的 `data-theme` / `data-density` / `data-anim` / `data-fx` |
+| 布局快照 | `probe:layout:*` | 见上一章 |
+
+key 走请求头而不是查询串：查询串会进服务端访问日志，也会留在浏览器历史里。
+服务端用 `AsyncLocalStorage` 把它绑在**本次请求**的调用链上（`src/lib/runtime-config.ts`），
+`llmEnabled()` / `resolvedModelId()` / `resolvedTavilyKey()` 都是"先读这次请求的、再回落 env"。
+这样不用给每个函数加参数，也不会串到下一个请求里：**不落库、不写日志、不跨请求复用**。
+
+填了错的 key 会怎样：`llmEnabled()` 变 true，模型调用失败，摘要一句都写不出来。
+这种情况会在摘要区明说"摘要没有生成"，而不是留一片空白让人以为数据不全——
+面板里的数字与信源不依赖模型，照常可读。
+
+主题不是换一套 CSS，而是覆盖 Tailwind v4 的 `--color-cyan-*` 变量：utility 读的就是这些变量，
+所以 `text-cyan-400`、`bg-cyan-500/10`、`border-cyan-500/40` 会一起变色，不必去几十个组件里找类名。
+**但图表不会跟着变**——ECharts 的调色板写在 `compile.ts` 里，canvas 读不到 CSS 变量，面板里照实写了这句。
+
+字号改的是根字号（15/16/17px）：Tailwind 的间距与字号都是 rem，改根字号等于整站等比缩放。
+密度改的是网格间距（紧凑 16 / 标准 24），不是给卡片加一层更小的 padding——
+后者会让图表在窄卡里挤成一团。
+
+"一键还原"清掉所有 `probe:` 前缀的本机键（设置 + 每个查询词的布局快照），然后整页重载。
+按钮要按两次，第二次 4 秒内有效：这个操作没有撤销。
+
 ## 性能：帧率按「最长的那一帧」算，不按平均值
 
 平均值骗人。240Hz 屏上一秒 240 帧，只要有 3 帧掉了 60ms，手感就是「卡一下」，而平均帧率仍然是 230fps。所以这里的验收口径是 **LoAF（long-animation-frame）**：浏览器原生告诉你「这一帧超过 50ms 了吗、渲染开始得多晚、里面脚本占多少」。
@@ -213,16 +265,56 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 
 `npm run dev` 下的数字**不能**用来判断渲染性能。Turbopack 的按需编译、React 开发版的双次渲染，都会在首次交互时塞进几百毫秒的长任务；同一个页面在 `next start` 下这些数字会凭空少一半。要复现上表，先 `npm run build` 再 `npm start`，且不要和 `next dev` 同时跑（两者共用 `.next`）。
 
+## 一句话生成模块：句子只决定「看哪份数据、用哪种图形」
+
+输入「用散点图看情感分布」，网格里多一张卡。这句话里的模型能决定的只有三件事：
+**用哪一份数据集、画哪种图、标题叫什么**。字段怎么映射到 x / y / value 不归它管——
+`compile.ts` 是安全边界，模型直出的 encode 的失败方式不是语法错，而是「语法合法、语义胡说」，
+那种错没有人能一眼看出来。所以 `autoEncode()` 按字段类型硬性匹配：数值字段才配 value 轴，
+时间字段优先配 x 轴，一张都匹配不上就返回 null，让调用方换图。
+
+没有 key 的时候走 `src/lib/module-plan.ts` 的本机关键词规则，两个细节是有意的：
+
+- `KIND_WORDS` 的**顺序**参与语义：「散点图」必须排在「图」前面，否则任何带「图」的句子都会退化成长条。
+- `DS_WORDS` 给每份数据集配中文说法（信源/稿源/来源、时段/小时/几点、星期/周几/周末……），
+  按 `命中词 × 3 + 数据集名字串 × 4 + 字段名 × 1` 打分。**一个都没命中时不猜**，
+  直接回一份「这一轮有这些数据」的清单让人自己挑。
+
+数据只从**这一轮已经算出来的** dataset 里挑（`datasetsFromModules` 遍历现有模块的 `spec.dataset`），
+不重新检索、不碰全网。代价是自定义面板跟着这一轮走：刷新页面或换一个问题，它就没了——
+这句话直接印在面板上，不让人误以为它被存下来了。
+
+画不出来时说清楚。前端先拿 `compile()` 试一遍，失败就把 `compileErrorText` 的原话贴出来
+（「雷达图至少要三个维度」），**不悄悄降级成表格**——一张表能装下任何数据，但用户要的是图，
+换成表格等于没回答。字段真的不合适时，规则会在**选图阶段**就换一种（「用散点图看信源分布」
+只有一列数值，改条形图），并在 reason 里写「已改用条形图」。
+
+一个坑记在这：`compile()` 对 `table` / `kpi` 返回 `unknown_kind`（它是给图表用的），
+所以这两种图在插入前跳过编译，否则「用指标卡看概况」永远失败。
+
+实测（`POST /api/module`，无 key，本机规则路径）：
+
+| 句子 | 结果 |
+| --- | --- |
+| 用条形图看每天的文章数 | `bar` + `ds-timeline`，encode `{x: day, y: articles}` |
+| 看发布时段 | `heatmap` + `ds-hours`，encode `{x: weekday, y: hour, value: articles}` |
+| 用散点图看趋势 | 回落 `line`，reason 写「按日文章数」的字段画不出散点图 |
+| 用散点图看信源分布 | 回落 `bar`，同一条路径的第二层兜底 |
+| 你好 | `{ok: false, error: "no_dataset"}`，附这一轮可用数据集清单 |
+
+路由限流 12 次/分钟（`PROBE_MODULE_RATE_LIMIT_PER_MIN`），和搜索分开计数：
+本机规则是廉价调用，但走到模型路径要花钱，别让它变成无限次试用。
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
-  lib/        schemas · confidence · heat · compile · layout · sse · llm · fixtures · entities · text · trending
-              glossary · lang · translate · translate-risk · translate-types · http
-  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts
+  lib/        schemas · confidence · heat · compile · layout · module-catalog · module-plan · sse · llm
+              fixtures · entities · text · trending · glossary · lang · translate · translate-risk
+              translate-types · http · settings · runtime-config · config-headers
+  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
-              Glossary · BilingualCompare
+              Glossary · BilingualCompare · SettingsPanel · ModulePrompt
   hooks/      useProbe.ts
 ```
 

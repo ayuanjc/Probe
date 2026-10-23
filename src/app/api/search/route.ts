@@ -1,5 +1,6 @@
 import { encodeEvent } from "@/lib/sse";
 import { runPipeline } from "@/agents/pipeline";
+import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,7 +108,11 @@ function guarded(request: Request, query: string): Response {
       },
     );
   }
-  return sseResponse(query, request.signal);
+  // key 只活在这里：ReadableStream 的 start 是同步调起的，
+  // 之后的 await 延续仍然带着这份 AsyncLocalStorage 上下文。
+  // 不落盘、不写日志、不跨请求共享。
+  const cfg = configFromRequest(request);
+  return withRuntimeConfig(cfg, () => sseResponse(query, request.signal));
 }
 
 export async function GET(request: Request) {

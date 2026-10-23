@@ -213,6 +213,14 @@ type ModuleSpec = {
   键为 `probe:layout:<layoutVersion>:<query>`，结构与本文一致（`schemaVersion` + `layoutVersion` + `query` + `items`）。
   换存储层只需要替换 `src/lib/layout.ts` 的读写实现，形状不变。
 
+  🔧 实现备注（Phase 2，一句话定制）：落地为 `POST /api/module` + `src/components/ModulePrompt.tsx`。
+  模型只挑 `dataset` + `kind` + `title` 三项，`encode` 一律由 `src/lib/module-catalog.ts` 的 `autoEncode()`
+  按字段类型填——模型直出 encode 的失败方式是「语法合法、语义胡说」，那种错没人能一眼看出来。
+  没有 key 时回落 `src/lib/module-plan.ts` 的关键词规则：命中不到数据集就回一份可用清单，不猜；
+  字段画不出指定的图就在选图阶段换一种，并把「已改用 X」写进 reason。
+  候选数据只取本轮已产出的 dataset，因此自定义面板随本轮结果消失（刷新或换词即无），不做持久化。
+  前端插入前先过 `compile()`：失败贴出原始原因码文案，不静默降级成表格；`table` / `kpi` 跳过编译。
+
 🔧 **V1.1 补充约束**：
 
 1. 每个卡片必须是**已注册 widget**（`components/modules/registry.ts`），"AI 现场生成"只能生产 `ModuleSpec`，**不能生成新组件代码**。
@@ -352,7 +360,7 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 - 多数据源接入（GDELT / Wikipedia pageviews / HN）+ 单源失败隔离。
 - 三分量置信度上线 + 徽章可展开 + 四条硬规则全量落实。
 - `react-grid-layout` 拖拽与布局快照（本阶段 localStorage，见 2.5 实现备注）。
-- “一句话生成模块”（只产出 `ModuleSpec`，走注册表）。
+- “一句话生成模块”（只产出 `ModuleSpec`，走注册表）。✅ 已实现，见 2.5 实现备注。
 - 🔧 **热点榜 v0**：静态 Top N（按 `articles_24h` 排序即可），**不做状态标签**。
 - **验收**：拖拽保存刷新仍在；热点榜有内容且可点进详情。
 

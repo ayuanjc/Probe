@@ -15,6 +15,9 @@ const REASON_TEXT: Record<string, string> = {
   pie_constraint: "饼图约束不满足",
   mixed_units: "存在多个量纲",
   time_order: "时间轴无法排序",
+  radar_constraint: "维度不足以画雷达图",
+  funnel_constraint: "漏斗不满足逐级收窄",
+  graph_constraint: "共现关系不足以成图",
 };
 
 const Chart = dynamic(() => import("echarts-for-react"), {
@@ -32,11 +35,14 @@ function ModuleCard({
   module,
   sources = [],
   draggable = false,
+  animation = true,
 }: {
   module: ModuleState;
   sources?: SourceRef[];
   /** 仅在布局解锁（done 之后）时为 true；false 时不渲染拖拽把手。 */
   draggable?: boolean;
+  /** 设置里可关掉图表入场动画：关掉就直接出终态，少掉一次 240ms 的逐帧重绘。 */
+  animation?: boolean;
 }) {
   const cited = useMemo(() => {
     const ids = new Set(module.sourceIds ?? []);
@@ -54,8 +60,10 @@ function ModuleCard({
 
   const compiled = useMemo(() => {
     if (!module.spec || !dataset) return null;
-    return compile(module.spec, dataset);
-  }, [module.spec, dataset]);
+    const out = compile(module.spec, dataset);
+    if (animation || !out.ok) return out;
+    return { ...out, option: { ...out.option, animation: false } };
+  }, [module.spec, dataset, animation]);
 
   return (
     <section className="panel flex h-full flex-col overflow-hidden">

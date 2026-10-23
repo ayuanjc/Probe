@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useProbe } from "@/hooks/useProbe";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
 import ModuleGrid from "./ModuleGrid";
@@ -9,6 +9,18 @@ import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
 import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
+import SettingsPanel from "./SettingsPanel";
+import ModulePrompt from "./ModulePrompt";
+import type { Dataset } from "@/lib/schemas";
+import {
+  DEFAULT_SETTINGS,
+  GRID_GAP,
+  applySettings,
+  readSettings,
+  settingsHeaders,
+  writeSettings,
+  type Settings,
+} from "@/lib/settings";
 
 const KIND_TEXT: Record<string, string> = {
   lookup: "事实查询",
@@ -38,6 +50,26 @@ function fmtDay(iso: string): string {
   return d.toLocaleDateString("sv-SE");
 }
 
+/**
+ * 从已就绪的卡片里重建数据集清单。
+ *
+ * 「一句话生成模块」要知道这一轮有哪几份数据、每份有哪些字段。流水线没有单独
+ * 发数据集事件，但 module.ready 里带着这份数据的 rows / fields —— 当前实现里
+ * module 与 dataset 是一对一的，按 dataset id 去重就够了。
+ */
+function datasetsFromModules(modules: ModuleState[]): Dataset[] {
+  const seen = new Set<string>();
+  const out: Dataset[] = [];
+  for (const m of modules) {
+    const id = m.spec?.dataset;
+    if (!id || seen.has(id)) continue;
+    if (!m.fields || m.fields.length === 0 || !m.rows || m.rows.length === 0) continue;
+    seen.add(id);
+    out.push({ id, name: m.datasetName ?? id, fields: m.fields, rows: m.rows });
+  }
+  return out;
+}
+
 function degradeText(item: string): string {
   const i = item.indexOf(":");
   const base = i === -1 ? item : item.slice(0, i);
@@ -57,16 +89,43 @@ export default function Workspace({
   initialQuery?: string;
   trending?: TrendingSnapshot | null;
 }) {
-  const { state, run } = useProbe();
+  const { state, run, addModule } = useProbe();
   const [input, setInput] = useState(initialQuery);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const running = state.status === "running";
   const booted = useRef(false);
+  const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
+
+  /**
+   * 设置里的 key 要跟着请求走，而 boot / 点话题这两条路径都写在闭包里，
+   * 所以除了 state 再存一份 ref：回调里读 ref 拿到的一定是最新值，
+   * 又不必把 settings 塞进依赖数组（否则改个字号就会重发查询）。
+   */
+  const settingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+
+  const runWithSettings = (q: string) => run(q, settingsHeaders(settingsRef.current));
+
+  // 先读设置再自动查询：两个 effect 按声明顺序执行，boot 时 ref 已就绪。
+  useEffect(() => {
+    const s = readSettings();
+    settingsRef.current = s;
+    setSettings(s);
+    applySettings(s);
+  }, []);
+
+  const updateSettings = (next: Settings) => {
+    settingsRef.current = next;
+    setSettings(next);
+    writeSettings(next);
+    applySettings(next);
+  };
 
   // 热榜点话题：填词、跑查询、同步 URL 要一起做，
   // 否则刷新后回不到刚才那个结果。
   const pickTopic = (name: string) => {
     setInput(name);
-    void run(name);
+    runWithSettings(name);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("q", name);
@@ -78,8 +137,9 @@ export default function Workspace({
   useEffect(() => {
     if (booted.current || !initialQuery.trim()) return;
     booted.current = true;
-    void run(initialQuery);
-  }, [initialQuery, run]);
+    runWithSettings(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
 
   return (
     <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1240px] flex-col gap-6 px-5 py-10 sm:px-8">
@@ -95,13 +155,24 @@ export default function Workspace({
             高置信度情报终端 · 无源不显示 · 缺失不填 0
           </p>
         </div>
-        {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
+        <div className="flex items-center gap-3">
+          {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 font-mono text-[11px] text-neutral-300 transition-[border-color,background-color,color] hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-white"
+            aria-haspopup="dialog"
+          >
+            <span aria-hidden className="text-[10px] text-cyan-400">⚙</span>
+            设置
+          </button>
+        </div>
       </header>
 
       {/* HUD 分隔线：从青色渐隐到透明，给标题区和数据区一道分界。 */}
       <div className="h-px w-full bg-gradient-to-r from-cyan-500/40 via-white/[0.06] to-transparent" />
 
-      <SearchBar running={running} value={input} onChange={setInput} onRun={run} />
+      <SearchBar running={running} value={input} onChange={setInput} onRun={runWithSettings} />
 
       {state.intent && (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] px-4 py-2.5 font-mono text-[10px] text-neutral-400">
@@ -162,6 +233,19 @@ export default function Workspace({
           sources={state.sources}
           query={state.query}
           running={running}
+          animation={settings.animation}
+          gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
+        />
+      )}
+
+      {state.status === "done" && datasets.length > 0 && (
+        <ModulePrompt
+          datasets={datasets}
+          modules={state.modules}
+          confidence={state.confidence?.score ?? 0}
+          sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
+          headers={settingsHeaders(settings)}
+          onAdd={addModule}
         />
       )}
 
@@ -210,6 +294,13 @@ export default function Workspace({
           请求失败：{state.error}
         </div>
       )}
+
+      <SettingsPanel
+        open={settingsOpen}
+        settings={settings}
+        onChange={updateSettings}
+        onClose={() => setSettingsOpen(false)}
+      />
     </main>
   );
 }

@@ -125,6 +125,7 @@ export async function* runPipeline(
         id: spec.id,
         spec,
         datasetId: spec.dataset,
+        datasetName: ds?.name ?? spec.dataset,
         rows: ds?.rows ?? [],
         fields: ds?.fields ?? [],
         /**
@@ -174,10 +175,25 @@ export async function* runPipeline(
       },
     };
   } else {
+    // 一句都没写出来就是失败（key 无效 / 额度用尽 / 网络不通）。
+    // 没有这句话，用户会看到一叠面板配一片空白摘要，然后以为是数据不全。
+    let wrote = false;
     const summary = streamSummary(buildPrompt(intent, analysis));
     for await (const delta of summary) {
       if (gone()) return;
+      wrote = true;
       yield { event: "text.delta", data: { delta } };
+    }
+    if (!wrote) {
+      yield {
+        event: "text.delta",
+        data: {
+          delta:
+            "摘要没有生成：模型调用失败（key 无效、额度用尽或网络不通）。\n\n" +
+            "下面的面板与信源是由本地流水线算出来的，不依赖模型，照常可读。" +
+            "若在「设置」里填了自己的 key，请检查它是否有效；清空后会用服务端的配置。\n",
+        },
+      };
     }
   }
 
