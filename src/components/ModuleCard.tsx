@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
@@ -22,7 +22,13 @@ const Chart = dynamic(() => import("echarts-for-react"), {
   loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-lg" />,
 });
 
-export default function ModuleCard({
+/**
+ * 每张卡都挂着一张 ECharts。流式期间摘要每变一个字父组件就重渲染一次，
+ * 卡片若跟着重渲染，echarts-for-react 会重新走一遍 option diff —— 全部白干。
+ * memo 之后：module / sources 引用不变就不进 render（useProbe 是整体替换 state，
+ * 只有变化的那张卡的 module 引用会变）。
+ */
+function ModuleCard({
   module,
   sources = [],
   draggable = false,
@@ -120,14 +126,7 @@ export default function ModuleCard({
             <>
               {compiled && compiled.ok ? (
                 // 高度交给网格单元：卡片被拖高时图跟着长，而不是留一块空白。
-                <div className="min-h-[180px] flex-1">
-                  <Chart
-                    option={compiled.option}
-                    style={{ height: "100%", width: "100%" }}
-                    notMerge
-                    opts={{ renderer: "canvas" }}
-                  />
-                </div>
+                <ChartBox option={compiled.option} />
               ) : (
                 <>
                   <div className="mb-2 text-[11px] text-[#fb7185]">
@@ -144,6 +143,58 @@ export default function ModuleCard({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * 图表容器：ECharts 只知道 window 尺寸，不知道"卡片被拖大了"。
+ * 原来把卡片从 4×8 拖到 6×11，canvas 还是旧尺寸，图被拉花。
+ * 这里用 ResizeObserver 盯容器，按帧去抖后再 resize（拖拽途中不重算，
+ * 松手才真正重绘一次），顺手把 devicePixelRatio 上限压到 2 ——
+ * 4K/2x 屏上 canvas 一帧要填 4 倍像素，那是白烧的电。
+ */
+function ChartBox({ option }: { option: Record<string, unknown> }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const instRef = useRef<{ resize: () => void } | null>(null);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    let raf = 0;
+    let lastW = 0;
+    let lastH = 0;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w;
+      lastH = h;
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        instRef.current?.resize();
+      });
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  return (
+    <div ref={boxRef} className="min-h-[180px] flex-1">
+      <Chart
+        option={option}
+        style={{ height: "100%", width: "100%" }}
+        notMerge
+        lazyUpdate
+        opts={{ renderer: "canvas" }}
+        onChartReady={(inst: { resize: () => void }) => {
+          instRef.current = inst;
+        }}
+      />
+    </div>
   );
 }
 
@@ -208,3 +259,5 @@ function DataTable({
     </div>
   );
 }
+
+export default memo(ModuleCard);

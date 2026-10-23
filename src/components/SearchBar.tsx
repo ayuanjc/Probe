@@ -31,7 +31,7 @@ export default function SearchBar({
 
   return (
     <div className="w-full">
-      <div className="flex items-center gap-3 rounded-2xl border border-cyan-500/30 bg-black/50 px-4 py-3 backdrop-blur-xl transition-all duration-200 focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+      <div className="flex items-center gap-3 rounded-2xl border border-cyan-500/30 bg-black/50 px-4 py-3 backdrop-blur-xl transition-[border-color,box-shadow,background-color] duration-200 focus-within:border-cyan-400 focus-within:shadow-[0_0_15px_rgba(34,211,238,0.2)]">
         <span className="select-none font-mono text-sm font-bold text-cyan-400" aria-hidden>
           ❯
         </span>
@@ -52,7 +52,7 @@ export default function SearchBar({
           type="button"
           onClick={submit}
           disabled={running || !value.trim()}
-          className="shrink-0 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-1.5 font-mono text-[11px] text-cyan-300 transition-all hover:border-cyan-400/60 hover:bg-cyan-500/20 hover:text-cyan-200 disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-transparent disabled:text-neutral-600"
+          className="shrink-0 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-1.5 font-mono text-[11px] text-cyan-300 transition-[border-color,background-color,color] hover:border-cyan-400/60 hover:bg-cyan-500/20 hover:text-cyan-200 disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-transparent disabled:text-neutral-600"
         >
           {running ? "检索中" : "检索"}
         </button>

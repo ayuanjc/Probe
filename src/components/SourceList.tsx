@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { SourceRef } from "@/lib/sse";
 import BilingualCompare from "./BilingualCompare";
 import Term from "./Glossary";
@@ -14,7 +14,7 @@ function timeAgo(iso: string): string {
   return Math.round(hours / 24) + " 天前";
 }
 
-export default function SourceList({ sources }: { sources: SourceRef[] }) {
+function SourceList({ sources }: { sources: SourceRef[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comparing, setComparing] = useState<string | null>(null);
 
@@ -90,3 +90,5 @@ export default function SourceList({ sources }: { sources: SourceRef[] }) {
     </ul>
   );
 }
+
+export default memo(SourceList);

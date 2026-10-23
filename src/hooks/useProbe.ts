@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
 import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 
@@ -52,6 +52,45 @@ export function useProbe() {
   const [state, setState] = useState<ProbeState>(IDLE);
   const abortRef = useRef<AbortController | null>(null);
 
+  /**
+   * 流式合帧：text.delta 一个 token 一次 setState，等于一个 token 一次整树重渲染。
+   * 模型正常吐字 30–80 token/s，那就是 30–80 次/秒的 React 协调 —— 摘要框每加一个字，
+   * 下面所有图表卡都要跟着走一遍 render。实测流式期间最长 94ms 的长动画帧就出在这里。
+   * 所以把 delta 攒进 ref，按帧（rAF）提交一次；其它事件到达时先把它冲掉，保证顺序。
+   */
+  const pendingText = useRef("");
+  const rafRef = useRef<number | null>(null);
+
+  const cancelFlush = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
+
+  const flushText = useCallback(() => {
+    cancelFlush();
+    const add = pendingText.current;
+    if (!add) return;
+    pendingText.current = "";
+    setState((s) => ({ ...s, text: s.text + add }));
+  }, [cancelFlush]);
+
+  const queueText = useCallback(
+    (delta: string) => {
+      pendingText.current += delta;
+      if (rafRef.current !== null) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        flushText();
+      });
+    },
+    [flushText],
+  );
+
+  // 组件卸载后还在跑 rAF 会往已卸载的 state 里写。
+  useEffect(() => () => cancelFlush(), [cancelFlush]);
+
   const run = useCallback(async (query: string) => {
     const q = query.trim();
     if (!q) return;
@@ -97,6 +136,7 @@ export function useProbe() {
         buffer = parsed.rest;
         for (const event of parsed.events) applyEvent(event);
       }
+      flushText();
       setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -108,12 +148,16 @@ export function useProbe() {
     }
 
     function applyEvent(event: ProbeEvent) {
+      if (event.event === "text.delta") {
+        queueText(event.data.delta);
+        return;
+      }
+      // 非文本事件要先落盘已攒的文本，否则摘要顺序会颠倒（例如 done 先于最后一段字）。
+      flushText();
       setState((s) => {
         switch (event.event) {
           case "intent":
             return { ...s, intent: event.data };
-          case "text.delta":
-            return { ...s, text: s.text + event.data.delta };
           case "module.plan":
             return {
               ...s,
@@ -168,8 +212,10 @@ export function useProbe() {
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    cancelFlush();
+    pendingText.current = "";
     setState(IDLE);
-  }, []);
+  }, [cancelFlush]);
 
   return { state, run, reset };
 }

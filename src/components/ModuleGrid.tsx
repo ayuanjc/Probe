@@ -3,7 +3,7 @@
 
 import "react-grid-layout/css/styles.css";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GridLayout, useContainerWidth, type LayoutItem } from "react-grid-layout";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
@@ -30,7 +30,7 @@ const GRID_MIN_WIDTH = 720;
  * 锁定不是靠 CSS pointer-events 假装，而是真的把 drag/resize 关掉：
  * 半透明的拖拽把手上写着"禁用"，用户还是会去拖。
  */
-export default function ModuleGrid({
+function ModuleGrid({
   modules,
   sources,
   query,
@@ -73,6 +73,18 @@ export default function ModuleGrid({
   }, [signature, query, defaults, modules.length]);
 
   const unlocked = !running && modules.length > 0;
+
+  /**
+   * 拖拽/缩放期间给 <body> 挂一个标记：
+   * 卡片上的外发光阴影、发丝光过渡在指针每动一次时都会重绘整张卡（阴影是昂贵的
+   * 大范围模糊）。松手再恢复，观感上只是"手里那张卡更亮"，但每帧省下一次全卡重绘。
+   */
+  useEffect(() => {
+    const mark = (on: boolean) => document.body.classList.toggle("grid-interacting", on);
+    return () => {
+      mark(false);
+    };
+  }, []);
 
   const commit = useCallback(
     (next: readonly LayoutItem[]) => {
@@ -147,8 +159,16 @@ export default function ModuleGrid({
           threshold: 3,
         }}
         resizeConfig={{ enabled: unlocked, handles: ["se", "sw"] }}
-        onDragStop={(next) => commit(next)}
-        onResizeStop={(next) => commit(next)}
+        onDragStart={() => document.body.classList.add("grid-interacting")}
+        onDragStop={(next) => {
+          document.body.classList.remove("grid-interacting");
+          commit(next);
+        }}
+        onResizeStart={() => document.body.classList.add("grid-interacting")}
+        onResizeStop={(next) => {
+          document.body.classList.remove("grid-interacting");
+          commit(next);
+        }}
       >
         {modules.map((m) => (
           <div key={m.id} className="h-full">
@@ -159,3 +179,10 @@ export default function ModuleGrid({
     </div>
   );
 }
+
+/**
+ * 流式期间摘要每帧更新，Workspace 每帧重渲染。没有 memo 时整个网格（以及
+ * react-grid-layout 内部的布局计算）都跟着跑一遍，虽然每张卡自己已经 memo 过。
+ * 这里挡在网格外面：modules / sources 的引用在流式期间不变，网格直接跳过。
+ */
+export default memo(ModuleGrid);

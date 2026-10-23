@@ -33,6 +33,15 @@ export type CompileResult = CompileOk | CompileError;
 
 const BASE: Record<string, unknown> = {
   backgroundColor: "transparent",
+  /**
+   * ECharts 默认入场 1000ms、更新 300ms。多张卡同时上线时，那一秒里每帧都在重绘
+   * canvas —— 实测滚动/交互的长动画帧就卡在这段动画尾巴上。情报工具不需要
+   * "图表长出来"的仪式感，240ms 够看出变化，也够看清方向。
+   */
+  animationDuration: 240,
+  animationDurationUpdate: 160,
+  animationEasing: "cubicOut",
+  animationEasingUpdate: "cubicOut",
   color: PALETTE,
   textStyle: {
     color: "#a3a3a3",
