@@ -17,6 +17,8 @@ export type ModuleState = {
   fields?: Field[];
   confidence?: number;
   errorDetail?: string;
+  /** 该模块数字对应的原文 id，用于"两次点击回到原文"（PRD 附录 C）。 */
+  sourceIds?: string[];
 };
 
 export type ProbeState = {
@@ -66,7 +68,18 @@ export function useProbe() {
       });
 
       if (!res.ok || !res.body) {
-        throw new Error("检索接口返回 " + res.status);
+        /**
+         * 429 的 body 里有"请 N 秒后重试"。直接抛 HTTP 状态码的话，
+         * 用户只会看到"检索接口返回 429"——他知道出错了，但不知道该等多久。
+         */
+        const detail = await res
+          .json()
+          .then((b: unknown) => {
+            const msg = (b as { message?: string })?.message;
+            return typeof msg === "string" ? msg : "";
+          })
+          .catch(() => "");
+        throw new Error(detail || "检索接口返回 " + res.status);
       }
 
       const reader = res.body.getReader();
@@ -118,6 +131,7 @@ export function useProbe() {
                       rows: event.data.rows,
                       fields: event.data.fields,
                       confidence: event.data.confidence,
+                      sourceIds: event.data.sources,
                     }
                   : m,
               ),

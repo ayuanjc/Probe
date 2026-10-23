@@ -22,3 +22,6 @@ Thumbs.db
 *.log
 .vercel
 coverage/
+
+# 本地验证产物（截图、DOM dump、SSE 抓包、浏览器 profile）
+.tmp/

@@ -2,9 +2,13 @@
 import { z } from "zod";
 import { ClaimSchema } from "@/lib/schemas";
 import type { Claim, Confidence, Dataset, Intent, RawSource } from "@/lib/schemas";
-import { computeConfidence, findSyndicatedIds, allowsAggregateNumbers } from "@/lib/confidence";
+import {
+  computeConfidence,
+  findSyndicatedIds,
+  allowsAggregateNumbers,
+  ownerOf,
+} from "@/lib/confidence";
 import { generateStructured, llmEnabled } from "@/lib/llm";
-import { fixtureClaims } from "@/lib/fixtures";
 import { toneBucket } from "@/lib/heat";
 import { titleSimilarity } from "@/lib/text";
 
@@ -25,7 +29,7 @@ export type AnalysisResult = {
   notes: string[];
 };
 
-function dedupe(sources: RawSource[]): RawSource[] {
+function dedupe(sources: RawSource[]): { kept: RawSource[]; merged: number } {
   const seenUrl = new Set<string>();
   const seenTitle: string[] = [];
   const out: RawSource[] = [];
@@ -43,7 +47,7 @@ function dedupe(sources: RawSource[]): RawSource[] {
     seenTitle.push(s.title);
     out.push(s);
   }
-  return out;
+  return { kept: out, merged: sources.length - out.length };
 }
 
 async function extractClaims(
@@ -52,8 +56,13 @@ async function extractClaims(
 ): Promise<{ claims: Claim[]; source: "llm" | "fixture" | "none" }> {
   if (sources.length === 0) return { claims: [], source: "none" };
 
+  /**
+   * 没有模型就不抽断言。这里曾经回落成模板生成的假 claim，
+   * 于是界面上会冒出"可核验断言 2"——两句谁也没说过的引用。
+   * 宁可这一栏空着，也不能凭空造出可以点开核对的证据。
+   */
   if (!llmEnabled()) {
-    return { claims: fixtureClaims(sources), source: "fixture" };
+    return { claims: [], source: "none" };
   }
 
   const bundle = sources.slice(0, 12).map((s) => ({
@@ -74,7 +83,7 @@ async function extractClaims(
       "查询：" + intent.query + "\n材料：\n" + JSON.stringify(bundle, null, 1),
   });
 
-  if (!parsed) return { claims: fixtureClaims(sources), source: "fixture" };
+  if (!parsed) return { claims: [], source: "none" };
 
   const validIds = new Set(sources.map((s) => s.id));
   const claims = parsed.claims.filter((c) => {
@@ -88,20 +97,39 @@ async function extractClaims(
 /** 模型返回 { claims: [...] }，逐项过 ClaimSchema。 */
 const ClaimLike = z.object({ claims: z.array(ClaimSchema) });
 
+/**
+ * 按 Asia/Hong_Kong 落日期，不用 toISOString()。
+ * UTC 落日期时，用户晚上八点后看到的新闻会被归到前一天的柱子上，
+ * 时间线的形状本身就是错的——而这是页面最显眼的那个模块。
+ */
+const DAY_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Hong_Kong",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function dayKey(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "unknown";
-  return d.toISOString().slice(0, 10);
+  return DAY_FMT.format(d);
 }
 
 export async function analyze(intent: Intent, raw: RawSource[]): Promise<AnalysisResult> {
   const notes: string[] = [];
   const degraded: string[] = [];
 
-  const sources = dedupe(raw);
+  const deduped = dedupe(raw);
+  const sources = deduped.kept;
+  /**
+   * 注意：syndicatedIds 是在去重之后的集合上算的，所以"疑似转载"这一栏
+   * 统计的只是"活下来的条目里看起来像转载的"。被标题相似度吃掉的条目
+   * 一条都不计入 —— 结果是这一栏长期恒为 0，等于没在报告转载。
+   * 单独把合并条数记下来，让"命中 39"和"原始 40"之间的差有出处。
+   */
   const syndicatedIds = [...findSyndicatedIds(sources)];
   const { claims, source: claimSource } = await extractClaims(intent, sources);
-  if (claimSource === "fixture") degraded.push("claims:fixture");
+  if (claimSource === "none") degraded.push("claims:off");
 
   const confidence = computeConfidence(sources, claims);
   const allowNumbers = allowsAggregateNumbers(confidence);
@@ -131,14 +159,28 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
   }
 
   if (allowNumbers) {
+    // 必须走 ownerOf()，和 computeConfidence 里 nOwners 用同一个口径。
+    // 这里曾直接用 s.owner：owner 为空或大小写不同时，
+    // 柱状图的分组数和 KPI 的"独立信源"数会对不上，违反"数字一一对应"。
     const countOwners = new Map<string, number>();
     for (const s of sources) {
-      countOwners.set(s.owner, (countOwners.get(s.owner) ?? 0) + 1);
+      const k = ownerOf(s);
+      countOwners.set(k, (countOwners.get(k) ?? 0) + 1);
     }
-    const ownerRows = [...countOwners.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
+    // 尾部不能直接丢：截断后各柱相加必须仍等于总条数，
+    // 否则"信源分布"和 KPI 的数字会互相打脸。
+    const sortedOwners = [...countOwners.entries()].sort((a, b) => b[1] - a[1]);
+    const TOP_OWNERS = 7;
+    const ownerRows: { owner: string; articles: number }[] = sortedOwners
+      .slice(0, TOP_OWNERS)
       .map(([owner, articles]) => ({ owner, articles }));
+    if (sortedOwners.length > TOP_OWNERS + 1) {
+      const rest = sortedOwners.slice(TOP_OWNERS);
+      ownerRows.push({
+        owner: "其他 " + rest.length + " 家",
+        articles: rest.reduce((sum, [, n]) => sum + n, 0),
+      });
+    }
 
     if (ownerRows.length >= 2) {
       datasets.push({
@@ -188,7 +230,10 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
       { label: "命中条目", value: sources.length },
       { label: "独立信源", value: confidence.nOwners },
       { label: "疑似转载", value: syndicatedIds.length },
-      { label: "可核验断言", value: claims.length },
+      ...(deduped.merged > 0 ? [{ label: "去重合并", value: deduped.merged }] : []),
+      // 抽到 0 条就不显示这一栏：KPI 里的 0 会被读成"确实没有事实"，
+      // 而真相是这一轮根本没有做抽取。缺失的东西不占数字位。
+      ...(claims.length > 0 ? [{ label: "可核验断言", value: claims.length }] : []),
     ],
   });
 

@@ -1,7 +1,4 @@
-
 "use client";
-
-import { useState } from "react";
 
 const EXAMPLES = [
   "英伟达最近三个月的舆情变化",
@@ -9,15 +6,21 @@ const EXAMPLES = [
   "全球电动车销量格局",
 ];
 
+/**
+ * 受控组件：热榜点话题也要把词填进输入框，
+ * 否则用户看到结果却不知道"我是用什么问出来的"。
+ */
 export default function SearchBar({
   running,
+  value,
+  onChange,
   onRun,
 }: {
   running: boolean;
+  value: string;
+  onChange: (value: string) => void;
   onRun: (query: string) => void;
 }) {
-  const [value, setValue] = useState("");
-
   const submit = () => {
     if (!value.trim() || running) return;
     onRun(value);
@@ -29,7 +32,7 @@ export default function SearchBar({
         <span className="select-none text-[#3f4854]">&gt;</span>
         <input
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
@@ -53,7 +56,7 @@ export default function SearchBar({
             key={q}
             type="button"
             onClick={() => {
-              setValue(q);
+              onChange(q);
               if (!running) onRun(q);
             }}
             className="rounded border border-white/8 px-2 py-1 text-[10px] text-[#5c6675] transition hover:border-white/20 hover:text-[#94a3b8]"

@@ -34,8 +34,16 @@ function kindOf(query: string): Intent["kind"] {
   if (/是多少|多少|几|股价|营收|市值|发布日期|谁是|什么时候|how\s+much|when\s+is|who\s+is/i.test(q)) {
     return "lookup";
   }
-  // 无动词、无标点的极短输入 → 不强行生成面板，先问（PRD 2.1）。
-  if (q.length < 5) return "no-panel";
+  // 极短输入不一定是含糊输入。"人工智能"、"英伟达"、"Rust" 都短，
+  // 但主体明确、完全可以检索 —— 按长度一刀切会把它们全判成"需要澄清"，
+  // 热榜点进来的每个话题都会撞上这堵墙。
+  // 只把真正没有检索对象的寒暄/试探挡在这里（PRD 2.1 说的是含糊，不是短）。
+  if (q.length < 5) {
+    if (/^(你好|您好|哈喽|在吗|在么|测试|试试|hi|hello|hey|test|ping)[\s!！?？。.]*$/i.test(q)) {
+      return "no-panel";
+    }
+    return "exploratory";
+  }
   return "exploratory";
 }
 
