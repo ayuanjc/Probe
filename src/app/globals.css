@@ -97,17 +97,33 @@ a:hover {
   }
 }
 
-.module-grid {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 12px;
-  align-items: start;
+/* 拖拽布局（react-grid-layout）：默认占位块是醒目的红色，会盖住卡片内容。 */
+.react-grid-item.react-grid-placeholder {
+  background: #5eead4;
+  opacity: 0.1;
+  border: 1px dashed rgba(94, 234, 212, 0.45);
+  border-radius: 6px;
+  transition-duration: 80ms;
 }
 
-@media (max-width: 900px) {
-  .module-grid > * {
-    grid-column: span 12 !important;
-  }
+.react-grid-item.react-draggable-dragging,
+.react-grid-item.resizing {
+  z-index: 30;
+  transition: none;
+}
+
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 0.5;
+}
+
+/* 拖拽把手：可抓取时才有 grab 光标，流式期间不渲染这个元素。 */
+.card-drag-handle:active {
+  cursor: grabbing;
 }
 
 .caret::after {

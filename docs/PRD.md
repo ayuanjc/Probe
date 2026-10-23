@@ -209,6 +209,9 @@ type ModuleSpec = {
   - 自由拖拽、缩放图表卡片。
   - **一句话定制**：支持自然语言（如“帮我加一个展示正负面情绪的饼图”），系统从模板库调用或由 AI 现场生成新模块插入面板。
 - **布局快照**存入 Supabase，下次搜索恢复。
+  🔧 实现备注（Phase 2）：Supabase 尚未配置（无鉴权、无表结构），本阶段快照落 `localStorage`，
+  键为 `probe:layout:<layoutVersion>:<query>`，结构与本文一致（`schemaVersion` + `layoutVersion` + `query` + `items`）。
+  换存储层只需要替换 `src/lib/layout.ts` 的读写实现，形状不变。
 
 🔧 **V1.1 补充约束**：
 
@@ -348,7 +351,7 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 
 - 多数据源接入（GDELT / Wikipedia pageviews / HN）+ 单源失败隔离。
 - 三分量置信度上线 + 徽章可展开 + 四条硬规则全量落实。
-- `react-grid-layout` 拖拽与布局快照（Supabase）。
+- `react-grid-layout` 拖拽与布局快照（本阶段 localStorage，见 2.5 实现备注）。
 - “一句话生成模块”（只产出 `ModuleSpec`，走注册表）。
 - 🔧 **热点榜 v0**：静态 Top N（按 `articles_24h` 排序即可），**不做状态标签**。
 - **验收**：拖拽保存刷新仍在；热点榜有内容且可点进详情。
