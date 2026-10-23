@@ -10,7 +10,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
-import ModulePrompt from "./ModulePrompt";
+import ModuleDock from "./ModuleDock";
 import type { Dataset } from "@/lib/schemas";
 import {
   DEFAULT_SETTINGS,
@@ -291,33 +291,20 @@ export default function Workspace({
           )}
         </div>
 
-        <aside className="scroll-thin flex flex-col gap-4 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto">
-          {state.status === "done" && datasets.length > 0 ? (
-            <ModulePrompt
-              datasets={datasets}
-              modules={state.modules}
-              confidence={state.confidence?.score ?? 0}
-              sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
-              headers={settingsHeaders(settings)}
-              onAdd={addModule}
-            />
-          ) : (
-            <div className="panel p-4">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-sm font-semibold text-white">一句话生成面板</span>
-                <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-600">
-                  {datasets.length} 份数据
-                </span>
-              </div>
-              <p className="mt-2 font-mono text-[10px] leading-relaxed text-neutral-600">
-                {running
-                  ? "检索中：面板生成器在 done 之后可用。"
-                  : state.status === "failed"
-                    ? "上一轮失败了：先重试一次，拿到数据才能出图。"
-                    : "先搜一个问题。生成器只从这一轮算出来的数据里挑，不重新检索。"}
-              </p>
-            </div>
-          )}
+        {/*
+          侧栏只剩一个入口：面板本身收在「DIY」圆钮后面的浮层里
+          （ModuleDock 用 portal + fixed，侧栏的 overflow 裁不到它）。
+        */}
+        <aside className="flex flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
+          <ModuleDock
+            datasets={datasets}
+            modules={state.modules}
+            confidence={state.confidence?.score ?? 0}
+            sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
+            headers={settingsHeaders(settings)}
+            onAdd={addModule}
+            status={state.status}
+          />
         </aside>
       </div>
 
