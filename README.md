@@ -136,8 +136,16 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 - **三通道打开**：hover（鼠标）、focus（Tab 到）、点击（触屏）。只做 hover 等于
   把触屏和平板用户挡在外面。
 - **不用原生 `title`**：原生提示延迟一秒、不可选中、不能换行，塞不下"公式 + 口径 + 已知盲点"三段。
-- **弹层写在 DOM 里**（不是 portal），`role="tooltip"` + 内层 `aria-label`；
-  Escape 与点外部关闭。
+- **弹层用 `createPortal` 挂到 `document.body`，`position: fixed`**。挂在触发词里面会被
+  卡片的 `overflow: hidden` 裁掉；网格卡片还带 `transform`，而 `transform` 会把
+  `position: fixed` 的包含块从视口改成卡片本身——气泡于是又飞出去、又被裁。挂到 body 才同时躲开这两条。
+- **位置是量出来的，不是按 align 猜的**：`getBoundingClientRect()` 取锚点、`offsetWidth/offsetHeight`
+  取气泡，先按 `align` 算出一侧，再夹进 `[8, 视口宽 − 8 − 气泡宽]`；下方放不下翻到上方，
+  上方也放不下就贴底。缩放、滚动时跟着重算，锚点滚出视口直接关掉。
+  只按 `align` 选左右等于赌「这个词永远不在屏幕边上」——页头右侧的置信度徽章专门证伪这一点。
+- **从触发词移进气泡不会关**：140ms 延迟关闭 + 气泡自己 `onMouseEnter` 取消。
+  否则鼠标一离开词条气泡就消失，"公式 + 口径 + 盲点"三段文案根本读不完。
+- `role="tooltip"` + 内层 `aria-label`，Escape 与点外部关闭。
 - 词条正文写清**它不是什么**（"置信度是证据强度，不是正确概率"），比只写定义有用。
 
 ## 双语对照：颜色标的是"可核对的差异"，不是翻译质量
@@ -179,6 +187,93 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 都不走 `fetch`，改用 `node:https` 的 `getDirect`（`src/lib/http.ts`）——
 它默认不读代理环境变量。附带好处是重定向、超时、字节上限都握在自己手里。
 
+## 数据模块：不是"多画几种图"，是"多几种能算准的形状"
+
+第二批 6 种图形全部由 `analyze()` 里真算出来的 dataset 驱动，没有一种是装饰性占位。
+共同原则：**凑不出就整张图不出**——不画空图，也不补 0。
+
+| 模块 | 形状 | 数据从哪来 | 出不来的时候 |
+| --- | --- | --- | --- |
+| `m-hours` | heatmap 星期×小时 | `hourParts()` 拆 `publishedAt`（Asia/Hong_Kong；`hour12:false` 下午夜给 24，要再 `%24`） | 只有 1 个格子时不出 |
+| `m-weekday` | radar 7 维 | 同一份解析结果按星期计数 | 有数据不满 3 个星期时不出（三维以下没有形状可言） |
+| `m-terms` | graph 共现网络 | `titleTerms()` 抽标题里的专名，两两共现计数 | 高频专名 <4 个或边 <3 条时不出：几根散线不叫网络 |
+| `m-flow` | funnel 检索收敛 | 命中条目 → 去重后 → 有发布时间 → 24h 内 | 一条都没有发布时间时整张不出 |
+| `m-fresh` | gauge 24h 新鲜度 | `fresh / dated` | 同上 |
+| `m-tone-scatter` | scatter 时距×情感 | GDELT 的 tone 与距今天数（0–7 天） | 不足 3 个点、或本轮没有 tone 时不出 |
+
+漏斗那四级是刻意选的：`fresh ⊆ dated ⊆ sources ⊆ raw` 是集合包含关系，
+所以这张图**不可能自相矛盾**。断言数没有放进来——claim 可以来自没有发布时间的条目，
+放进去会破坏包含关系，画出来就会出现"后一级比前一级多"。
+
+`compile.ts` 的字段校验这批改成了**全量**：以前只查 x/y/value/series 四个键，
+graph 的 `from/to` 与 funnel 的 `stage` 正好绕过去，字段写错的结果是一块空白而不是报错。
+现在 encode 里任何值不在 fields 中就直接降级成表格，并在卡片上写原因。
+
+## 视觉：一套颜色，三个意思
+
+层级只靠两件事：**底色差**与**边框亮度**。页面是纯黑 `#000`（不是近黑 `#0a0a0a`——Logo 的节点蓝
+`#0055FF` 压在近黑上只有 3.5:1，会「陷」进底色，退到纯黑才站得住）、卡片 `#111`、边框 `#262626`、hover
+`#404040`、圆角 6px。没有 `backdrop-filter`、没有发光阴影、没有渐变背景、没有扫描线——
+这些在意式咖啡上很好看，在数据终端里每一个都在跟数字抢注意力。
+
+颜色只有三个意思，多一个都要解释：
+
+| 颜色 | 含义 | 出现位置 |
+| --- | --- | --- |
+| 蓝 `#3b82f6` | 强调 / 可操作 / 正常 | 主按钮、链接 hover、焦点环、图表主色、置信度 high |
+| 黄 `#eab308` | 降级 / 需要留意 | 检索降级条、疑似转载、置信度 medium、布局没存下、翻译歧义 mid |
+| 红 `#ef4444` | 出错 / 高危 | 查询失败、图表编译错误、置信度 low、翻译歧义 high |
+
+其余一律灰阶。**同一套语义用到三处**：置信度三档（high 蓝 / medium 黄 / low 红）、双语对照的
+歧义度（low 蓝 / mid 黄 / high 红）、请求状态（降级黄 / 失败红）——不另造第四种编码，
+用户学一次就够用三处。
+
+数字必须能竖着比：所有指标、ID、时间都是 `font-mono` + `tabular-nums`（等宽数字），
+不然列表里 `1` 和 `7` 宽度不同，上下两行的小数点就对不齐。正文用 Inter。
+
+以前有三套主题（青 / 紫 / 琥珀），靠覆盖 Tailwind 的 `--color-cyan-*` 变量换色。现在连
+`THEMES` 常量、`data-theme`、`data-fx` 一起删了：一套配色只要说清「这个颜色什么意思」，
+三套就得说清三遍，而第二遍开始就没人看说明了。图表色板也收成一个蓝的明度阶梯 + 一个中性灰
+（`compile.ts` 的 `PALETTE`）——颜色在图表里不该用来「好看」，只该用来区分。
+
+品牌只有一处：`src/components/ProbeLogo.tsx`（白轴线 + 三个蓝节点，`vectorEffect="non-scaling-stroke"`
+保证放大缩小时描边不跟着变粗），favicon `src/app/icon.svg` 用同一套语言重画。节点色就是强调色
+`#3b82f6`（纯黑上 5.7:1）；品牌蓝原先用更深的 `#0055FF`，在纯黑上只有 3.7:1，蓝点会陷进背景。
+
+验收方式是扫 DOM 而不是看截图：全站 `backdrop-filter !== none` 的元素 0 个、`box-shadow !== none`
+0 个、旧色值（青/琥珀/玫红）0 处；`.panel` 的 computed 值依次为 `rgb(17,17,17)` / `rgb(38,38,38)` /
+`6px` / `layout style`，hover 后边框 `rgb(64,64,64)`。
+## 设置：自己的 key、外观、一键还原
+
+三件事共用一个面板，全部只在本机：
+
+| | 存在哪 | 走哪条路 |
+| --- | --- | --- |
+| OpenAI / Tavily key、模型名 | `localStorage` 的 `probe:settings:v1` | 每个请求带 `x-probe-openai-key` / `x-probe-tavily-key` / `x-probe-model` |
+| 字号、密度、动画 | 同上 | 写到 `<html>` 的 `data-density` / `data-anim`，字号直接改根 `font-size` |
+| 布局快照 | `probe:layout:*` | 见上一章 |
+
+key 走请求头而不是查询串：查询串会进服务端访问日志，也会留在浏览器历史里。
+服务端用 `AsyncLocalStorage` 把它绑在**本次请求**的调用链上（`src/lib/runtime-config.ts`），
+`llmEnabled()` / `resolvedModelId()` / `resolvedTavilyKey()` 都是"先读这次请求的、再回落 env"。
+这样不用给每个函数加参数，也不会串到下一个请求里：**不落库、不写日志、不跨请求复用**。
+
+填了错的 key 会怎样：`llmEnabled()` 变 true，模型调用失败，摘要一句都写不出来。
+这种情况会在摘要区明说"摘要没有生成"，而不是留一片空白让人以为数据不全——
+面板里的数字与信源不依赖模型，照常可读。
+
+这里没有「主题切换」，只有一套配色。之前的青/紫/琥珀三套皮肤连 `THEMES` 常量一起删掉了：
+一套界面配色要能说清「这个颜色是什么意思」，三套就得说清三遍。图表色板同理，写在
+`compile.ts` 的 `PALETTE` 里，是蓝的明度阶梯加一个中性灰——canvas 读不到 CSS 变量，
+所以这一份必须和界面手对齐。
+
+字号改的是根字号（15/16/17px）：Tailwind 的间距与字号都是 rem，改根字号等于整站等比缩放。
+密度改的是网格间距（紧凑 16 / 标准 24），不是给卡片加一层更小的 padding——
+后者会让图表在窄卡里挤成一团。
+
+"一键还原"清掉所有 `probe:` 前缀的本机键（设置 + 每个查询词的布局快照），然后整页重载。
+按钮要按两次，第二次 4 秒内有效：这个操作没有撤销。
+
 ## 性能：帧率按「最长的那一帧」算，不按平均值
 
 平均值骗人。240Hz 屏上一秒 240 帧，只要有 3 帧掉了 60ms，手感就是「卡一下」，而平均帧率仍然是 230fps。所以这里的验收口径是 **LoAF（long-animation-frame）**：浏览器原生告诉你「这一帧超过 50ms 了吗、渲染开始得多晚、里面脚本占多少」。
@@ -201,11 +296,11 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 
 1. **流式合帧**（`src/hooks/useProbe.ts`）：原来每个 `text.delta` 都 `setState`，摘要每多一个字，整棵树（四张卡、两张图）就重渲染一次。现在攒进 ref、按 `requestAnimationFrame` 一帧只刷一次，并且遇到 `module.ready` / `done` 这类结构事件先强制 flush，保证顺序不乱。
 2. **ECharts 动画 1000ms → 240ms**（`src/lib/compile.ts`）：默认入场动画会在这 1 秒里每帧重绘 canvas；情报工具不需要「图表长出来」的仪式感。
-3. **`backdrop-filter` 查了一遍，最后留着**（`src/app/globals.css` 的 `.panel`）：一度以为「十几张卡各带一层 `blur(24px)`」是滚动掉帧的元凶，就去掉了。随后做 A/B（运行时注入/撤掉 `.panel` 的 blur，首页 12 张卡）——**去掉 blur 之后滚动 231fps、最长帧 8.4ms；带着 blur 是 234fps、最长帧还是 8.4ms**，4 倍 CPU 降频下也一样。之后又只针对流式段做了 A/B（页面启动前注入 `backdrop-filter: none`）：带 blur 最长帧 112.3–112.6ms，去掉是 104–108ms，差 4–8ms——有成本，但落在噪声里。原因大概是卡片背后只有一层静态渐变，Chrome 把这层采样缓存住了。所以这是冤枉的，blur 恢复（它是这套界面的一部分）。真正留下的是 `contain: layout style`——让卡片内部布局不外溢，拖拽时少一次全局布局计算。
-4. **hover 光晕改成常驻层 + 改透明度**：原来是把 `box-shadow` 从无过渡到一片大范围模糊阴影，指针扫过一排卡片时每张卡都要重新光栅化；现在阴影在一次绘制里、之后只切 `opacity`，非 hover 状态干脆 `visibility: hidden`（连绘制准备都跳过）。
-5. **背景渐变搬进 fixed 伪元素**：写在 `body` 上的 `background-image`，即使加了 `background-attachment: fixed`，滚动时浏览器仍会重绘整块视口背景。现在是两层固定的合成层（`body::before` 辉光 + 扫描线、`body::after` 网格 + mask），滚动只移动内容层。
+3. **`backdrop-filter` 的旧账**（`src/app/globals.css` 的 `.panel`）：旧皮肤上十几张卡各带一层 `blur(24px)`，我们做过 A/B（首页 12 张卡，运行时注入/撤掉 blur）——**去掉 blur 滚动 231fps、最长帧 8.4ms；带着 blur 234fps、最长帧还是 8.4ms**，4 倍降频下也一样；只测流式段（带 blur 112.3–112.6ms vs 去掉 104–108ms）差 4–8ms，落在噪声里。所以它当年不算性能问题。现在整套 `backdrop-filter` 随新设计一起删了：**干净不是为了省帧，省帧只是顺带**。留着的是 `contain: layout style`——卡片内部布局不外溢，拖拽时少一次全局布局计算。
+4. **hover 只改边框颜色**：旧版是让 `box-shadow` 从无过渡到一片大范围模糊阴影，指针扫过一排卡片时每张都要重新光栅化（后来改成常驻层切 `opacity`）。新版干脆不用阴影——hover 只把 1px 边框从 `#262626` 提到 `#404040`，`transition` 只有 `border-color 160ms`，颜色插值不新建任何绘制层。
+5. **背景只剩一个颜色**：`body` 上只有 `background-color: #000`。中间那一版把辉光、扫描线、64px 网格铺在两个 `fixed` 伪元素上（滚动只移动内容层，确实是优化），但新设计里这三层一个都不该存在——**最省的重绘是不画**。
 6. **`ResizeObserver` 让 canvas 跟着卡片走**（`ModuleCard` 里的 `ChartBox`）：ECharts 只知道窗口尺寸，不知道卡片被拖大了——原来把卡从 4×8 拖到 6×11，图会被拉花。现在按帧去抖后 `resize()`。
-7. **拖拽期间降级**（`ModuleGrid` 在 `<body>` 上挂 `.grid-interacting`）：过渡、发丝光、外发光全关掉，只剩移动一个已光栅化的图层，松手恢复。
+7. **拖拽期间降级**（`ModuleGrid` 在 `<body>` 上挂 `.grid-interacting`）：拖起来的那张卡与邻居本来都要重画，期间把 `.panel` 的 `border-color` 过渡关掉，只搬动已光栅化的图层，松手恢复。
 8. **`memo` 挡在网格外**（`ModuleGrid` / `ModuleCard` / `SourceList`）：流式期间摘要每帧变，但 `modules` / `sources` 的引用没变，网格不必跟着重跑 `react-grid-layout` 的布局计算。
 9. **尊重 `prefers-reduced-motion`**：关掉光标闪烁与骨架流动。这不是性能，是礼貌。
 
@@ -213,16 +308,100 @@ Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，�
 
 `npm run dev` 下的数字**不能**用来判断渲染性能。Turbopack 的按需编译、React 开发版的双次渲染，都会在首次交互时塞进几百毫秒的长任务；同一个页面在 `next start` 下这些数字会凭空少一半。要复现上表，先 `npm run build` 再 `npm start`，且不要和 `next dev` 同时跑（两者共用 `.next`）。
 
+## 交互：结果先出来，工具按需出现
+
+这一版的交互原则来自 Nielsen Norman Group 的三条经典结论，不是凭手感调的：
+
+- **渐进披露（Progressive Disclosure, Nielsen 2006）**：先只露最重要的选项，专业选项按需请求
+  才出现（原文举的例子就是打印对话框）。→ 生成器不进主视图，收在侧栏入口背后，**只在结果
+  跑完之后才出现**，检索过程中连占位都没有。
+- **模态 vs 非模态（Modal & Nonmodal Dialogs, Fessenden 2017）**：模态会打断并强制一个动作，
+  只在必须把注意力导向重要信息时才用。→ 生成器是**非模态浮层**（portal + fixed）：不锁滚动、
+  不遮背景、点外面就收。为了一个可选动作拦下整页，成本远大于收益。
+- **10 Usability Heuristics**：#1 系统状态可见（跑完才给工具，跑的时候只说"正在检索"）、
+  #2 贴近真实世界（入口文案是"说想看什么"，不是 `ModuleSpec`）、#7 灵活高效（`/` 一键聚焦
+  搜索框）、#8 极简（操作提示只留一次，之后可关）。
+
+落成七件小事：
+
+1. **DIY 只在结果页**：`Workspace` 用 `state.status === "done" && datasets.length > 0` 门控侧栏，
+   不满足时整列都不渲染，同时把 `xl` 的两列栅格收成一列，不留 340px 空槽。
+2. **入口整块可点**：原来只有 64px 圆钮能点、说明文字是死的；现在 `<button>` 包住整张卡，
+   右端写「点开 ›」/「收起」，`aria-expanded` 跟着变。
+3. **生成后带路**：「去看看 →」滚到新卡并给 1.4s 的 `.card-flash` 高亮，而不是弹 toast。
+4. **提示可关**：网格顶部那行操作说明点 `×` 收起，写进 `probe:grid-hint:v1`（`probe:` 前缀会被
+   设置面板的「一键还原」一起清掉）。
+5. **`/` 聚焦搜索框**：GitHub / Linear 那套。只在焦点不在输入框里时抢——正在别处打字不动它。
+6. **浮层定位只剩一份算术**：`src/lib/placement.ts` 的 `placeFloating()` 被术语气泡与 DIY 面板共用
+   （贴边夹回视口、下方放不下翻上方、贴底兜底），`anchorVisible()` 负责"锚点滚走就收起"。
+7. **`prefers-reduced-motion` 与设置里的「动画」开关**同时作用于新增的 `.rise` 与 `.card-flash`。
+
+## 一句话生成模块：句子只决定「看哪份数据、用哪种图形」
+
+输入「用散点图看情感分布」，网格里多一张卡。这句话里的模型能决定的只有三件事：
+**用哪一份数据集、画哪种图、标题叫什么**。字段怎么映射到 x / y / value 不归它管——
+`compile.ts` 是安全边界，模型直出的 encode 的失败方式不是语法错，而是「语法合法、语义胡说」，
+那种错没有人能一眼看出来。所以 `autoEncode()` 按字段类型硬性匹配：数值字段才配 value 轴，
+时间字段优先配 x 轴，一张都匹配不上就返回 null，让调用方换图。
+
+没有 key 的时候走 `src/lib/module-plan.ts` 的本机关键词规则，两个细节是有意的：
+
+- `KIND_WORDS` 的**顺序**参与语义：「散点图」必须排在「图」前面，否则任何带「图」的句子都会退化成长条。
+- `DS_WORDS` 给每份数据集配中文说法（信源/稿源/来源、时段/小时/几点、星期/周几/周末……），
+  按 `命中词 × 3 + 数据集名字串 × 4 + 字段名 × 1` 打分。**一个都没命中时不猜**，
+  直接回一份「这一轮有这些数据」的清单让人自己挑。
+
+数据只从**这一轮已经算出来的** dataset 里挑（`datasetsFromModules` 遍历现有模块的 `spec.dataset`），
+不重新检索、不碰全网。代价是自定义面板跟着这一轮走：刷新页面或换一个问题，它就没了——
+这句话直接印在面板上，不让人误以为它被存下来了。
+
+入口是侧栏里的「DIY」卡片（`src/components/ModuleDock.tsx`），面板本身开在浮层里。
+**它只在 `done` 且真有数据可出图时才出现**：检索中、失败、空闲都不留占位——进度已经在左列
+写着，一个还不能用的入口只是噪音（依据见上一节）。整块卡片都是按钮，点说明文字也能开，
+不是只有那个圆钮能点。点开是 portal + `position: fixed`，理由和术语气泡一样（侧栏
+`overflow-y-auto` 会裁、卡片 `transform` 会改 `fixed` 的包含块）。位置对齐**整块入口**而不是
+圆钮：右对齐 64px 的圆钮会让 340px 的面板往左偏出侧栏、盖住结果区——面板左边缘和侧栏左边缘
+重合才像"从这里展开"。下方放不下上翻、两侧都放不下夹进视口；入口滚出视口直接收起来；
+Esc、点外部、再点一次都能关。
+
+生成成功后浮层里多一个**「去看看 →」**：收起浮层、滚到新卡片、闪 1.4 秒。不弹 toast——
+要说的话（"已加入网格"）面板里已经写着了，再弹一次只是打断。
+
+侧栏从 `xl`(1280px) 起才常驻（更窄时落到结果下方）：1024–1279px 撑两列，左列会窄过
+`ModuleGrid` 的 720px 底线、网格直接退回单列，那不如让它先不分栏。
+
+画不出来时说清楚。前端先拿 `compile()` 试一遍，失败就把 `compileErrorText` 的原话贴出来
+（「雷达图至少要三个维度」），**不悄悄降级成表格**——一张表能装下任何数据，但用户要的是图，
+换成表格等于没回答。字段真的不合适时，规则会在**选图阶段**就换一种（「用散点图看信源分布」
+只有一列数值，改条形图），并在 reason 里写「已改用条形图」。
+
+一个坑记在这：`compile()` 对 `table` / `kpi` 返回 `unknown_kind`（它是给图表用的），
+所以这两种图在插入前跳过编译，否则「用指标卡看概况」永远失败。
+
+实测（`POST /api/module`，无 key，本机规则路径）：
+
+| 句子 | 结果 |
+| --- | --- |
+| 用条形图看每天的文章数 | `bar` + `ds-timeline`，encode `{x: day, y: articles}` |
+| 看发布时段 | `heatmap` + `ds-hours`，encode `{x: weekday, y: hour, value: articles}` |
+| 用散点图看趋势 | 回落 `line`，reason 写「按日文章数」的字段画不出散点图 |
+| 用散点图看信源分布 | 回落 `bar`，同一条路径的第二层兜底 |
+| 你好 | `{ok: false, error: "no_dataset"}`，附这一轮可用数据集清单 |
+
+路由限流 12 次/分钟（`PROBE_MODULE_RATE_LIMIT_PER_MIN`），和搜索分开计数：
+本机规则是廉价调用，但走到模型路径要花钱，别让它变成无限次试用。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
-  lib/        schemas · confidence · heat · compile · layout · sse · llm · fixtures · entities · text · trending
-              glossary · lang · translate · translate-risk · translate-types · http
-  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts
+  lib/        schemas · confidence · heat · compile · layout · module-catalog · module-plan · sse · llm
+              fixtures · entities · text · trending · glossary · lang · translate · translate-risk
+              translate-types · http · settings · runtime-config · config-headers · placement
+  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
-              Glossary · BilingualCompare
+              Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
   hooks/      useProbe.ts
 ```
 

@@ -20,7 +20,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
 
   if (sources.length === 0) {
     return (
-      <div className="px-6 py-4 text-[11px] text-neutral-500">
+      <div className="px-5 py-4 text-[11px] text-neutral-500">
         没有可追溯的原文。按规则，此时不展示任何聚合数字。
       </div>
     );
@@ -29,9 +29,8 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
   return (
     <ul>
       {sources.map((s) => (
-        <li key={s.id} className="px-6 py-2.5 transition-colors hover:bg-cyan-500/[0.04]">
+        <li key={s.id} className="px-5 py-2.5 transition-colors hover:bg-neutral-800/40">
           <div className="flex items-start gap-3">
-            <span className="mt-1 h-1 w-1 shrink-0 rounded-sm bg-cyan-500/70 shadow-[0_0_6px_rgba(34,211,238,0.6)]" aria-hidden />
             <span className="mt-0.5 w-16 shrink-0 font-mono text-[10px] tabular-nums text-neutral-600">
               {timeAgo(s.publishedAt)}
             </span>
@@ -40,7 +39,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                 href={s.url}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="block truncate text-[13px] text-neutral-300 transition-colors hover:text-cyan-300"
+                className="block truncate text-[13px] text-neutral-300 transition-colors hover:text-white"
                 title={s.title}
               >
                 {s.title}
@@ -48,7 +47,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-neutral-500">
                 <span className="font-mono">{s.owner}</span>
                 {s.syndicated && (
-                  <span className="rounded border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-amber-300">
+                  <span className="rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 text-yellow-500">
                     <Term k="nSyndicated">疑似转载</Term>
                   </span>
                 )}
@@ -56,7 +55,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                   <button
                     type="button"
                     onClick={() => setExpanded(expanded === s.id ? null : s.id)}
-                    className="rounded border border-white/10 bg-white/10 px-2 py-0.5 text-neutral-300 transition-colors hover:border-cyan-500/40 hover:text-white"
+                    className="rounded border border-neutral-800 px-2 py-0.5 text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
                   >
                     原文片段
                   </button>
@@ -67,8 +66,8 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                   className={
                     "rounded px-2 py-0.5 transition-colors " +
                     (comparing === s.id
-                      ? "border border-cyan-400/50 bg-cyan-500/15 text-cyan-200"
-                      : "border border-cyan-500/25 bg-cyan-500/[0.07] text-cyan-300/90 hover:border-cyan-400/50 hover:text-cyan-200")
+                      ? "border border-neutral-600 bg-neutral-800 text-white"
+                      : "border border-neutral-800 text-neutral-400 hover:border-neutral-600 hover:text-white")
                   }
                   title="抓取原文正文，逐段给出译文与可核对差异"
                 >
@@ -76,7 +75,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                 </button>
               </div>
               {expanded === s.id && s.quote && (
-                <blockquote className="mt-2 border-l-2 border-cyan-500/40 pl-3 text-[11px] leading-relaxed text-neutral-400">
+                <blockquote className="mt-2 border-l-2 border-neutral-700 pl-3 text-[11px] leading-relaxed text-neutral-400">
                   {s.quote}
                 </blockquote>
               )}

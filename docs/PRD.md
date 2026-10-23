@@ -213,6 +213,17 @@ type ModuleSpec = {
   键为 `probe:layout:<layoutVersion>:<query>`，结构与本文一致（`schemaVersion` + `layoutVersion` + `query` + `items`）。
   换存储层只需要替换 `src/lib/layout.ts` 的读写实现，形状不变。
 
+  🔧 实现备注（Phase 2，一句话定制）：落地为 `POST /api/module` + `src/components/ModulePrompt.tsx`。
+  模型只挑 `dataset` + `kind` + `title` 三项，`encode` 一律由 `src/lib/module-catalog.ts` 的 `autoEncode()`
+  按字段类型填——模型直出 encode 的失败方式是「语法合法、语义胡说」，那种错没人能一眼看出来。
+  没有 key 时回落 `src/lib/module-plan.ts` 的关键词规则：命中不到数据集就回一份可用清单，不猜；
+  字段画不出指定的图就在选图阶段换一种，并把「已改用 X」写进 reason。
+  候选数据只取本轮已产出的 dataset，因此自定义面板随本轮结果消失（刷新或换词即无），不做持久化。
+  前端插入前先过 `compile()`：失败贴出原始原因码文案，不静默降级成表格；`table` / `kpi` 跳过编译。
+  入口按**渐进披露**只在结果页出现：`done` 且至少有一个可出图 dataset 时才渲染侧栏（检索中、失败、空闲
+  都不留占位，栅格同时收成一列）；面板是**非模态浮层**，不锁滚动、点外部即收；生成后「去看看 →」
+  把视线带到新卡片（滚动 + 1.4s 高亮）。浮层落点算术与术语气泡共用 `src/lib/placement.ts`。
+
 🔧 **V1.1 补充约束**：
 
 1. 每个卡片必须是**已注册 widget**（`components/modules/registry.ts`），"AI 现场生成"只能生产 `ModuleSpec`，**不能生成新组件代码**。
@@ -223,8 +234,13 @@ type ModuleSpec = {
 
 ## 3. 交互与容错设计
 
-- **视觉风格**：极暗黑（Dark Mode）、毛玻璃（Glassmorphism）、高密度数据排版（参考 Palantir / Perplexity），Tailwind CSS 实现。
+- **视觉风格**：暗黑（Dark Mode）、纯色平面、高密度数据排版（参考 Vercel / Linear / Stripe），Tailwind CSS 实现。
+  🔧 实现备注（V1.2 视觉重做）：毛玻璃（Glassmorphism）、发光阴影、渐变背景、扫描线**全部移除**——
+  纹理层每个都在跟数字抢注意力。层级只靠底色差（`#000` 页面 / `#111` 卡片）与边框亮度
+  （`#262626` → hover `#404040`）；圆角统一 6px；颜色只有三个意思（蓝=强调/正常、黄=降级/留意、
+  红=出错/高危），其余灰阶；数字强制 `font-mono` + `tabular-nums`。验收方式见 README「视觉」一章。
 - **幻觉与报错降级**：AI 生成的图表配置失败时提示“由于 AI 幻觉，当前图表无法生成。您需要重试吗？”；重试仍失败则自动降级为预设结构化表格，确保数据不丢失。
+- **交互层级（渐进披露）**：主视图先只给结果；生成器、布局调整这类专业工具按需出现，且在数据就绪前不占位。面板用非模态浮层而不是模态对话框——模态会打断并强制一个动作，只留给必须导向注意力的信息。
 
 🔧 **V1.1 降级矩阵（每层都必须有兜底，不允许空白区域）**
 
@@ -322,7 +338,7 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 | **可观测性** | 每一步记录：耗时、token、失败原因、降级次数、独立源数、置信度分布。**没有这些指标，Phase 2 调优只能靠猜** |
 | **数据合规** | 只存 metadata + 摘要 + 原文链接，不落库新闻正文；GDELT 结果需署名 |
 | **空态** | 冷门词零结果时展示：已尝试的源清单 + 关键词改写建议 + 邻近热词（来自热点榜） |
-| **可访问性** | 暗黑主题对比度 ≥ 4.5:1；图表必须有 `aria-label` 与表格降级视图 |
+| **可访问性** | 暗黑界面正文对比度 ≥ 4.5:1；图表必须有 `aria-label` 与表格降级视图 |
 
 ---
 
@@ -352,7 +368,7 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 - 多数据源接入（GDELT / Wikipedia pageviews / HN）+ 单源失败隔离。
 - 三分量置信度上线 + 徽章可展开 + 四条硬规则全量落实。
 - `react-grid-layout` 拖拽与布局快照（本阶段 localStorage，见 2.5 实现备注）。
-- “一句话生成模块”（只产出 `ModuleSpec`，走注册表）。
+- “一句话生成模块”（只产出 `ModuleSpec`，走注册表）。✅ 已实现，见 2.5 实现备注。
 - 🔧 **热点榜 v0**：静态 Top N（按 `articles_24h` 排序即可），**不做状态标签**。
 - **验收**：拖拽保存刷新仍在；热点榜有内容且可点进详情。
 

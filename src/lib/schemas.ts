@@ -104,6 +104,13 @@ export const ModuleKind = z.enum([
   "map",
   "table",
   "kpi",
+  // 第二批：都是"能从现有原始条目真算出来"的形状，不是装饰。
+  "heatmap",
+  "radar",
+  "graph",
+  "funnel",
+  "gauge",
+  "scatter",
 ]);
 
 export const ModuleSpecSchema = z.object({

@@ -16,6 +16,8 @@ export type ModuleState = {
   rows?: Record<string, string | number | null>[];
   fields?: Field[];
   confidence?: number;
+  /** 这份数据的中文名（如「信源分布」）。前端靠它重建 Dataset，供自定义模块使用。 */
+  datasetName?: string;
   errorDetail?: string;
   /** 该模块数字对应的原文 id，用于"两次点击回到原文"（PRD 附录 C）。 */
   sourceIds?: string[];
@@ -91,7 +93,11 @@ export function useProbe() {
   // 组件卸载后还在跑 rAF 会往已卸载的 state 里写。
   useEffect(() => () => cancelFlush(), [cancelFlush]);
 
-  const run = useCallback(async (query: string) => {
+  /**
+   * extraHeaders 用来随请求带上「设置」里用户自己的 key。
+   * 走请求头而不是查询串：查询串会进服务端访问日志、也会留在浏览器历史里。
+   */
+  const run = useCallback(async (query: string, extraHeaders?: Record<string, string>) => {
     const q = query.trim();
     if (!q) return;
 
@@ -104,7 +110,7 @@ export function useProbe() {
     try {
       const res = await fetch("/api/search", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(extraHeaders ?? {}) },
         body: JSON.stringify({ query: q }),
         signal: controller.signal,
       });
@@ -179,6 +185,7 @@ export function useProbe() {
                       fields: event.data.fields,
                       confidence: event.data.confidence,
                       sourceIds: event.data.sources,
+                      datasetName: event.data.datasetName,
                     }
                   : m,
               ),
@@ -217,5 +224,19 @@ export function useProbe() {
     setState(IDLE);
   }, [cancelFlush]);
 
-  return { state, run, reset };
+  /**
+   * 「一句话生成模块」的落点：把一张已经编译通过的卡片塞进网格。
+   * 它不改 status、不碰 text —— 生成模块不该让整页表现成"又在检索"。
+   * 换查询时会被 run() 的 setState({...IDLE}) 一并清掉，这符合直觉：
+   * 自定义面板引用的数据集来自上一轮，换了问题就不适用了。
+   */
+  const addModule = useCallback((m: ModuleState) => {
+    setState((s) =>
+      s.modules.some((x) => x.id === m.id)
+        ? { ...s, modules: s.modules.map((x) => (x.id === m.id ? m : x)) }
+        : { ...s, modules: [...s.modules, m] },
+    );
+  }, []);
+
+  return { state, run, reset, addModule };
 }

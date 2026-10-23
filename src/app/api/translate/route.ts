@@ -1,4 +1,5 @@
 import { translateDocument } from "@/lib/translate";
+import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,6 +60,9 @@ export async function POST(request: Request) {
     return json({ ok: false, error: "no_input", message: "需要 url / title / text 至少一项。" }, 400);
   }
 
-  const result = await translateDocument({ url, title, text });
+  // 带上用户自带的 key：有 key 时翻译走模型，没 key 才落到 MyMemory。
+  const result = await withRuntimeConfig(configFromRequest(request), () =>
+    translateDocument({ url, title, text }),
+  );
   return json(result, result.ok ? 200 : 422);
 }

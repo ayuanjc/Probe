@@ -36,11 +36,10 @@ export default function TrendingBoard({
 
   return (
     <section>
-      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5 px-1">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5">
         <div className="flex items-baseline gap-3">
-          <span className="h-3 w-0.5 shrink-0 self-center bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]" aria-hidden />
-          <h2 className="text-sm font-semibold tracking-wide text-white">Hacker News 前沿</h2>
-          <span className="font-mono text-[10px] text-neutral-500">
+          <h2 className="text-sm font-semibold text-white">Hacker News 前沿</h2>
+          <span className="font-mono text-[10px] text-neutral-600">
             <Term k="window">过去 {windowHours}h</Term>
           </span>
         </div>
@@ -56,48 +55,49 @@ export default function TrendingBoard({
             : "过去 " + windowHours + " 小时里没有话题被两条以上报道同时提到，榜单为空。"}
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {topics.map((t) => (
-            <article key={t.key} className="panel flex flex-col p-6">
+            <article key={t.key} className="panel flex flex-col p-5">
               {/* 术语气泡不能塞进按钮里：pointer 事件会被按钮吃掉，点它等于直接跑查询。 */}
               <div className="flex items-start justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => onPick(t.name)}
-                  className="truncate text-left text-lg font-semibold text-white transition-colors hover:text-cyan-300"
+                  className="truncate text-left text-base font-semibold text-white transition-colors hover:text-blue-500"
                 >
                   {t.name}
                 </button>
-                <span className="shrink-0 rounded border border-cyan-500/25 bg-cyan-500/10 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-cyan-400">
+                <span className="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-blue-500">
                   {t.articles24h} 条
                 </span>
               </div>
-              <div className="mt-3 flex items-baseline gap-2">
-                <span className="rounded border border-white/10 bg-white/10 px-2 py-0.5 text-[10px] text-neutral-300">
+
+              <div className="mt-3 flex items-baseline gap-3">
+                <span className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400">
                   {TYPE_TEXT[t.type] ?? t.type}
                 </span>
-                <span className="font-mono text-[10px] text-neutral-500">
+                <span className="font-mono text-[10px] text-neutral-600">
                   <Term k="heat">热度</Term>{" "}
-                  <span className="font-bold tabular-nums text-emerald-400">{t.heat}</span>
+                  <span className="font-bold tabular-nums text-blue-500">{t.heat}</span>
                 </span>
                 <span className="font-mono text-[10px] text-neutral-600">
                   <Term k="articles24h">条数</Term>{" "}
-                  <span className="tabular-nums">{t.articles24h}</span>
+                  <span className="tabular-nums text-neutral-300">{t.articles24h}</span>
                 </span>
               </div>
 
-              <ul className="mt-4 space-y-3">
+              {/* 纯文字排列 + 细线分隔：不加左侧装饰，行距换行距。 */}
+              <ul className="mt-4 flex flex-col">
                 {t.stories.map((s, i) => (
-                  <li key={s.url + "::" + i} className="flex items-start gap-2.5">
-                    <span
-                      className="mt-[7px] h-1 w-1 shrink-0 rounded-sm bg-cyan-500 shadow-[0_0_6px_rgba(34,211,238,0.85)]"
-                      aria-hidden
-                    />
+                  <li
+                    key={s.url + "::" + i}
+                    className="border-b border-neutral-800 py-2.5 last:border-b-0 last:pb-0"
+                  >
                     <a
                       href={s.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="line-clamp-2 text-sm leading-relaxed text-neutral-300 transition-colors hover:text-white"
+                      className="line-clamp-2 text-[13px] leading-relaxed text-neutral-400 transition-colors hover:text-neutral-200"
                       title={s.title + " · " + s.host}
                     >
                       {s.title}
@@ -110,7 +110,7 @@ export default function TrendingBoard({
         </div>
       )}
 
-      <p className="mt-4 px-1 text-[10px] leading-[1.8] text-neutral-600">
+      <p className="mt-4 text-[10px] leading-[1.8] text-neutral-600">
         {missingGdelt
           ? "榜单只统计 Hacker News 单源 —— GDELT 新闻索引当前出口被限流，「多少家媒体在报」这一维度本轮缺位，所以这里给的是技术圈的讨论热度，不是全网热度。"
           : "榜单由 Hacker News 与 GDELT 共同统计。"}

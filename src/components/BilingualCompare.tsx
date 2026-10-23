@@ -6,16 +6,17 @@ import type { RiskBand } from "@/lib/translate-risk";
 
 const BAND_LABEL: Record<RiskBand, string> = { low: "低", mid: "中", high: "高" };
 
+/** 三档沿用全站语义色：低=蓝（对得上），中=黄（要核对），高=红（可能被改写）。 */
 const BAND_BOX: Record<RiskBand, string> = {
-  low: "border-cyan-500/40 bg-cyan-500/[0.04]",
-  mid: "border-amber-400/55 bg-amber-400/[0.06]",
-  high: "border-rose-500/60 bg-rose-500/[0.07]",
+  low: "border-blue-500/40 bg-blue-500/[0.05]",
+  mid: "border-yellow-500/45 bg-yellow-500/[0.05]",
+  high: "border-red-500/45 bg-red-500/[0.05]",
 };
 
 const BAND_TEXT: Record<RiskBand, string> = {
-  low: "text-cyan-300",
-  mid: "text-amber-300",
-  high: "text-rose-300",
+  low: "text-blue-400",
+  mid: "text-yellow-500",
+  high: "text-red-400",
 };
 
 const DOC_SOURCE_TEXT: Record<string, string> = {
@@ -103,8 +104,8 @@ export default function BilingualCompare({
 
   if (state.status === "loading") {
     return (
-      <div className="mt-3 rounded-lg border border-white/10 bg-black/30 px-4 py-3 font-mono text-[10px] text-neutral-500">
-        <span className="mr-2 inline-block h-1 w-1 animate-pulse rounded-sm bg-cyan-400" />
+      <div className="mt-3 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-3 font-mono text-[10px] text-neutral-500">
+        <span className="mr-2 inline-block h-1 w-1 animate-pulse bg-blue-500" />
         正在抓正文并分段翻译…
       </div>
     );
@@ -112,12 +113,12 @@ export default function BilingualCompare({
 
   if (state.status === "error" || !state.data) {
     return (
-      <div className="mt-3 flex items-center gap-3 rounded-lg border border-rose-500/20 bg-rose-500/[0.06] px-4 py-3 text-[11px] text-rose-300">
+      <div className="mt-3 flex items-center gap-3 rounded-md border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-[11px] text-red-400">
         对照失败（网络或接口异常）。
         <button
           type="button"
           onClick={() => void load(true)}
-          className="rounded border border-rose-400/30 px-2 py-0.5 font-mono text-[10px] hover:border-rose-300"
+          className="rounded border border-red-500/40 px-2 py-0.5 font-mono text-[10px] hover:border-red-400"
         >
           重试
         </button>
@@ -128,7 +129,7 @@ export default function BilingualCompare({
   const data = state.data;
   if (!data.ok) {
     return (
-      <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3 text-[11px] text-amber-300/90">
+      <div className="mt-3 rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[11px] text-yellow-500/90">
         {data.message}
       </div>
     );
@@ -144,13 +145,13 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
   const singleColumn = noEngine || !data.needsTranslation;
   return (
     <div
-      className="mt-3 rounded-lg border border-white/10 bg-black/30 p-4"
+      className="mt-3 rounded-md border border-neutral-800 bg-[#0f0f0f] p-4"
       data-testid="compare"
       data-engine={data.engine}
       data-band={data.overall.band}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-mono text-[10px] text-neutral-500">
-        <span className="rounded border border-cyan-500/25 bg-cyan-500/[0.08] px-2 py-0.5 text-cyan-300">
+        <span className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300">
           {data.fromName} → {data.toName}
         </span>
         <span>{DOC_SOURCE_TEXT[data.docSource] ?? data.docSource}</span>
@@ -161,10 +162,10 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
             className={
               "rounded border px-2 py-0.5 " +
               (data.overall.band === "low"
-                ? "border-cyan-500/25 text-cyan-300"
+                ? "border-blue-500/30 text-blue-400"
                 : data.overall.band === "mid"
-                  ? "border-amber-400/30 text-amber-300"
-                  : "border-rose-500/30 text-rose-300")
+                  ? "border-yellow-500/30 text-yellow-500"
+                  : "border-red-500/30 text-red-400")
             }
           >
             平均歧义 {data.overall.risk.toFixed(2)} · {BAND_LABEL[data.overall.band]}
@@ -176,7 +177,7 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
             href={data.url}
             target="_blank"
             rel="noreferrer noopener"
-            className="ml-auto text-neutral-400 underline decoration-dotted hover:text-cyan-300"
+            className="ml-auto text-neutral-400 underline decoration-dotted hover:text-white"
           >
             打开原页面 ↗
           </a>
@@ -184,7 +185,7 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
       </div>
 
       {noEngine && (
-        <p className="mt-3 rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-neutral-400">
+        <p className="mt-3 rounded border border-neutral-800 bg-[#141414] px-3 py-2 text-[11px] leading-relaxed text-neutral-400">
           没有可用的翻译引擎（未配置模型，公共接口也不通），下面是分段后的原文，译文与歧义配色都没有生成。
         </p>
       )}
@@ -200,22 +201,22 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-neutral-500">
           <span className="text-neutral-400">颜色 = 该段译文的可核对差异，不是质量评分：</span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-sm border-l-2 border-cyan-500/60 bg-cyan-500/20" />
+            <span className="h-2 w-2 rounded-sm border-l-2 border-blue-500/60 bg-blue-500/20" />
             低（数字/专名都对得上）
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-sm border-l-2 border-amber-400/70 bg-amber-400/25" />
+            <span className="h-2 w-2 rounded-sm border-l-2 border-yellow-500/70 bg-yellow-500/25" />
             中（有需要核对的差异）
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-sm border-l-2 border-rose-500/70 bg-rose-500/25" />
+            <span className="h-2 w-2 rounded-sm border-l-2 border-red-500/70 bg-red-500/25" />
             高（信息可能被改写或漏掉）
           </span>
         </div>
       )}
 
       {data.degraded.length > 0 && (
-        <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/[0.05] px-3 py-2 text-[10px] leading-relaxed text-amber-300/85">
+        <div className="mt-3 rounded border border-yellow-500/20 bg-yellow-500/[0.05] px-3 py-2 text-[10px] leading-relaxed text-yellow-500/90">
           降级：{data.degraded.map(degradeText).join(" · ")}
         </div>
       )}
@@ -258,7 +259,7 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
                       <span
                         key={s.code}
                         title={s.detail ?? s.label}
-                        className="rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-[9px] text-neutral-400"
+                        className="rounded border border-neutral-800 px-1.5 py-0.5 text-[9px] text-neutral-400"
                       >
                         {s.label}
                         {s.detail ? "：" + s.detail : ""}

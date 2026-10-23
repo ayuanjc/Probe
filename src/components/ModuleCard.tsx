@@ -15,28 +15,34 @@ const REASON_TEXT: Record<string, string> = {
   pie_constraint: "饼图约束不满足",
   mixed_units: "存在多个量纲",
   time_order: "时间轴无法排序",
+  radar_constraint: "维度不足以画雷达图",
+  funnel_constraint: "漏斗不满足逐级收窄",
+  graph_constraint: "共现关系不足以成图",
 };
 
 const Chart = dynamic(() => import("echarts-for-react"), {
   ssr: false,
-  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-lg" />,
+  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-md" />,
 });
 
 /**
  * 每张卡都挂着一张 ECharts。流式期间摘要每变一个字父组件就重渲染一次，
  * 卡片若跟着重渲染，echarts-for-react 会重新走一遍 option diff —— 全部白干。
  * memo 之后：module / sources 引用不变就不进 render（useProbe 是整体替换 state，
- * 只有变化的那张卡的 module 引用会变）。
+ * 只有变化的那张卡的 module 引用才会变）。
  */
 function ModuleCard({
   module,
   sources = [],
   draggable = false,
+  animation = true,
 }: {
   module: ModuleState;
   sources?: SourceRef[];
   /** 仅在布局解锁（done 之后）时为 true；false 时不渲染拖拽把手。 */
   draggable?: boolean;
+  /** 设置里可关掉图表入场动画：关掉就直接出终态，少掉一次 240ms 的逐帧重绘。 */
+  animation?: boolean;
 }) {
   const cited = useMemo(() => {
     const ids = new Set(module.sourceIds ?? []);
@@ -54,16 +60,21 @@ function ModuleCard({
 
   const compiled = useMemo(() => {
     if (!module.spec || !dataset) return null;
-    return compile(module.spec, dataset);
-  }, [module.spec, dataset]);
+    const out = compile(module.spec, dataset);
+    if (animation || !out.ok) return out;
+    return { ...out, option: { ...out.option, animation: false } };
+  }, [module.spec, dataset, animation]);
 
   return (
-    <section className="panel flex h-full flex-col overflow-hidden">
-      <header className="flex items-center justify-between gap-3 px-6 pb-2 pt-5">
+    <section
+      className="panel flex h-full flex-col overflow-hidden"
+      data-module-id={module.id}
+    >
+      <header className="flex items-center justify-between gap-3 px-5 pb-2 pt-4">
         <div className="flex min-w-0 items-center gap-2.5">
           {draggable && (
             <span
-              className="card-drag-handle shrink-0 cursor-grab select-none text-neutral-600 transition-colors hover:text-cyan-400"
+              className="card-drag-handle shrink-0 cursor-grab select-none text-neutral-600 transition-colors hover:text-neutral-300"
               title="拖拽移动；拖右下角改尺寸"
               aria-hidden
             >
@@ -71,7 +82,7 @@ function ModuleCard({
             </span>
           )}
           <span className="truncate text-base font-semibold text-white">{module.title}</span>
-          <span className="shrink-0 rounded border border-white/10 bg-white/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-neutral-300">
+          <span className="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-neutral-400">
             {module.kind}
           </span>
         </div>
@@ -82,17 +93,17 @@ function ModuleCard({
           // PRD 附录 C：模块里的每个数字都要能在两次点击内回到原文。
           // 这里给出该模块实际引用的条目，不是全量信源 —— 全量等于没指认。
           <details className="relative shrink-0">
-            <summary className="cursor-pointer select-none list-none rounded border border-white/10 bg-white/[0.04] px-2.5 py-0.5 font-mono text-[10px] text-neutral-300 transition-colors hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300">
+            <summary className="cursor-pointer select-none list-none rounded border border-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white">
               溯源 {cited.length} 条
             </summary>
-            <div className="scroll-thin absolute right-0 top-7 z-20 max-h-56 w-80 overflow-auto rounded-lg border border-white/10 bg-[#0a0a0c]/95 p-1.5 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl">
+            <div className="scroll-thin absolute right-0 top-7 z-20 max-h-56 w-80 overflow-auto rounded-md border border-neutral-800 bg-[#111] p-1">
               {cited.map((s) => (
                 <a
                   key={s.id}
                   href={s.url}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="block truncate rounded px-2 py-1.5 text-[11px] text-neutral-300 transition-colors hover:bg-cyan-500/10 hover:text-cyan-300"
+                  className="block truncate rounded px-2 py-1.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
                   title={s.title}
                 >
                   {s.title}
@@ -102,14 +113,14 @@ function ModuleCard({
           </details>
         )}
         {module.status === "error" && (
-          <span className="shrink-0 font-mono text-[10px] text-[#fb7185]">
+          <span className="shrink-0 font-mono text-[10px] text-red-400">
             降级为表格：{REASON_TEXT[module.errorDetail ?? ""] ?? module.errorDetail}
           </span>
         )}
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-2">
-        {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded-lg" />}
+      <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-2">
+        {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded-md" />}
 
         {module.status !== "plan" && module.spec?.kind === "kpi" && (
           <KpiGrid rows={module.rows ?? []} />
@@ -129,7 +140,7 @@ function ModuleCard({
                 <ChartBox option={compiled.option} />
               ) : (
                 <>
-                  <div className="mb-2 text-[11px] text-[#fb7185]">
+                  <div className="mb-2 text-[11px] text-red-400">
                     图表规格未通过编译校验（{compiled && !compiled.ok ? compiled.reason : "unknown"}），已降级为表格。
                   </div>
                   <DataTable fields={module.fields ?? []} rows={module.rows ?? []} />
@@ -200,16 +211,16 @@ function ChartBox({ option }: { option: Record<string, unknown> }) {
 
 function KpiGrid({ rows }: { rows: Record<string, string | number | null>[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
       {rows.map((r, i) => (
         <div
           key={i}
-          className="rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3 transition-colors hover:border-cyan-500/20 hover:bg-cyan-500/[0.04]"
+          className="rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-3 transition-colors hover:border-neutral-600"
         >
-          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-neutral-500">
+          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-neutral-600">
             {String(r.label ?? "—")}
           </div>
-          <div className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-cyan-400">
+          <div className="mt-1.5 font-mono text-2xl font-bold tabular-nums text-white">
             {typeof r.value === "number" ? r.value.toLocaleString("en-US") : (r.value ?? "—")}
           </div>
         </div>
@@ -236,7 +247,7 @@ function DataTable({
             {fields.map((f) => (
               <th
                 key={f.name}
-                className="border-b border-white/10 pb-1.5 pr-3 font-mono text-[10px] font-normal uppercase tracking-[0.12em] text-cyan-400/80"
+                className="border-b border-neutral-800 pb-1.5 pr-3 font-mono text-[10px] font-normal uppercase tracking-[0.1em] text-neutral-500"
               >
                 {f.name}
                 {f.unit ? " (" + f.unit + ")" : ""}
@@ -246,9 +257,12 @@ function DataTable({
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="text-neutral-300 transition-colors hover:bg-cyan-500/[0.05]">
+            <tr key={i} className="text-neutral-300 transition-colors hover:bg-neutral-800/40">
               {fields.map((f) => (
-                <td key={f.name} className="border-b border-white/5 py-1.5 pr-3 font-mono tabular-nums">
+                <td
+                  key={f.name}
+                  className="border-b border-neutral-800/60 py-1.5 pr-3 font-mono tabular-nums"
+                >
                   {r[f.name] === null || r[f.name] === undefined ? "—" : String(r[f.name])}
                 </td>
               ))}

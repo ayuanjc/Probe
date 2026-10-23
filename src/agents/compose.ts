@@ -1,6 +1,7 @@
 
 import type { Dataset, ModuleSpec } from "@/lib/schemas";
 import { compile, type CompileError } from "@/lib/compile";
+import { MODULE_SIZE } from "@/lib/module-catalog";
 import type { AnalysisResult } from "./analyze";
 
 /**
@@ -60,25 +61,69 @@ function specFor(ds: Dataset): ModuleSpec | null {
         encode: { x: "label", value: "value" },
         note: "命中条目为本地检索结果，非全网总量。",
       };
+    case "ds-hours":
+      return {
+        id: "m-hours",
+        kind: "heatmap",
+        title: "发布时段分布",
+        dataset: ds.id,
+        encode: { x: "weekday", y: "hour", value: "articles" },
+        note: "按香港时区落格：横轴一天里的小时，纵轴星期。空格是真的没有条目。",
+      };
+    case "ds-weekday":
+      return {
+        id: "m-weekday",
+        kind: "radar",
+        title: "星期分布",
+        dataset: ds.id,
+        encode: { x: "weekday", value: "articles" },
+        note: "只画有稿子的那几天，缺的那天不补 0。",
+      };
+    case "ds-terms":
+      return {
+        id: "m-terms",
+        kind: "graph",
+        title: "标题专名共现",
+        dataset: ds.id,
+        encode: { x: "from", y: "to", value: "weight" },
+        note: "两个专名同时出现在多少条标题里；节点越大，跟它共现的专名越多。",
+      };
+    case "ds-flow":
+      return {
+        id: "m-flow",
+        kind: "funnel",
+        title: "检索收敛漏斗",
+        dataset: ds.id,
+        encode: { x: "stage", value: "articles" },
+        note: "每一级都是上一级的子集，所以只减不增。",
+      };
+    case "ds-fresh":
+      return {
+        id: "m-fresh",
+        kind: "gauge",
+        title: "24 小时新鲜度",
+        dataset: ds.id,
+        encode: { x: "label", value: "percent" },
+        note: "分母是这次有发布时间的条目，不是全网。",
+      };
+    case "ds-tone-scatter":
+      return {
+        id: "m-tone-scatter",
+        kind: "scatter",
+        title: "时距与情感",
+        dataset: ds.id,
+        encode: { x: "hours", y: "tone" },
+        note: "横轴距今小时数（最多 7 天），纵轴 GDELT tone。",
+      };
     default:
       return null;
   }
 }
 
 /**
- * 默认尺寸的单位是"网格单元"：12 列、行高 28px、间距 12px（见 src/lib/layout.ts）。
- * 这里只给建议值 —— 用户拖过的布局以本机快照为准，reconcile 会覆盖这些数字。
- * KPI 铺满一行；折线要横向空间；条形与饼图窄而高；树图与表格半行；地图最高。
+ * 尺寸表搬到了 src/lib/module-catalog.ts：「一句话生成模块」在前端插入新卡片时
+ * 也要用同一张表，两个地方各写一份迟早会不一致。
  */
-const SIZE: Record<ModuleSpec["kind"], { w: number; h: number }> = {
-  kpi: { w: 12, h: 4 },
-  line: { w: 8, h: 8 },
-  bar: { w: 4, h: 8 },
-  pie: { w: 4, h: 8 },
-  treemap: { w: 6, h: 8 },
-  map: { w: 8, h: 10 },
-  table: { w: 6, h: 8 },
-};
 
 export function compose(analysis: AnalysisResult): ComposeResult {
   const specs: ModuleSpec[] = [];
@@ -104,8 +149,8 @@ export function compose(analysis: AnalysisResult): ComposeResult {
     id: s.id,
     kind: s.kind,
     title: s.title,
-    w: SIZE[s.kind].w,
-    h: SIZE[s.kind].h,
+    w: MODULE_SIZE[s.kind].w,
+    h: MODULE_SIZE[s.kind].h,
   }));
 
   return { plans, specs, errors };

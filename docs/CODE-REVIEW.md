@@ -1,0 +1,82 @@
+# 代码审查（src/ 全量，7213 行 / 42 文件）
+
+时间：2026-10-23。方法：5 个只读审查员分片（lib 数值、lib IO、agents、前端组件、翻译/设置/layout/compile/trending）+ 主 agent 逐个文件复核 + 2 条运行时复算与 1 条浏览器实测。未改动任何源码。
+
+分级：**P0** 会崩 / 数据错误 / 安全；**P1** 行为与注释或契约不符、用户可感知的功能缺陷；**P2** 健壮性、可维护性、性能。
+
+结论：架构与「不编造」的原则在流水线层守得住（缺数据不出图、fixture 封顶、置信度软约束都在），漏洞集中在**边界层**——外部抓取（SSRF / 超时 / 编码）、翻译打分的启发式、低置信抑制只做了一半、以及若干界面文案与实现不符。
+
+---
+
+## P0
+
+1. `src/lib/http.ts:55-59` + `src/lib/translate.ts:96-108` — **重定向不复检主机，SSRF 可打内网与云元数据**。blockedHost 只校验用户提交的初始 hostname，getDirect 每跳递归不再过白名单：`http://X/` 302 到 `http://169.254.169.254/latest/meta-data/`、`http://localhost.:3000`、`http://[::ffff:127.0.0.1]/`、`http://127.0.0.1.nip.io/` 全部放行，而 url 来自无鉴权的 `POST /api/translate` 的 body.url。→ host 校验下沉进 getDirect 每一跳，`dns.lookup` 后按真实 IP 判私网段，跨 host 重定向直接拒绝。
+2. `src/lib/http.ts:57` — `new URL(location, parsed)` 在 res 回调里没有 try：Location 为 `//` 或 IPv6 括号损坏时抛同步异常 → 未捕获错误（路由 500 / 进程崩），Promise 也不 settle。→ try/catch 返回 `invalid_redirect`。
+3. `src/lib/llm.ts:92` — 流中断后 catch 里 `yield fixtureSummary()`，而那段文本写死「当前没有可用的模型 key」；此时 pipeline 的 wrote 已被前面的 delta 置真，用户拿到半截真摘要 + 一句关于配置的假话。→ 「无 key」与「调用失败」分开，失败只追加中性说明。
+4. `src/lib/translate-risk.ts:121-146` — **整段一字未译也会拿到 risk 0 / low**（运行时复算：`translationRisk("NVIDIA Announces New GPU For Data Centers", 原文, "en")` → `{risk:0, band:"low", signals:[]}`）。srcCaps 把首字母大写词全量排除，标题式大写句剔完只剩全大写词，`if (words.length < 2 && longest < 8)` 直接跳过。→ 先判译文与原文高相似（词重叠 > 0.9 或 trim 后相等即满分），再进 srcCaps。
+
+## P1
+
+### 置信度与数据正确性（项目核心卖点）
+
+5. `src/agents/analyze.ts:169` + `src/lib/confidence.ts:127-129` — **转载检测跑在去重后的集合上**：dedupe 的 0.92 阈值已吃掉全部高相似对，findSyndicatedIds 的有效阈值是 0.9/0.8，只剩 (0.9,0.92] 窄带能命中 → 「疑似转载」恒≈0、`firstHand = 1 - syndicated/sources.length` 恒≈1，权重 0.4 直接把置信度抬进 high。→ 基于 raw 计算，或让 dedupe 回传 merged 数并把分母改成原始条数。
+6. `src/lib/text.ts:34` — jaccard 对两个空集返回 1：缺 title / 纯标点条目 tokenize 出空集后互判 1.0 > 0.92，analyze.ts:43 只留第一条、其余全被吃掉，再被记成转载。→ 任一为空即返回 0。
+7. `src/lib/text.ts:45-51` — hostOf 只剥 `www.`：`amp.` / `m.` / `mobile.` 算成不同 owner（independence 虚高）；解析失败全落字符串 `unknown`（把无关源并成一个 owner，反向失真）。→ 按 eTLD+1 归并，未知域名保留原串。
+8. `src/lib/confidence.ts:126` — independence 只数域名：同一通稿被 10 个域名改写标题转载即 0.9643，配 firstHand 0.1 得 0.5025 仍落 medium 并展示聚合数字。→ owner 归一到首发主体，或 firstHand < 0.5 时压 low。
+9. `src/lib/confidence.ts:149` — nChecked === 0 封顶 0.74，而 medium 从 0.5 起 → `allowsAggregateNumbers` 为 true：**一条事实都没交叉核对过也照出聚合数字**。→ 封到 0.49，或 allowNumbers 额外要求 nChecked > 0。
+10. `src/agents/analyze.ts:187,350,370,397,410,423` — **低置信抑制只写进了 note，没写进代码**：ds-timeline / ds-hours / ds-weekday / ds-flow / ds-fresh 全部在 `if (allowNumbers)` 之外照常产出，ds-summary（独立信源 / 疑似转载 / 去重合并）也无条件产出，与 346 行那句「已抑制聚合数字与分布图，仅展示可核验的原文列表」直接矛盾。→ 这些 dataset 移进 allowNumbers 分支，低档只留原文列表 + 命中条目。
+11. `src/agents/analyze.ts:158` — notes 字段无任何调用方（grep 只命中本文件与 layout.ts 的同名局部变量），sse 的 done 事件不带 notes，Workspace 也不渲染 → 「口径说明：文章数指本次检索命中的条目，不是全网总量」用户永远看不到。→ 进 done 事件并在结果页渲染，或删掉该字段。
+12. `src/agents/analyze.ts:431` vs `:392` — 同名「命中条目」两处口径不同：KPI 用去重后的 `sources.length`，漏斗首级用 `raw.length`，发生合并时两个数字互相打脸。→ 统一口径或改标签。
+13. `src/agents/analyze.ts:39-50` — key 为空的条目被静默丢弃却计入 `merged`，KPI 把它报成「去重合并」。→ 单独计 dropped。
+14. `src/lib/schemas.ts:28` — timeRange.from/to 只要是字符串就通过，而意图由模型直接产这两个字段：给「近三个月」或空串时 `retrieve.ts:34` 得 NaN → fromMs=0（1970 起），**时间窗静默失效**，UI 仍显示「窗口 from → to」。→ datetime 校验，失败回落启发式窗口。
+
+### 外部抓取与网络
+
+15. `src/lib/http.ts:85-94` — 结局只由 res 的 error/end 决定：8s 超时 destroy 落到 error 分支，返回 `ok:true, truncated:false` 的**半截正文**（超时对调用方完全不可见）；若两者都不触发则 Promise 永久挂住，整条 pipeline 卡死。→ 显式区分 premature-close / timeout 并置 truncated。
+16. `src/lib/http.ts:81` — 一律 `toString("utf8")`，不看 content-encoding 与 charset：GBK/Big5 站点整篇乱码，gzip 响应变二进制垃圾。→ 按 content-type 的 charset 解码，请求显式 `accept-encoding: identity` 或解压后再返回。
+17. `src/agents/retrieve.ts:88-91` — `isRateLimited` 的正则含 `abort|timeout`：客户端断开与 GDELT 的 2.5s 软超时都被判成限流，进而在 81-84 行把 `gdeltCooldownUntil` 推到 now+300000 → **一次用户关页面就让 GDELT 全局冻 5 分钟**。→ 只对 429 / 明确的额度文案冷却，abort 单独区分。
+18. `src/lib/llm.ts:84` — streamText 没传 abortSignal：pipeline 的 `gone()` 只是 return（关掉 generator），上游请求继续跑到结束，连接与额度照烧。→ 传入 AbortSignal 并在 finally 里 abort。
+19. `src/app/api/search/route.ts:15` + `:14` — 限流表 `rlHits` 永不删除 key（每个 IP 一条永久记录）；`RL_MAX = Number(env ?? 3)` 若环境变量是非数字则 NaN → `>= NaN` 恒 false → **静默不限流**。→ 定时清理过期 key，启动时校验 RL_MAX 为有限正整数。
+
+### 翻译
+
+20. `src/lib/translate.ts:421` — overall 只对出问题的段求平均，段数不进分母：48 段里 1 段 0.35 与 48 段全错同为 0.35 / mid，而 UI 渲染成「平均歧义」。→ 传全量 scores 作分母，另给最高段风险与出错段数。
+21. `src/lib/translate.ts:350-366` + `src/lib/lang.ts:59-62` — 语言识别失败（unknown）被写成「原文已是目标语言，未翻译 / 未调用翻译引擎」，degraded 里无标记：短英文标题整段原样展示还标 low。→ unknown 单开分支并 push `lang:unknown`，文案改「未识别语言，未翻译」。
+22. `src/lib/translate-risk.ts:57-74` — 句子里每个首字母大写词都算专名，标题式大写让**正确译文**被判 mid（复算：`NVIDIA Announces New GPU…` → 正确中译反而 0.4/mid，signals.lost = [Announces, Data, Centers]）。→ 候选词先过常见词表，或按「是否全大写 / 出现次数」分级加权。
+
+### 界面与交互
+
+23. `src/components/ModuleCard.tsx:69,92-97` — 卡片外层 `overflow-hidden` 裁掉「溯源」下拉（`absolute right-0 top-7 max-h-56 w-80`）：浏览器实测 8 张卡里 h=4 的 KPI 卡（cardH=184px）浮层底部溢出 90.5px，来源列表几乎整段不可见且无滚动条。→ 去掉容器 overflow-hidden（正文自己裁），或改 portal / 向上弹出。
+24. `src/hooks/useProbe.ts:98-106` + `:143-144` — run() 中断旧 reader 时不清 `pendingText`、不 `cancelFlush()`，旧轮排进 rAF 的尾部文本会 flush 进新答案；结束路径也没有 run 令牌比对，旧轮在 abort 落地前读到 done 会把刚开的新轮直接标成 done。→ run 开头清队列，并用自增 runId 在校验后落库。
+25. `src/components/SearchBar.tsx:41-43` — onKeyDown 对任何 Enter 提交，没有输入法组合态判断：中文输入法按 Enter 确认候选词，会把未上屏的拼音当查询发出去。→ `if (e.nativeEvent.isComposing || e.keyCode === 229) return;`。
+26. `src/components/TrendingBoard.tsx:113-116` + `src/lib/trending.ts:225` — 界面断言「GDELT 新闻索引当前出口被限流」，但代码里**从未请求 GDELT**，是 `degraded.push("gdelt")` 无条件推入，这条「原因」是编造的。→ 改「本轮未接入 GDELT」或删掉该降级项。
+27. `src/components/TrendingBoard.tsx:15-19` — `toLocaleTimeString` 未指定 timeZone，而 fetchedAt 是服务端 `toISOString()` 在 SSR 渲染：部署机 UTC 与浏览器 +08:00 必然不同 → 水合不匹配 + 时刻错误。→ 固定 timeZone 或挂载后再本地化。
+28. `src/lib/trending.ts:227-233` + `TrendingBoard.tsx:34,54-56` — 榜单全空时没有可读原因：`points >= MIN_POINTS` 把整批剔光时 `considered = 0` 什么都不报；`stories:empty` / `topics:empty` 无人渲染，空态文案「没有话题被两条以上报道同时提到」对「分数不足被过滤」是错解释。→ 条件改为 `topics.length === 0` 并渲染 degraded 文本。
+29. `src/lib/trending.ts:131-143` — 标题短于 8 字的 story 被静默丢弃（`GPT-5` 直接消失），`fetchedStories` 报的是过滤后数量却被当分母显示「N/M 条进入统计」。→ 另记原始命中数，丢弃数进 degraded。
+30. `src/components/BilingualCompare.tsx:100-102,137` — 「重新抓取并翻译」先把 status 设 loading，effect 又对 `status === "loading"` 调 load() → **一次点击发两次 /api/translate**（StrictMode 首屏同样双发），两响应竞态 setState。→ effect 只负责首次加载（ref 记已发起），按钮走独立路径。
+31. `src/components/BilingualCompare.tsx:85-92,129-135` — fetch 不查 res.ok，把 429 `{ok:false,error:"rate_limited"}` 与 422 一并写进缓存，而 `!data.ok` 分支只有黄条、没有重试按钮（重试只在网络错误分支）→ 被限流后既不能重试、缓存还会继续命中。→ 非 ok 不入缓存，该分支补重试。
+32. `src/components/ModuleGrid.tsx:115-128,130-186` — 窄屏/SSR 分支与网格分支父节点不同，跨 720px 阈值时全部卡片重挂载：ECharts 重建、展开的溯源/词条收起、焦点丢失。→ 两分支共用稳定父容器，只切布局类名。
+33. `src/components/SettingsPanel.tsx:143-147,178-183` — `role="dialog" aria-modal="true"` 只做了外观：无初始焦点、无焦点陷阱、关闭不归还焦点、背景无 inert，键盘用户 Tab 到被遮挡的控件。→ 打开聚焦首控件 + Tab 循环 + 归还焦点 + 背景 inert。
+34. `src/components/Workspace.tsx:94-99` — writeSettings 的 boolean 返回值被丢弃，而设置面板写着「改动即时生效 · 只存本机」：配额满/隐私模式下 Key 与布局没存住却无提示（对照 ModuleGrid 有 saveFailed）。→ 接住返回值并提示「本次会话外不会保留」。
+35. `src/lib/runtime-config.ts:35-40` — 用户填的模型名带 `/` 或空格就被静默丢弃回落默认：`openai/gpt-4o`、`gpt 4o`、带 `@` 的网关名全部失效，界面无提示。→ 放开常见分隔符，或在设置面板对非法输入即时回显。
+36. `src/lib/compile.ts:445-453` — funnel 的 `minSize: "24%"` 把小得多的末级画成至少 24% 宽，label 却显示真实数字（首级 raw、末级 24h 内 fresh，量级常差一到两个数量级）→ 图形与真值自相矛盾。→ minSize 设 2% 或 0。
+37. `src/lib/layout.ts:105-117,168` — 新模块起始 y 取全部快照项（含已被丢弃的幽灵项）的 y+h 最大值；`restored === 0` 时返回的是整体下移后的排布而非默认排布，顶部一片空白且无提示。→ bottom 只按已放置项累加，restored === 0 回 defaults 并给 notice。
+38. `src/lib/entities.ts:119-129` — 词典用 `query.includes(别名)` 子串匹配：`meta` 命中「metadata」、`苹果` 命中「苹果醋」、`安全` 命中「国家安全」、`eu` 命中「europe」；而注释自称「刻意不放 ai/js/ts 这类两字母别名」——eu/ios/aws/dns/tls 同样是短别名。→ 英文别名按词边界匹配，或按长度分级要求。
+39. `src/agents/pipeline.ts:79-87` — `intent.ambiguity > 0.35` 只追加一句「按最宽口径先给一版面板」然后照常跑完，PRD 2.1 要求先渲澄清卡。→ 要么实现澄清卡，要么把 PRD 与文案改成现状。
+40. `src/agents/pipeline.ts:117,123-137,199` — 所有模块共用 `citeIds = sources.slice(0,20)`，源列表又只取前 40 → 点「溯源」看到的不是「这个数字来自哪条」，而是前 20 条。→ 每个 dataset 从自身 rows 反推 sourceIds。
+
+## P2（23 条，摘要）
+
+- 性能：`analyze.ts:43` 每条都对 seenTitle 全量跑 titleSimilarity（内部每次重新 tokenize，O(n²)）；`translate.ts:189-191` 缓存超 800 整表清空，随后整批段落重打 MyMemory 配额（且 3 个并发 worker 无 in-flight 去重）。
+- 数值健壮性：`compile.ts:275`（heatmap）与 `:333`（radar）任一非数值行就让 `Math.max` 变 NaN → visualMap.max=NaN 静默单色；`compile.ts:95-97` heatmap 的 value 缺失检查是死分支（`field(encode.value ?? encode.y)` 恒非空）；`analyze.ts:220` `typeof NaN === "number"` 让 NaN tone 进 tonePoints（序列化后成 null 点）；`heat.ts:122` toneBucket(NaN) 落 neutral；`heat.ts:42` mad30d=0 时除 1e-6 让分位饱和；`heat.ts:90` median30d=0 返回哨兵 99，`p95 <= 0` 时一篇文章即判 burst（注：heat.ts 除 toneBucket 外无调用点）；`text.ts:56` normalizeValue 不折算万/亿（「1.2万」vs「12000」判冲突、「3.2B」与「3.2亿」都截成 3.2 判一致）。
+- 契约与校验：`schemas.ts:85` Dataset/ModuleSpec/Confidence 全仓无 parse/safeParse（只有 IntentSchema.parse），数据集未经边界校验就进 compile 取值；`analyze.ts:89` 未校验数字 claim 的 unit，按 unit 分组的一致性判定会把无单位数字并组；`llm.ts:56` 无差别重试（401/400 也再打一次，白烧额度且不留日志）；`http.ts:98` req.setTimeout 是空闲超时不是总预算，每跳重定向重新计时（最坏 4×timeoutMs）。
+- 架构风险：`api/search/route.ts:114-115` 依赖 undici 同步调用 ReadableStream.start 才能让 ALS 上下文延续（现在成立，属隐式契约）；`sse.ts:75` 多行 data 逐行 trim 会剥掉 JSON 字符串值首尾的合法空格；`useProbe.ts:173-189` module.ready 找不到同 id 的 plan 时静默丢弃模块；`Workspace.tsx:103-111` pickTopic 写 `?q=` 但无 popstate 监听，浏览器后退不回结果；`layout.ts:51-54,155-160` 快照版本校验分支不可达（key 里已含 LAYOUT_VERSION），真正的隔离只靠 key 拼接；`fixtures.ts:63` fixtureClaims 无调用方（死代码，且与「不造假断言」相悖）。
+- 可访问性：`Glossary.tsx:58` 词条 `span role="button"` + outline-none，键盘焦点不可见且无 aria-expanded；`SourceList.tsx:56-76` 两个切换按钮无 aria-expanded/aria-controls；`SettingsPanel.tsx` 的 Chip 与 Secret 显隐按钮无 aria-pressed。
+
+## 建议修复顺序
+
+1. P0 四条（SSRF、重定向异常、假配置文案、翻译 0 分）——都是「用户会看到错的东西」或「外部可达」。
+2. 置信度三条（#5 #6 #7 #8 #9）——这是产品的地基，现在 firstHand 恒 1 等于把 40% 的权重送给了「没检测到转载」。
+3. 低置信抑制补齐（#10 #11）——代码里已经写了承诺，只是没执行。
+4. 前端交互四条（#23 #24 #25 #26）——溯源看不到、串味、输入法回车、编造的降级原因。
+5. 其余 P1 按文件归并修，P2 择机。

@@ -1,0 +1,181 @@
+import { z } from "zod";
+import { ModuleKind, type Field, type ModuleSpec } from "@/lib/schemas";
+import { generateStructured, llmEnabled, modelId } from "@/lib/llm";
+import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import {
+  describeDatasets,
+  rulePlan,
+  specFromPick,
+  type DatasetMeta,
+  type ModulePlanReply,
+} from "@/lib/module-plan";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/**
+ * 「一句话生成模块」接口（PRD 2.5）。
+ *
+ * 它产出的是 ModuleSpec，不是 ECharts option：曲线的颜色、坐标轴、tooltip 全在
+ * src/lib/compile.ts 里，这里只决定"看哪份数据、用哪种图形、叫什么名字"。
+ *
+ * 它和 /api/search 一样按 IP 限流，但更松（12/分钟）：用户看图时会连着试几次。
+ */
+const RL_WINDOW_MS = 60_000;
+const RL_MAX = Number(process.env.PROBE_MODULE_RATE_LIMIT_PER_MIN ?? 12);
+const hits = new Map<string, number[]>();
+
+function hit(key: string): { ok: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const recent = (hits.get(key) ?? []).filter((t) => now - t < RL_WINDOW_MS);
+  if (recent.length >= RL_MAX) {
+    hits.set(key, recent);
+    return { ok: false, retryAfterMs: recent[0] + RL_WINDOW_MS - now };
+  }
+  recent.push(now);
+  hits.set(key, recent);
+  return { ok: true, retryAfterMs: 0 };
+}
+
+/**
+ * 每散一个 IP 就永久留一条记录 —— 这是个只用来看板的本机服务，但表不能只进不出。
+ * 超过 512 个 key 时清掉窗口外的整条记录（不是裁，是删）。
+ */
+function sweep(): void {
+  if (hits.size <= 512) return;
+  const now = Date.now();
+  for (const [key, arr] of hits) {
+    if (arr.length === 0 || now - arr[arr.length - 1] > RL_WINDOW_MS) hits.delete(key);
+  }
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+const PickSchema = z.object({
+  dataset: z.string().min(1),
+  kind: ModuleKind,
+  title: z.string().min(1).max(40),
+  reason: z.string().max(160).optional(),
+});
+
+const SYSTEM =
+  "你是情报终端的面板设计器。用户会给你一份「可用数据集」清单和一句自然语言要求。" +
+  "你只能从清单里挑一份数据集、从固定图形集合里挑一种，并给它一个不超过 20 字的中文标题。" +
+  "硬约束：不要编造清单里不存在的 dataset id 或字段名；不要说数据说明了什么；不要解释。" +
+  "拿不出合适方案时，挑字段最贴合的一份并如实说明理由。";
+
+function cleanField(v: unknown): Field | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as { name?: unknown; type?: unknown; unit?: unknown };
+  if (typeof o.name !== "string" || !o.name) return null;
+  const type = o.type === "time" || o.type === "number" || o.type === "string" ? o.type : null;
+  if (!type) return null;
+  return { name: o.name.slice(0, 40), type, unit: typeof o.unit === "string" ? o.unit.slice(0, 16) : undefined };
+}
+
+function cleanRow(v: unknown): Record<string, string | number | null> | null {
+  if (!v || typeof v !== "object") return null;
+  const out: Record<string, string | number | null> = {};
+  let n = 0;
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (n++ >= 8) break;
+    if (typeof raw === "number" && Number.isFinite(raw)) out[k.slice(0, 40)] = raw;
+    else if (typeof raw === "string") out[k.slice(0, 40)] = raw.slice(0, 120);
+    else out[k.slice(0, 40)] = null;
+  }
+  return out;
+}
+
+/**
+ * 请求体来自浏览器，也可能来自任何会调用这个端口的人 —— 一律当不可信输入：
+ * 字段数、样例行数、字符串长度全部收紧，超出的直接截断而不是报错，
+ * 因为这些东西只用于让模型理解字段含义。
+ */
+function cleanDatasets(v: unknown): DatasetMeta[] {
+  if (!Array.isArray(v)) return [];
+  const out: DatasetMeta[] = [];
+  for (const raw of v.slice(0, 16)) {
+    if (!raw || typeof raw !== "object") continue;
+    const o = raw as { id?: unknown; name?: unknown; unit?: unknown; fields?: unknown; sample?: unknown };
+    if (typeof o.id !== "string" || !o.id) continue;
+    const fields = Array.isArray(o.fields)
+      ? o.fields.map(cleanField).filter((f): f is Field => f !== null).slice(0, 12)
+      : [];
+    if (fields.length === 0) continue;
+    const sample = Array.isArray(o.sample)
+      ? o.sample.map(cleanRow).filter((r): r is Record<string, string | number | null> => r !== null).slice(0, 3)
+      : [];
+    out.push({
+      id: o.id.slice(0, 64),
+      name: typeof o.name === "string" ? o.name.slice(0, 80) : o.id.slice(0, 80),
+      unit: typeof o.unit === "string" ? o.unit.slice(0, 16) : undefined,
+      fields,
+      sample,
+    });
+  }
+  return out;
+}
+
+export async function POST(request: Request) {
+  sweep();
+  const rl = hit(request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local");
+  if (!rl.ok) {
+    const wait = Math.max(1, Math.ceil(rl.retryAfterMs / 1000));
+    return new Response(
+      JSON.stringify({ ok: false, error: "rate_limited", message: "生成面板的请求过于频繁，请 " + wait + " 秒后重试。" }),
+      { status: 429, headers: { "content-type": "application/json; charset=utf-8", "retry-after": String(wait) } },
+    );
+  }
+
+  const body = (await request.json().catch(() => null)) as { instruction?: unknown; datasets?: unknown } | null;
+  if (!body) return json({ ok: false, error: "bad_request", message: "请求体不是合法 JSON。" }, 400);
+
+  const instruction = typeof body.instruction === "string" ? body.instruction.trim().slice(0, 200) : "";
+  if (!instruction) return json({ ok: false, error: "bad_request", message: "先写一句想看的图表。" }, 400);
+
+  const datasets = cleanDatasets(body.datasets);
+  if (datasets.length === 0) {
+    return json(
+      { ok: false, error: "no_dataset", message: "这一轮没有可用的数据集：先跑一次检索，面板出来之后再来加。" },
+      422,
+    );
+  }
+
+  const rule = rulePlan(instruction, datasets);
+
+  // 有 key 才问模型；模型没给出可用方案就回到规则 —— 两条路都失败才把错误交给用户。
+  const fallback = (why: string): ModulePlanReply => {
+    if (rule.ok) return rule;
+    return { ...rule, message: rule.message + "（" + why + "）" };
+  };
+
+  if (!llmEnabled()) return json(fallback("未配置模型 key，走本地关键词规则"));
+
+  const prompt =
+    "可用数据集：\n" +
+    describeDatasets(datasets) +
+    "\n\n用户要求：" +
+    instruction +
+    "\n\n可选图形（只能填这些值）：bar / line / pie / treemap / map / table / kpi / heatmap / radar / graph / funnel / gauge / scatter。";
+
+  const pick = await withRuntimeConfig(configFromRequest(request), () =>
+    generateStructured({ schema: PickSchema, system: SYSTEM, prompt }),
+  );
+
+  if (!pick) return json(fallback("模型没有返回可用方案"));
+
+  const planned = specFromPick(pick, datasets);
+  if (!planned.ok) return json(fallback(planned.message));
+
+  // 模型给的标题可能是空的英文串，兜一层：标题必须有可读的中文名。
+  const spec: ModuleSpec = {
+    ...planned.spec,
+    title: planned.spec.title.trim() || planned.reason,
+  };
+  return json({ ...planned, spec, model: modelId() });
+}

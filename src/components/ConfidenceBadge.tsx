@@ -10,10 +10,11 @@ const BAND_TEXT: Record<Confidence["band"], string> = {
   low: "低置信",
 };
 
+/** 三档用三种语义色：高=蓝（正常），中=黄（需留意封顶规则），低=红（结论已收缩）。 */
 const BAND_STYLE: Record<Confidence["band"], string> = {
-  high: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
-  medium: "text-amber-400 border-amber-400/30 bg-amber-400/10",
-  low: "text-neutral-300 border-white/10 bg-white/[0.06]",
+  high: "text-blue-500 border-blue-500/30 bg-blue-500/10",
+  medium: "text-yellow-500 border-yellow-500/30 bg-yellow-500/10",
+  low: "text-red-500 border-red-500/30 bg-red-500/10",
 };
 
 export default function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
@@ -21,7 +22,7 @@ export default function ConfidenceBadge({ confidence }: { confidence: Confidence
     <details className="group inline-block">
       <summary
         className={
-          "cursor-pointer select-none list-none rounded border px-3 py-1 font-mono text-[11px] tracking-wide backdrop-blur-xl " +
+          "cursor-pointer select-none list-none rounded border px-3 py-1 font-mono text-[11px] tracking-wide transition-colors " +
           BAND_STYLE[confidence.band]
         }
         title="展开看三个分量与封顶规则"
@@ -30,7 +31,7 @@ export default function ConfidenceBadge({ confidence }: { confidence: Confidence
         <span className="ml-1 text-current/60 group-open:hidden">▾</span>
         <span className="ml-1 hidden text-current/60 group-open:inline">▴</span>
       </summary>
-      <div className="mt-2 w-80 rounded-lg border border-white/10 bg-[#0a0a0c]/95 p-4 text-[11px] leading-relaxed text-neutral-400 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl">
+      <div className="mt-2 w-80 rounded-md border border-neutral-800 bg-[#111] p-4 text-[11px] leading-relaxed text-neutral-400">
         <div className="mb-2.5 text-white">
           <Term k="confidence" align="left">
             置信度
@@ -84,7 +85,7 @@ export default function ConfidenceBadge({ confidence }: { confidence: Confidence
             )
           }
         />
-        <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 font-mono text-[10px] text-neutral-500">
+        <div className="mt-2 flex items-center justify-between border-t border-neutral-800 pt-2 font-mono text-[10px] text-neutral-500">
           <span>
             <Term k="nSyndicated" align="left">
               疑似转载
@@ -102,11 +103,11 @@ function Row({ label, value, hint }: { label: ReactNode; value: number; hint: Re
     <div className="mb-2 last:mb-0">
       <div className="flex items-baseline justify-between gap-3">
         <span>{label}</span>
-        <span className="font-mono tabular-nums text-cyan-400">{(value * 100).toFixed(0)}</span>
+        <span className="font-mono font-bold tabular-nums text-blue-500">{(value * 100).toFixed(0)}</span>
       </div>
-      <div className="mt-1 h-1 w-full overflow-hidden rounded bg-white/10">
+      <div className="mt-1 h-1 w-full overflow-hidden rounded bg-neutral-800">
         <div
-          className="h-full rounded bg-cyan-400/80 shadow-[0_0_8px_rgba(34,211,238,0.7)]"
+          className="h-full rounded bg-blue-500"
           style={{ width: Math.round(Math.max(0, Math.min(1, value)) * 100) + "%" }}
         />
       </div>
