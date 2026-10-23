@@ -3,21 +3,26 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ModulePrompt from "./ModulePrompt";
+import { anchorVisible, placeFloating } from "@/lib/placement";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { Dataset } from "@/lib/schemas";
 
 /**
- * 侧栏里的「DIY」圆钮：一句话生成面板收在这个按钮后面（PRD 2.5）。
+ * 侧栏里的「DIY」入口：一句话生成面板收在它后面（PRD 2.5）。
  *
- * 面板用 portal + fixed 定位，和术语解释是同一个理由：侧栏带 overflow-y-auto，
+ * 只在这一轮真的跑完、并且有可出图的数据集时才由 Workspace 渲染 —— 检索过程中
+ * 侧栏连占位都不出现（渐进披露：主视图先给结果，专业工具按需出现）。
+ *
+ * 面板用 portal + fixed 定位，和术语解释同一个理由：侧栏带 overflow-y-auto，
  * 面板挂在里面会被裁；网格卡片上的 transform 还会把 fixed 的包含块从视口改成卡片。
- * 位置按按钮的实测矩形算：右对齐按钮右边（侧栏贴右，面板落在内侧而不是屏幕外），
- * 下方放不下就上翻，两边都放不下就夹进视口。按钮滚出视口时直接收起来。
+ * 落点算术在 @/lib/placement。锚点用整块入口（与侧栏同宽）而不是 64px 圆钮：
+ * 右对齐圆钮会让 340 宽的面板往左偏出侧栏、盖住结果区。
+ *
+ * 整块入口都是按钮（不是只有圆钮）：用户第一眼看到的是说明文字，点文字也该打开。
  */
 
-const EDGE = 8;
-const GAP = 12;
 const PANEL_W = 340;
+const GAP = 12;
 
 type Props = {
   /** 这一轮真实产出的数据集（带完整 rows，用于编译校验）。 */
@@ -27,7 +32,8 @@ type Props = {
   sourceIds: string[];
   headers: Record<string, string>;
   onAdd: (m: ModuleState) => void;
-  status: "idle" | "running" | "done" | "failed";
+  /** 新卡片入网格后把视线带过去（Workspace 负责滚动 + 高亮）。 */
+  onReveal?: (id: string) => void;
 };
 
 export default function ModuleDock({
@@ -37,39 +43,36 @@ export default function ModuleDock({
   sourceIds,
   headers,
   onAdd,
-  status,
+  onReveal,
 }: Props) {
-  const ready = status === "done" && datasets.length > 0;
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const place = useCallback(() => {
-    // 锚点用整块入口（与侧栏同宽 340），而不是 64px 的圆钮：
-    // 右对齐圆钮右边会让 340 宽的面板往左偏出侧栏、盖住结果区。
     const anchor = anchorRef.current;
     const panel = panelRef.current;
     if (!anchor || !panel) return;
-    const a = anchor.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    // 按钮滚出视口后浮层已经没有锚点，收起来比钉在角落更诚实。
-    if (a.bottom < -4 || a.top > vh + 4) {
+
+    const rect = anchor.getBoundingClientRect();
+    // 入口滚出视口后浮层已经没有锚点，收起来比钉在角落更诚实。
+    if (!anchorVisible(rect, window.innerHeight)) {
       setOpen(false);
       return;
     }
-    const w = Math.min(PANEL_W, vw - EDGE * 2);
-    let left = a.right - w;
-    left = Math.min(Math.max(EDGE, left), Math.max(EDGE, vw - EDGE - w));
-    const h = panel.offsetHeight;
-    let top = a.bottom + GAP;
-    if (top + h > vh - EDGE) {
-      const up = a.top - GAP - h;
-      top = up >= EDGE ? up : Math.max(EDGE, vh - EDGE - h);
-    }
-    setPos({ left, top, width: w });
+
+    setPos(
+      placeFloating({
+        anchor: rect,
+        panel: { width: panel.offsetWidth, height: panel.offsetHeight },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        align: "right",
+        maxWidth: PANEL_W,
+        gap: GAP,
+      }),
+    );
   }, []);
 
   useLayoutEffect(() => {
@@ -103,7 +106,7 @@ export default function ModuleDock({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpen(false);
-      btnRef.current?.focus();
+      triggerRef.current?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -113,45 +116,41 @@ export default function ModuleDock({
     };
   }, [open]);
 
-  const hint =
-    status === "done"
-      ? datasets.length > 0
-        ? "点开就能加一张：只说想看什么，字段由注册表挑"
-        : "这一轮没有能出图的数据集"
-      : status === "running"
-        ? "检索中：拿到数据之后才能出图"
-        : status === "failed"
-          ? "上一轮失败了：重试拿到数据后才能出图"
-          : "先搜一个问题：生成器只挑这一轮算出来的数据";
-
   return (
-    <div ref={anchorRef} className="panel flex items-center gap-4 p-4">
+    <div ref={anchorRef}>
       <button
-        ref={btnRef}
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="打开一句话生成面板"
-        className="group relative flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/[0.06] transition-[border-color,background-color,box-shadow] hover:border-cyan-400 hover:bg-cyan-500/[0.12] hover:shadow-[0_0_26px_-6px_rgba(34,211,238,0.65)]"
+        className="panel group flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-[border-color,background-color] hover:border-cyan-500/30 hover:bg-cyan-500/[0.04]"
       >
-        <span className="font-mono text-[11px] font-bold tracking-[0.14em] text-cyan-200">
-          DIY
+        <span
+          aria-hidden
+          className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/[0.06] transition-colors group-hover:border-cyan-400 group-hover:bg-cyan-500/[0.12]"
+        >
+          <span className="font-mono text-[11px] font-bold tracking-[0.14em] text-cyan-200">
+            DIY
+          </span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-white">一句话生成面板</span>
+          <span className="mt-1 block font-mono text-[10px] leading-relaxed text-neutral-500">
+            说想看什么 · 图表和字段自动挑
+          </span>
+          <span className="mt-1 block font-mono text-[10px] tabular-nums text-cyan-400/80">
+            {datasets.length} 份数据可挑
+          </span>
         </span>
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-[3px] rounded-full border border-cyan-400/15 transition-colors group-hover:border-cyan-300/40"
-        />
+          className="shrink-0 font-mono text-[10px] text-neutral-600 transition-colors group-hover:text-cyan-300"
+        >
+          {open ? "收起" : "点开 ›"}
+        </span>
       </button>
-      <div className="min-w-0">
-        <p className="text-sm font-semibold text-white">一句话生成面板</p>
-        <p className="mt-1 font-mono text-[10px] leading-relaxed text-neutral-600">{hint}</p>
-        {ready && (
-          <p className="mt-1 font-mono text-[10px] tabular-nums text-cyan-400/80">
-            {datasets.length} 份数据可挑
-          </p>
-        )}
-      </div>
 
       {open &&
         createPortal(
@@ -159,7 +158,7 @@ export default function ModuleDock({
             ref={panelRef}
             role="dialog"
             aria-label="面板生成器"
-            className="fixed z-[60]"
+            className="rise fixed z-[60]"
             style={{
               left: pos ? pos.left : 0,
               top: pos ? pos.top : 0,
@@ -168,26 +167,18 @@ export default function ModuleDock({
               visibility: pos ? "visible" : "hidden",
             }}
           >
-            {ready ? (
-              <ModulePrompt
-                datasets={datasets}
-                modules={modules}
-                confidence={confidence}
-                sourceIds={sourceIds}
-                headers={headers}
-                onAdd={onAdd}
-              />
-            ) : (
-              <div className="panel p-4">
-                <p className="text-sm font-semibold text-white">一句话生成面板</p>
-                <p className="mt-2 font-mono text-[10px] leading-relaxed text-neutral-600">
-                  {hint}
-                </p>
-                <p className="mt-3 font-mono text-[10px] leading-relaxed text-neutral-700">
-                  Esc 或点击别处关闭
-                </p>
-              </div>
-            )}
+            <ModulePrompt
+              datasets={datasets}
+              modules={modules}
+              confidence={confidence}
+              sourceIds={sourceIds}
+              headers={headers}
+              onAdd={onAdd}
+              onReveal={(id) => {
+                setOpen(false);
+                onReveal?.(id);
+              }}
+            />
           </div>,
           document.body,
         )}

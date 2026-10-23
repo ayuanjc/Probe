@@ -7,6 +7,7 @@ import SearchBar from "./SearchBar";
 import ModuleGrid from "./ModuleGrid";
 import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
+import ProbeLogo from "./ProbeLogo";
 import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
@@ -96,6 +97,8 @@ export default function Workspace({
   const running = state.status === "running";
   const booted = useRef(false);
   const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
+  // 生成器只属于「结果页」：跑完、且真有可出图的数据集，才给它一个位置。
+  const diyReady = state.status === "done" && datasets.length > 0;
 
   /**
    * 设置里的 key 要跟着请求走，而 boot / 点话题这两条路径都写在闭包里，
@@ -133,6 +136,22 @@ export default function Workspace({
     }
   };
 
+  /**
+   * 新面板插进网格之后把视线带过去：滚到它、闪 1.4 秒。
+   * 加卡片和点「去看看」可能在同一帧里发生，所以查不到元素就等下一帧再试一次。
+   */
+  const revealModule = (id: string) => {
+    const reveal = () => {
+      const el = document.querySelector('[data-module-id="' + id + '"]');
+      if (!el) return false;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("card-flash");
+      window.setTimeout(() => el.classList.remove("card-flash"), 1400);
+      return true;
+    };
+    if (!reveal()) window.requestAnimationFrame(reveal);
+  };
+
   // StrictMode 下 effect 会跑两次，用 ref 保证自动查询只发一次。
   useEffect(() => {
     if (booted.current || !initialQuery.trim()) return;
@@ -145,15 +164,10 @@ export default function Workspace({
     <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-10 sm:px-8">
       <header className="flex flex-wrap items-end justify-between gap-6">
         <div>
-          <div className="flex items-baseline gap-3.5">
-            <h1 className="text-3xl font-black tracking-wider text-white">探针</h1>
-            <span className="font-mono text-sm uppercase tracking-[0.3em] text-cyan-400">
-              PROBE
-            </span>
-          </div>
-          <p className="mt-2 text-sm text-neutral-400">
-            高置信度情报终端 · 无源不显示 · 缺失不填 0
-          </p>
+          <h1 className="flex items-center">
+            <ProbeLogo size={17} />
+          </h1>
+          <p className="mt-2 text-sm text-neutral-400">无源不显示 · 缺失不填 0</p>
         </div>
         <div className="flex items-center gap-3">
           {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
@@ -199,7 +213,12 @@ export default function Workspace({
         两列：结果区在左，生成器固定在右。侧栏从 xl 起才是常驻的（1024–1279 之间
         左列会被挤到 720px 的网格下限以下，那时把生成器放到结果下方更合适）。
       */}
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div
+        className={
+          "grid grid-cols-1 items-start gap-6 " +
+          (diyReady ? "xl:grid-cols-[minmax(0,1fr)_340px]" : "")
+        }
+      >
         <div className="flex min-w-0 flex-col gap-6">
           {state.status === "idle" && trending && (
             <TrendingBoard snapshot={trending} onPick={pickTopic} />
@@ -292,20 +311,23 @@ export default function Workspace({
         </div>
 
         {/*
-          侧栏只剩一个入口：面板本身收在「DIY」圆钮后面的浮层里
-          （ModuleDock 用 portal + fixed，侧栏的 overflow 裁不到它）。
+          侧栏只在「跑完且真有数据可出图」时出现：检索过程中连占位都不留
+          （进度已经在左列，一个还不能用的入口只是噪音）。
+          入口本身收在 DIY 浮层后面（portal + fixed，侧栏的 overflow 裁不到它）。
         */}
-        <aside className="flex flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
-          <ModuleDock
-            datasets={datasets}
-            modules={state.modules}
-            confidence={state.confidence?.score ?? 0}
-            sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
-            headers={settingsHeaders(settings)}
-            onAdd={addModule}
-            status={state.status}
-          />
-        </aside>
+        {diyReady && (
+          <aside className="rise flex flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
+            <ModuleDock
+              datasets={datasets}
+              modules={state.modules}
+              confidence={state.confidence?.score ?? 0}
+              sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
+              headers={settingsHeaders(settings)}
+              onAdd={addModule}
+              onReveal={revealModule}
+            />
+          </aside>
+        )}
       </div>
 
       <SettingsPanel

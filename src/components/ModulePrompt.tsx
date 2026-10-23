@@ -27,6 +27,8 @@ type Props = {
   /** 设置面板里的 key，随请求带走（和 /api/search 同一套）。 */
   headers: Record<string, string>;
   onAdd: (m: ModuleState) => void;
+  /** 生成成功后把视线带到新卡片上（浮层自己会先收起）。 */
+  onReveal?: (id: string) => void;
 };
 
 function toMeta(ds: Dataset): DatasetMeta {
@@ -39,11 +41,24 @@ function toMeta(ds: Dataset): DatasetMeta {
   };
 }
 
-export default function ModulePrompt({ datasets, modules, confidence, sourceIds, headers, onAdd }: Props) {
+export default function ModulePrompt({
+  datasets,
+  modules,
+  confidence,
+  sourceIds,
+  headers,
+  onAdd,
+  onReveal,
+}: Props) {
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<{ title: string; engine: string; reason: string } | null>(null);
+  const [ok, setOk] = useState<{
+    id: string;
+    title: string;
+    engine: string;
+    reason: string;
+  } | null>(null);
   const seq = useRef(0);
 
   const taken = useMemo(() => new Set(modules.map((m) => m.id)), [modules]);
@@ -124,7 +139,7 @@ export default function ModulePrompt({ datasets, modules, confidence, sourceIds,
         sourceIds,
         datasetName: ds.name,
       });
-      setOk({ title: spec.title, engine: data.engine, reason: data.reason });
+      setOk({ id, title: spec.title, engine: data.engine, reason: data.reason });
       setInstruction("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "请求失败");
@@ -146,7 +161,7 @@ export default function ModulePrompt({ datasets, modules, confidence, sourceIds,
         </span>
       </header>
       <p className="mt-1 font-mono text-[10px] leading-relaxed text-neutral-600">
-        只说想看什么，字段由注册表挑
+        说清想看什么 → 生成 → 新面板插进结果网格
       </p>
 
       <form onSubmit={submit} className="mt-3 flex flex-col gap-2">
@@ -203,10 +218,21 @@ export default function ModulePrompt({ datasets, modules, confidence, sourceIds,
       )}
 
       {ok && (
-        <p className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] px-3 py-2 font-mono text-[10px] leading-relaxed text-cyan-200/85">
-          已加入网格：{ok.title} ·{" "}
-          {ok.engine === "llm" ? "模型在已有数据集里挑的" : "本地关键词规则挑的"} · {ok.reason}
-        </p>
+        <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/[0.05] px-3 py-2">
+          <p className="font-mono text-[10px] leading-relaxed text-cyan-200/85">
+            已加入网格：{ok.title} ·{" "}
+            {ok.engine === "llm" ? "模型在已有数据集里挑的" : "本地关键词规则挑的"} · {ok.reason}
+          </p>
+          {onReveal && (
+            <button
+              type="button"
+              onClick={() => onReveal(ok.id)}
+              className="mt-2 cursor-pointer rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 font-mono text-[10px] text-cyan-200 transition-colors hover:border-cyan-400 hover:bg-cyan-500/20"
+            >
+              去看看 →
+            </button>
+          )}
+        </div>
       )}
     </section>
   );

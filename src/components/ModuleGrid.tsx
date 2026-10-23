@@ -22,6 +22,13 @@ import ModuleCard from "./ModuleCard";
 const GRID_MIN_WIDTH = 720;
 
 /**
+ * 操作提示可以关掉，且记住关掉这件事（probe: 前缀会跟「一键还原」一起被清掉）。
+ * 提示本身只在第一次见到时有用，常驻就成了噪音。
+ */
+const HINT_KEY = "probe:grid-hint:v1";
+const HINT_TEXT = "拖动标题把手 ⠿ 移动卡片 · 右下角手柄改尺寸 · 布局按查询词存在本机";
+
+/**
  * 模块网格（PRD 2.5）。
  *
  * PRD 附录 A 第 2 条：顺序由流决定，用户拖出来的布局不能被中途到达的
@@ -55,6 +62,25 @@ function ModuleGrid({
   const [layout, setLayout] = useState<LayoutItem[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [hintOpen, setHintOpen] = useState(true);
+
+  // 关掉的提示不该在刷新后又冒出来；localStorage 不可用时只当这次会话有效。
+  useEffect(() => {
+    try {
+      setHintOpen(window.localStorage.getItem(HINT_KEY) !== "off");
+    } catch {
+      /* 隐私模式下读不了存储：按默认显示，功能不受影响。 */
+    }
+  }, []);
+
+  const dismissHint = useCallback(() => {
+    setHintOpen(false);
+    try {
+      window.localStorage.setItem(HINT_KEY, "off");
+    } catch {
+      /* 同上：存不下来就算了，不假装存好了。 */
+    }
+  }, []);
 
   /** 只在模块集合真的变了才重排；streaming 期间每次 render 都重算会把拖拽状态冲掉。 */
   const signature = modules.map((m) => m.id + ":" + m.w + "x" + m.h).join("|");
@@ -130,12 +156,26 @@ function ModuleGrid({
   return (
     <div ref={containerRef} className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 font-mono text-[10px] text-neutral-600">
-        <span>
-          {unlocked
-            ? "可拖拽卡片标题调整位置、拖右下角改尺寸；布局按查询词存在本机。"
-            : "结果生成中：布局已锁定，done 之后可拖拽。"}
-          {notice && <span className="ml-2 text-neutral-500">{notice}</span>}
-          {saveFailed && <span className="ml-2 text-amber-400">本机存储写入失败，布局不会被记住。</span>}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {unlocked ? (
+            hintOpen ? (
+              <>
+                <span>{HINT_TEXT}</span>
+                <button
+                  type="button"
+                  onClick={dismissHint}
+                  aria-label="收起操作提示"
+                  className="cursor-pointer px-1 text-neutral-600 transition-colors hover:text-neutral-300"
+                >
+                  ×
+                </button>
+              </>
+            ) : null
+          ) : (
+            <span>结果生成中：布局已锁定，完成之后可拖拽。</span>
+          )}
+          {notice && <span className="text-neutral-500">{notice}</span>}
+          {saveFailed && <span className="text-amber-400">本机存储写入失败，布局不会被记住。</span>}
         </span>
         {unlocked && (
           <button

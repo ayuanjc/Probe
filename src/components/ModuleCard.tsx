@@ -66,7 +66,10 @@ function ModuleCard({
   }, [module.spec, dataset, animation]);
 
   return (
-    <section className="panel flex h-full flex-col overflow-hidden">
+    <section
+      className="panel flex h-full flex-col overflow-hidden"
+      data-module-id={module.id}
+    >
       <header className="flex items-center justify-between gap-3 px-6 pb-2 pt-5">
         <div className="flex min-w-0 items-center gap-2.5">
           {draggable && (

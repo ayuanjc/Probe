@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GLOSSARY, type GlossaryKey } from "@/lib/glossary";
+import { anchorVisible, placeFloating } from "@/lib/placement";
 
 /**
  * 术语气泡。
@@ -17,6 +18,7 @@ import { GLOSSARY, type GlossaryKey } from "@/lib/glossary";
  *
  * 所以位置是实测的：先渲染（不可见）量出气泡尺寸，夹到视口内；下方放不下就翻到上方。
  * 滚动与窗口缩放时重算——气泡跟着触发词走，不会留在原地。
+ * 算术本身在 @/lib/placement，与 DIY 面板共用一份。
  */
 
 const GAP = 8; // 气泡与触发词的间距
@@ -73,21 +75,26 @@ export default function Term({
     const vh = window.innerHeight;
 
     // 触发词滚出视口就别留一个悬空气泡。
-    if (a.bottom < -4 || a.top > vh + 4) {
+    if (!anchorVisible(a, vh)) {
       setOpen(false);
       return;
     }
 
-    let left = align === "right" ? a.right - w : a.left;
-    left = Math.min(Math.max(EDGE, left), Math.max(EDGE, vw - EDGE - w));
+    const next = placeFloating({
+      anchor: a,
+      panel: { width: w, height: h },
+      viewport: { width: vw, height: vh },
+      align,
+      maxWidth: WIDTH,
+      gap: GAP,
+      edge: EDGE,
+    });
 
-    let top = a.bottom + GAP;
-    if (top + h > vh - EDGE) {
-      const above = a.top - GAP - h;
-      top = above >= EDGE ? above : Math.max(EDGE, vh - EDGE - h);
-    }
-
-    setPos((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
+    setPos((prev) =>
+      prev && prev.left === next.left && prev.top === next.top
+        ? prev
+        : { left: next.left, top: next.top },
+    );
   }, [align]);
 
   useLayoutEffect(() => {

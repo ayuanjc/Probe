@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 const EXAMPLES = [
   "英伟达最近三个月的舆情变化",
   "OpenAI 最新发布的产品是什么",
@@ -24,10 +26,28 @@ export default function SearchBar({
   onChange: (value: string) => void;
   onRun: (query: string) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
   const submit = () => {
     if (!value.trim() || running) return;
     onRun(value);
   };
+
+  // 斜杠聚焦搜索框（GitHub / Linear 那一套）：页面随时可以开始打字，
+  // 但正在别的输入框里打字时不要把光标抢走。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="w-full">
@@ -36,6 +56,7 @@ export default function SearchBar({
           ❯
         </span>
         <input
+          ref={inputRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
@@ -45,6 +66,12 @@ export default function SearchBar({
           className="min-w-0 flex-1 bg-transparent text-sm text-white caret-cyan-400 outline-none placeholder:text-neutral-500"
           spellCheck={false}
         />
+        <kbd
+          title="按 / 聚焦搜索框"
+          className="hidden shrink-0 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 sm:block"
+        >
+          /
+        </kbd>
         <kbd className="hidden shrink-0 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 sm:block">
           ↵
         </kbd>

@@ -273,6 +273,34 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 
 `npm run dev` 下的数字**不能**用来判断渲染性能。Turbopack 的按需编译、React 开发版的双次渲染，都会在首次交互时塞进几百毫秒的长任务；同一个页面在 `next start` 下这些数字会凭空少一半。要复现上表，先 `npm run build` 再 `npm start`，且不要和 `next dev` 同时跑（两者共用 `.next`）。
 
+## 交互：结果先出来，工具按需出现
+
+这一版的交互原则来自 Nielsen Norman Group 的三条经典结论，不是凭手感调的：
+
+- **渐进披露（Progressive Disclosure, Nielsen 2006）**：先只露最重要的选项，专业选项按需请求
+  才出现（原文举的例子就是打印对话框）。→ 生成器不进主视图，收在侧栏入口背后，**只在结果
+  跑完之后才出现**，检索过程中连占位都没有。
+- **模态 vs 非模态（Modal & Nonmodal Dialogs, Fessenden 2017）**：模态会打断并强制一个动作，
+  只在必须把注意力导向重要信息时才用。→ 生成器是**非模态浮层**（portal + fixed）：不锁滚动、
+  不遮背景、点外面就收。为了一个可选动作拦下整页，成本远大于收益。
+- **10 Usability Heuristics**：#1 系统状态可见（跑完才给工具，跑的时候只说"正在检索"）、
+  #2 贴近真实世界（入口文案是"说想看什么"，不是 `ModuleSpec`）、#7 灵活高效（`/` 一键聚焦
+  搜索框）、#8 极简（操作提示只留一次，之后可关）。
+
+落成七件小事：
+
+1. **DIY 只在结果页**：`Workspace` 用 `state.status === "done" && datasets.length > 0` 门控侧栏，
+   不满足时整列都不渲染，同时把 `xl` 的两列栅格收成一列，不留 340px 空槽。
+2. **入口整块可点**：原来只有 64px 圆钮能点、说明文字是死的；现在 `<button>` 包住整张卡，
+   右端写「点开 ›」/「收起」，`aria-expanded` 跟着变。
+3. **生成后带路**：「去看看 →」滚到新卡并给 1.4s 的 `.card-flash` 高亮，而不是弹 toast。
+4. **提示可关**：网格顶部那行操作说明点 `×` 收起，写进 `probe:grid-hint:v1`（`probe:` 前缀会被
+   设置面板的「一键还原」一起清掉）。
+5. **`/` 聚焦搜索框**：GitHub / Linear 那套。只在焦点不在输入框里时抢——正在别处打字不动它。
+6. **浮层定位只剩一份算术**：`src/lib/placement.ts` 的 `placeFloating()` 被术语气泡与 DIY 面板共用
+   （贴边夹回视口、下方放不下翻上方、贴底兜底），`anchorVisible()` 负责"锚点滚走就收起"。
+7. **`prefers-reduced-motion` 与设置里的「动画」开关**同时作用于新增的 `.rise` 与 `.card-flash`。
+
 ## 一句话生成模块：句子只决定「看哪份数据、用哪种图形」
 
 输入「用散点图看情感分布」，网格里多一张卡。这句话里的模型能决定的只有三件事：
@@ -292,12 +320,17 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 不重新检索、不碰全网。代价是自定义面板跟着这一轮走：刷新页面或换一个问题，它就没了——
 这句话直接印在面板上，不让人误以为它被存下来了。
 
-入口是侧栏里的**「DIY」圆钮**（`src/components/ModuleDock.tsx`），面板本身开在浮层里。
-侧栏只剩这一个 64px 的圆钮 + 一行状态说明，结果区不被常驻表单占着；点开是
-portal + `position: fixed`，理由和术语气泡一样（侧栏 `overflow-y-auto` 会裁、卡片
-`transform` 会改 `fixed` 的包含块）。位置对齐**整块入口**而不是圆钮：右对齐 64px 的圆钮
-会让 340px 的面板往左偏出侧栏、盖住结果区——面板左边缘和侧栏左边缘重合才像"从这里展开"。
-下方放不下上翻、两侧都放不下夹进视口；圆钮滚出视口直接收起来；Esc、点外部、再点一次圆钮都能关。
+入口是侧栏里的「DIY」卡片（`src/components/ModuleDock.tsx`），面板本身开在浮层里。
+**它只在 `done` 且真有数据可出图时才出现**：检索中、失败、空闲都不留占位——进度已经在左列
+写着，一个还不能用的入口只是噪音（依据见上一节）。整块卡片都是按钮，点说明文字也能开，
+不是只有那个圆钮能点。点开是 portal + `position: fixed`，理由和术语气泡一样（侧栏
+`overflow-y-auto` 会裁、卡片 `transform` 会改 `fixed` 的包含块）。位置对齐**整块入口**而不是
+圆钮：右对齐 64px 的圆钮会让 340px 的面板往左偏出侧栏、盖住结果区——面板左边缘和侧栏左边缘
+重合才像"从这里展开"。下方放不下上翻、两侧都放不下夹进视口；入口滚出视口直接收起来；
+Esc、点外部、再点一次都能关。
+
+生成成功后浮层里多一个**「去看看 →」**：收起浮层、滚到新卡片、闪 1.4 秒。不弹 toast——
+要说的话（"已加入网格"）面板里已经写着了，再弹一次只是打断。
 
 侧栏从 `xl`(1280px) 起才常驻（更窄时落到结果下方）：1024–1279px 撑两列，左列会窄过
 `ModuleGrid` 的 720px 底线、网格直接退回单列，那不如让它先不分栏。
@@ -322,6 +355,7 @@ portal + `position: fixed`，理由和术语气泡一样（侧栏 `overflow-y-au
 
 路由限流 12 次/分钟（`PROBE_MODULE_RATE_LIMIT_PER_MIN`），和搜索分开计数：
 本机规则是廉价调用，但走到模型路径要花钱，别让它变成无限次试用。
+
 ## 目录
 
 ```
@@ -329,10 +363,10 @@ src/
   agents/     route · retrieve · analyze · compose · pipeline
   lib/        schemas · confidence · heat · compile · layout · module-catalog · module-plan · sse · llm
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
-              translate-types · http · settings · runtime-config · config-headers
+              translate-types · http · settings · runtime-config · config-headers · placement
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
-              Glossary · BilingualCompare · SettingsPanel · ModulePrompt
+              Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
   hooks/      useProbe.ts
 ```
 
