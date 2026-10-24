@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ADMIN_PATH } from "@/lib/admin-path";
 import { appPath } from "@/lib/base-path";
 
 /**
@@ -61,7 +62,7 @@ export default function SessionBar() {
           </span>
           {me.user.role === "admin" && (
             <a
-              href={appPath("/ayuanjc")}
+              href={appPath(ADMIN_PATH)}
               className="rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
             >
               后台

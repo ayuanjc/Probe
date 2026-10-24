@@ -37,7 +37,7 @@ src/app/api/auth/
 src/app/api/admin/
   users  invites  audit
 src/app/
-  login/  signup/  account/  ayuanjc/     ← 后台在 /ayuanjc，不是 /admin
+  login/  signup/  account/  <ADMIN_PATH>/  ← 后台目录名 = src/lib/admin-path.ts 里的 ADMIN_PATH
 src/components/
   AuthPanels.tsx   LoginPanel / SignupPanel / ChangePasswordPanel
   AdminConsole.tsx 用户 / 邀请码 / 审计 三个页签
@@ -56,6 +56,21 @@ scripts/auth-cli.mjs  命令行运维（服务起不来时的最后一条路）
 
 混了的结果是 `/probe/probe/login`（实测出过一次，登录完跳 404）。
 从 `?next=` 这类外部传进来的值先过 `stripBasePath()` 再交给路由。
+
+### 换后台路径（两步 + 一次测试）
+
+后台入口的路径只在一个地方定义：`src/lib/admin-path.ts` 的 `ADMIN_PATH`。
+
+1. 改 `ADMIN_PATH`；
+2. 把 `src/app/` 下的同名目录一起重命名（Next 的路由只看目录名，常量管不到它）。
+
+改完 `npm test`：`tests/admin-path.test.ts` 会核对三件事，漏一处就红 ——
+① 常量格式合法且不是 `/admin`；② `src/app/<ADMIN_PATH>/page.tsx` 真的存在；
+③ 除 `admin-path.ts` 外没有源码把路径写成字面量（身份条的按钮曾经就是写死的）。
+
+**这仍然只是少掉一批扫描噪声，不是安全边界。** 门在
+`requirePageAdmin()` 与 `/api/admin/*` 的 `requireAdmin()`：
+路径改成任何人都猜不到，也挡不住拿着合法 `probe_session` 的普通用户 —— 那两处才是答案。
 
 ---
 

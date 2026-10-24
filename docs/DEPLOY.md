@@ -60,7 +60,9 @@ PROBE_ADMIN_PASSWORD=<至少 10 位、且不包含 admin 的密码>
 上线后第一次启动前**必须在 `probe.env` 里写好** `PROBE_ADMIN_USER` + `PROBE_ADMIN_PASSWORD`，
 否则库是空的、没人能登录、也发不出邀请码。种出来的管理员首次登录会被强制去 `/account` 改密码。
 
-平时都在网页后台 `/ayuanjc`（右下角身份条 → 后台；**路径不是 /admin**）做：发邀请码、建用户、停用、重置密码、看审计。
+平时都在网页后台（右下角身份条 → 后台）做：发邀请码、建用户、停用、重置密码、看审计。
+路径由 `src/lib/admin-path.ts` 的 `ADMIN_PATH` 决定（当前 `/ayuanjc`，**不是 /admin**）：
+要换就改它 + 把 `src/app/` 下同名目录一起重命名，`npm test` 会核对两者是否一致。
 
 **服务起不来或后台进不去时**，用命令行（走同一份 `store.json`，不受 HTTP 影响）：
 
