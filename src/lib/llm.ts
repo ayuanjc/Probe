@@ -1,5 +1,5 @@
 
-import { generateObject, streamText } from "ai";
+import { generateObject, generateText, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { z } from "zod";
 import {
@@ -50,6 +50,18 @@ function client(): Client | null {
 function chatModel(p: Client) {
   const id = resolvedModelId();
   return p.chat(id);
+}
+
+/**
+ * 已经确认「不认 response_format=json_schema」的上游，按接口地址记下来。
+ *
+ * 一次 400 换一次记忆：同一个人接下来每一次结构化调用都省掉那一发必然失败的请求。
+ * 地址空串代表官方，官方不需要走这条路，所以用 "official" 区分。
+ */
+const textOnlyUpstreams = new Set<string>();
+
+function upstreamKey(): string {
+  return resolvedOpenaiBaseUrl() ?? "official";
 }
 
 /* ------------------------- 每日调用预算 ------------------------- */
@@ -138,6 +150,75 @@ export type StructuredCall<T> = {
 };
 
 /**
+ * 上游明确拒绝 response_format / json_schema 时的特征。
+ *
+ * generateObject 默认用 `response_format: {type:"json_schema"}`，这是官方新特性；
+ * 一堆「OpenAI 兼容」的服务只认 `json_object`，甚至完全不认 response_format
+ * （老版本 vLLM、部分自建网关、某些 Ollama 版本）。它们的报错长这样：
+ *   Invalid parameter: response_format
+ *   response_format json_schema is not supported
+ * 这种情况重试同一个请求没有意义，得换一条路：普通文本输出 + 自己抠 JSON。
+ */
+function rejectsJsonSchema(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (!/response_format|json_schema|json schema|structured output/.test(msg)) return false;
+  return /not support|unsupported|invalid|unknown|unrecognized|not allowed|does not support|isn't supported/.test(
+    msg,
+  );
+}
+
+/** 从模型输出里抠出 JSON：容忍 ```json 围栏和前后废话，抠不出就返回 undefined。 */
+export function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/[`]{3}(?:json)?\s*([\s\S]*?)[`]{3}/i);
+  const body = (fenced ? fenced[1] : trimmed).trim();
+  const start = body.search(/[{[\]]/);
+  if (start < 0) return undefined;
+  const open = body[start];
+  const close = open === "{" ? "}" : "]";
+  const end = body.lastIndexOf(close);
+  if (end <= start) return undefined;
+  try {
+    return JSON.parse(body.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 兼容兜底：不用 response_format，让模型把 JSON 写在正文里，自己抠 + zod 校验。
+ *
+ * 只有在上游明确拒绝 json_schema 时才会走到这里。代价是格式更依赖模型自觉
+ * （所以要 repair 提示 + zod 复核），收益是那些只实现 chat/completions 的服务能用了。
+ */
+async function structuredAsText<T>(
+  p: Client,
+  args: StructuredCall<T>,
+  promptChars: number,
+  sink?: UsageSink,
+): Promise<T | null> {
+  const res = await generateText({
+    model: chatModel(p),
+    system:
+      args.system +
+      "\n\n输出要求：只输出一个 JSON 对象，不要 Markdown 代码块，不要任何解释文字，不要前后缀。",
+    prompt: args.prompt,
+    temperature: 0,
+  });
+  const parsed = extractJson(res.text);
+  if (parsed === undefined) return null;
+  const checked = args.schema.safeParse(parsed);
+  if (!checked.success) return null;
+  sink?.({
+    kind: "structured",
+    promptChars,
+    outputChars: JSON.stringify(checked.data ?? null).length,
+    ...tokensOf(res.usage),
+  });
+  return checked.data;
+}
+
+/**
  * 结构化调用：temperature 固定 0，失败不重试超过 1 次（PRD 2.2 抽取规格）。
  * 返回 null 表示不可用或失败 —— 调用方必须走降级路径，不允许抛到用户面前。
  */
@@ -149,6 +230,23 @@ export async function generateStructured<T>(
   if (!p) return null;
   if (!takeBudget()) return null;
   const promptChars = args.system.length + args.prompt.length;
+
+  // 这个上游以前拒过 json_schema：直接走文本模式，不再浪费一发必然 400 的请求。
+  if (textOnlyUpstreams.has(upstreamKey())) {
+    try {
+      const loose = await structuredAsText(p, args, promptChars, sink);
+      if (loose !== null) return loose;
+    } catch (err) {
+      console.warn(
+        "[llm] 已知不支持 json_schema 的上游，文本模式也失败：",
+        err instanceof Error ? err.message.slice(0, 160) : err,
+      );
+    }
+    return null;
+  }
+
+  /** 只在真正被拒一次之后才换路，别把「偶发 500」也当成格式问题。 */
+  let triedTextMode = false;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -167,6 +265,25 @@ export async function generateStructured<T>(
       });
       return res.object;
     } catch (err) {
+      if (!triedTextMode && rejectsJsonSchema(err)) {
+        triedTextMode = true;
+        if (textOnlyUpstreams.size > 64) textOnlyUpstreams.clear();
+        textOnlyUpstreams.add(upstreamKey());
+        console.warn(
+          "[llm] 上游不支持 response_format=json_schema，改用纯文本 JSON 兜底：" +
+            (err instanceof Error ? err.message.slice(0, 160) : ""),
+        );
+        try {
+          const loose = await structuredAsText(p, args, promptChars, sink);
+          if (loose !== null) return loose;
+        } catch (inner) {
+          console.warn(
+            "[llm] 纯文本 JSON 兜底也失败：",
+            inner instanceof Error ? inner.message.slice(0, 160) : inner,
+          );
+        }
+        break;
+      }
       const retryable = isTransient(err);
       if (attempt === 1 || !retryable) {
         // 只记错误类型与状态码，绝不把 key 或完整响应体打到日志里。
