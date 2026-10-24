@@ -54,8 +54,21 @@ function digits(text: string): string[] {
   return (text.match(NUMBER_RE) ?? []).map((n) => n.replace(/[.,]/g, "")).filter((n) => n.length > 0);
 }
 
+/**
+ * 标题式大写（News Headline Capitalization）里每个词都大写，会把 Announces / Data
+ * 全当成专名，于是「英伟达发布了新 GPU」这种好译文也被判成丢专名。
+ * 这里先量一下大写词占比：过半就是标题式写法，此时只认长得像名字的（NVIDIA / H200）。
+ */
+function isHeadlineCase(src: string): boolean {
+  const words = src.match(/[A-Za-z][A-Za-z0-9.&'-]{2,}/g) ?? [];
+  if (words.length < 4) return false;
+  const capped = words.filter((w) => /^[A-Z]/.test(w)).length;
+  return capped / words.length > 0.6;
+}
+
 function properNouns(src: string): string[] {
   const out = new Set<string>();
+  const headline = isHeadlineCase(src);
   const re = /\b[A-Z][A-Za-z0-9.&'-]{2,}\b/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
@@ -67,10 +80,30 @@ function properNouns(src: string): string[] {
     // 真正的专名通常还会带数字、缩写形状，或在别处出现过；这里按这个判。
     const atSentenceStart = m.index === 0 || /[.!?\n]\s*$/.test(src.slice(0, m.index));
     const looksLikeName = /\d/.test(word) || /[A-Z]{2,}/.test(word) || /[&.]/.test(word);
-    if (atSentenceStart && !looksLikeName) continue;
+    if ((headline || atSentenceStart) && !looksLikeName) continue;
     out.add(word);
   }
   return [...out];
+}
+
+const CJK_RE = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
+
+function latinWords(s: string): Set<string> {
+  return new Set((s.toLowerCase().match(/[a-z][a-z0-9'-]*/g) ?? []).filter((w) => w.length > 1));
+}
+
+/** 译文是不是原文原样搬过来的。短段不判，避免专名单独成段时误伤。 */
+function looksUntranslated(src: string, dst: string): boolean {
+  // 短段不判："Rust" 原样保留是应该的，不是没翻。
+  if (src.length < 20) return false;
+  if (src.toLowerCase() === dst.toLowerCase()) return true;
+  if (CJK_RE.test(dst)) return false;
+  const a = latinWords(src);
+  const b = latinWords(dst);
+  if (a.size < 3) return false;
+  let hit = 0;
+  for (const w of a) if (b.has(w)) hit++;
+  return hit / a.size > 0.9;
 }
 
 export function translationRisk(src: string, dst: string, from: LangCode): RiskScore {
@@ -83,6 +116,20 @@ export function translationRisk(src: string, dst: string, from: LangCode): RiskS
       risk: 1,
       band: "high",
       signals: [{ code: "empty", label: "未产出译文", weight: 1 }],
+    };
+  }
+
+  // 0) 整段未译：早期版本把「一字没翻」判成 risk 0 / low ——
+  //    原文里的首字母大写词被 srcCaps 全剔掉，剩下的英文单词又凑不够两个，
+  //    于是没有任何信号成立，读者读到的其实是原文，却拿到一个「低风险」的绿框。
+  //    译文和原文几乎是同一串字，就等于没有被翻译，直接记满。
+  if (from !== "zh" && looksUntranslated(srcTrim, dstTrim)) {
+    return {
+      risk: 1,
+      band: "high",
+      signals: [
+        { code: "untranslated", label: "整段未译", weight: 1, detail: "译文与原文几乎一致" },
+      ],
     };
   }
 

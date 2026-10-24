@@ -1,6 +1,6 @@
 # 代码审查（src/ 全量，7213 行 / 42 文件）
 
-时间：2026-10-23。方法：5 个只读审查员分片（lib 数值、lib IO、agents、前端组件、翻译/设置/layout/compile/trending）+ 主 agent 逐个文件复核 + 2 条运行时复算与 1 条浏览器实测。未改动任何源码。
+时间：2026-10-23。方法：5 个只读审查员分片（lib 数值、lib IO、agents、前端组件、翻译/设置/layout/compile/trending）+ 主 agent 逐个文件复核 + 2 条运行时复算与 1 条浏览器实测。审查当时未改动任何源码；后续修复在条目里以「→ **已修**」标注。
 
 分级：**P0** 会崩 / 数据错误 / 安全；**P1** 行为与注释或契约不符、用户可感知的功能缺陷；**P2** 健壮性、可维护性、性能。
 
@@ -10,10 +10,10 @@
 
 ## P0
 
-1. `src/lib/http.ts:55-59` + `src/lib/translate.ts:96-108` — **重定向不复检主机，SSRF 可打内网与云元数据**。blockedHost 只校验用户提交的初始 hostname，getDirect 每跳递归不再过白名单：`http://X/` 302 到 `http://169.254.169.254/latest/meta-data/`、`http://localhost.:3000`、`http://[::ffff:127.0.0.1]/`、`http://127.0.0.1.nip.io/` 全部放行，而 url 来自无鉴权的 `POST /api/translate` 的 body.url。→ host 校验下沉进 getDirect 每一跳，`dns.lookup` 后按真实 IP 判私网段，跨 host 重定向直接拒绝。
-2. `src/lib/http.ts:57` — `new URL(location, parsed)` 在 res 回调里没有 try：Location 为 `//` 或 IPv6 括号损坏时抛同步异常 → 未捕获错误（路由 500 / 进程崩），Promise 也不 settle。→ try/catch 返回 `invalid_redirect`。
-3. `src/lib/llm.ts:92` — 流中断后 catch 里 `yield fixtureSummary()`，而那段文本写死「当前没有可用的模型 key」；此时 pipeline 的 wrote 已被前面的 delta 置真，用户拿到半截真摘要 + 一句关于配置的假话。→ 「无 key」与「调用失败」分开，失败只追加中性说明。
-4. `src/lib/translate-risk.ts:121-146` — **整段一字未译也会拿到 risk 0 / low**（运行时复算：`translationRisk("NVIDIA Announces New GPU For Data Centers", 原文, "en")` → `{risk:0, band:"low", signals:[]}`）。srcCaps 把首字母大写词全量排除，标题式大写句剔完只剩全大写词，`if (words.length < 2 && longest < 8)` 直接跳过。→ 先判译文与原文高相似（词重叠 > 0.9 或 trim 后相等即满分），再进 srcCaps。
+1. `src/lib/http.ts:55-59` + `src/lib/translate.ts:96-108` — **重定向不复检主机，SSRF 可打内网与云元数据**。blockedHost 只校验用户提交的初始 hostname，getDirect 每跳递归不再过白名单：`http://X/` 302 到 `http://169.254.169.254/latest/meta-data/`、`http://localhost.:3000`、`http://[::ffff:127.0.0.1]/`、`http://127.0.0.1.nip.io/` 全部放行，而 url 来自无鉴权的 `POST /api/translate` 的 body.url。→ **已修**：`hostAllowed()` 下沉进 `getDirect` 入口（每跳递归都过一遍），`dns.lookup(host,{all:true})` 后按真实 IP 判私网，任一解析地址是私网即拒；`isPrivateAddress()` 覆盖 IPv4 前缀表 + IPv6 特殊段 + IPv4-mapped 两种写法。`translate.ts` 的本地 `blockedHost` 已删。
+2. `src/lib/http.ts:57` — `new URL(location, parsed)` 在 res 回调里没有 try：Location 为 `//` 或 IPv6 括号损坏时抛同步异常 → 未捕获错误（路由 500 / 进程崩），Promise 也不 settle。→ **已修**：`new URL` 包 try/catch 返回 `invalid_redirect`，并校验下一跳只允许 http(s)。
+3. `src/lib/llm.ts:92` — 流中断后 catch 里 `yield fixtureSummary()`，而那段文本写死「当前没有可用的模型 key」；此时 pipeline 的 wrote 已被前面的 delta 置真，用户拿到半截真摘要 + 一句关于配置的假话。→ **已修**：`fixtureSummary()` 只留给无 key 分支；新增 `failureNote()` 只陈述事实。改用 `fullStream` 才看得见失败 —— `textStream` 会把 provider 错误吞成空流，所以原来 catch 根本没触发过。
+4. `src/lib/translate-risk.ts:121-146` — **整段一字未译也会拿到 risk 0 / low**（运行时复算：`translationRisk("NVIDIA Announces New GPU For Data Centers", 原文, "en")` → `{risk:0, band:"low", signals:[]}`）。srcCaps 把首字母大写词全量排除，标题式大写句剔完只剩全大写词，`if (words.length < 2 && longest < 8)` 直接跳过。→ **已修**：`looksUntranslated()` 前置判定（<20 字不判，避免 "Rust" 单独成段误伤），命中直接 risk 1 / high。顺带修了第 22 条：标题式大写（>60% 词首字母大写）时只认「长得像名字」的词。
 
 ## P1
 
@@ -42,7 +42,7 @@
 
 20. `src/lib/translate.ts:421` — overall 只对出问题的段求平均，段数不进分母：48 段里 1 段 0.35 与 48 段全错同为 0.35 / mid，而 UI 渲染成「平均歧义」。→ 传全量 scores 作分母，另给最高段风险与出错段数。
 21. `src/lib/translate.ts:350-366` + `src/lib/lang.ts:59-62` — 语言识别失败（unknown）被写成「原文已是目标语言，未翻译 / 未调用翻译引擎」，degraded 里无标记：短英文标题整段原样展示还标 low。→ unknown 单开分支并 push `lang:unknown`，文案改「未识别语言，未翻译」。
-22. `src/lib/translate-risk.ts:57-74` — 句子里每个首字母大写词都算专名，标题式大写让**正确译文**被判 mid（复算：`NVIDIA Announces New GPU…` → 正确中译反而 0.4/mid，signals.lost = [Announces, Data, Centers]）。→ 候选词先过常见词表，或按「是否全大写 / 出现次数」分级加权。
+22. `src/lib/translate-risk.ts:57-74` — 句子里每个首字母大写词都算专名，标题式大写让**正确译文**被判 mid（复算：`NVIDIA Announces New GPU…` → 正确中译反而 0.4/mid，signals.lost = [Announces, Data, Centers]）。→ **已修**：`isHeadlineCase()` 量大写词占比，过半就只认带数字/连续大写/&. 的词；同一句正确中译现在 0/low。
 
 ### 界面与交互
 
