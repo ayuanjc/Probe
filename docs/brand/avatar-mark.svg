@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080" role="img" aria-label="探针 Probe">
+  <rect width="1080" height="1080" fill="#000000"/>
+  <g transform="translate(260 260) scale(14)"><line x1="4" y1="36" x2="36" y2="4" stroke="#ffffff" stroke-opacity="0.9" stroke-width="1.5" stroke-linecap="round"/><circle cx="10.4" cy="29.6" r="3.8" fill="#3b82f6"/><circle cx="16.8" cy="23.2" r="2.4" fill="#3b82f6"/><circle cx="22.56" cy="17.44" r="1.5" fill="#3b82f6"/></g>
+</svg>
