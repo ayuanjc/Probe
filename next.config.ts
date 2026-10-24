@@ -1,4 +1,17 @@
 import type { NextConfig } from "next";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/**
+ * 版本号只有一个来源：package.json。
+ * 构建时读出来写成 NEXT_PUBLIC_PROBE_VERSION，客户端与服务端都从
+ * src/lib/version.ts 拿同一份 —— 页脚显示、/api/version 返回、README 的
+ * 发版说明因此不会各写一个数字。
+ */
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"),
+) as { version?: string };
+const version = pkg.version ?? "0.0.0";
 
 /**
  * 预览站挂在服务器现有的 80 端口 nginx 下面（location /probe/），
@@ -18,6 +31,7 @@ const distDir = process.env.PROBE_DIST_DIR || ".next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  env: { NEXT_PUBLIC_PROBE_VERSION: version },
   ...(basePath ? { basePath } : {}),
   ...(distDir !== ".next" ? { distDir } : {}),
   // 用 127.0.0.1 访问 dev server 时，Next 会拦掉 /_next/* 的跨源请求，

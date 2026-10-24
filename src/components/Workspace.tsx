@@ -13,6 +13,7 @@ import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
 import FeedbackButton from "./FeedbackButton";
+import { VERSION_LABEL } from "@/lib/version";
 import ModuleGrid from "./ModuleGrid";
 import EntityGraphCard from "./EntityGraphCard";
 import ClarifyCard from "./ClarifyCard";
@@ -581,8 +582,9 @@ export default function Workspace({
                 </div>
               )}
 
+              {/* 本轮统计行。用 div 不用 footer：页面上只留一个 footer 地标（在页面最底下）。 */}
               {state.status === "done" && state.elapsedMs !== null && (
-                <footer className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
+                <div className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
                   <span>耗时 {state.elapsedMs} ms</span>
                   <span>模块 {state.modules.length} 个</span>
                   <span>信源 {state.sources.length} 条</span>
@@ -592,7 +594,7 @@ export default function Workspace({
                     </span>
                   )}
                   <span className="text-neutral-700">无源不显示 · 缺失不填 0</span>
-                </footer>
+                </div>
               )}
 
               {state.status === "failed" && (
@@ -644,7 +646,7 @@ export default function Workspace({
       */}
       <footer className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 px-1 py-5">
         <span className="font-mono text-[10px] text-neutral-700">
-          探针 · 预览版
+          探针 <span className="text-neutral-600">{VERSION_LABEL}</span>
           {searched && state.query ? " · 本轮查询「" + state.query + "」" : ""}
         </span>
         <div className="flex items-center gap-3">

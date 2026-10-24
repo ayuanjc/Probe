@@ -883,6 +883,28 @@ journalctl -u probe-web -n 50 --no-pager
 配置在 `/opt/probe/probe.env`（`PROBE_BASE_PATH`、限流阈值、以及想接的话 `OPENAI_API_KEY`）。
 改完 `systemctl restart probe-web` 即可，不需要重新构建 —— 除非改的是 `NEXT_PUBLIC_*`，那个会被打进前端。
 完整的落盘路径、回滚步骤与 nginx 片段见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+
+## 版本号：一个数字，两个用途
+
+页脚左下角是 `探针 V0.1.0`，`GET /api/version` 里同时给 `version` 与 `buildId`。
+它们不是一回事，混用会误导人：
+
+| | 谁改 | 用来干什么 |
+| --- | --- | --- |
+| `version`（V0.1.0） | 人改 `package.json` | 说明这是产品第几版：对外沟通、issue 里对版本 |
+| `buildId` | 每次构建自动生成 | 判断「这个页面是不是最新构建」，更新横幅就靠它 |
+
+单一来源：`next.config.ts` 在构建时读 `package.json` 的 `version`，写成
+`NEXT_PUBLIC_PROBE_VERSION`，客户端与服务端都从 `src/lib/version.ts` 取，
+所以不存在「页脚写 0.1.0、接口写 0.0.9」这种对不上的情况。发版只改一处：
+
+```bash
+npm version 0.1.1 --no-git-tag-version   # 或直接编辑 package.json 的 version
+npm run build                            # NEXT_PUBLIC_* 编译进前端，必须重新构建
+```
+
+**改完要重新构建**，只 `systemctl restart` 不生效 —— 版本号是编译期常量。
+
 ## 目录
 
 ```

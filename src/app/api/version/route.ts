@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { APP_VERSION } from "@/lib/version";
 
 /**
  * 客户端靠这个接口发现「线上已经换了构建」。
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return Response.json(
-    { buildId: BUILD_ID, startedAt: STARTED_AT },
+    { version: APP_VERSION, buildId: BUILD_ID, startedAt: STARTED_AT },
     { headers: { "cache-control": "no-store" } },
   );
 }
