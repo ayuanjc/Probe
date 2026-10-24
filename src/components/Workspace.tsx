@@ -12,6 +12,7 @@ import {
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
+import FeedbackButton from "./FeedbackButton";
 import ModuleGrid from "./ModuleGrid";
 import EntityGraphCard from "./EntityGraphCard";
 import ClarifyCard from "./ClarifyCard";
@@ -636,15 +637,26 @@ export default function Workspace({
         </section>
       )}
 
-      {/* 指标页是查看端，不是主流程：留一个不抢注意力的入口就够。 */}
-      <nav className="flex justify-end px-1 pt-2 pb-4 sm:hidden">
-        <Link
-          href="/metrics"
-          className="font-mono text-[10px] text-neutral-600 transition-colors hover:text-neutral-300"
-        >
-          运行指标 →
-        </Link>
-      </nav>
+      {/*
+        页脚：反馈与指标页一起沉到最底下。
+        这两件事都不是主流程 —— 想找它们的人已经在往下翻了；放在顶上只会跟搜索框抢注意力。
+        查询词一并带进反馈里，作者复现时不用问「你当时搜的什么」。
+      */}
+      <footer className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 px-1 py-5">
+        <span className="font-mono text-[10px] text-neutral-700">
+          探针 · 预览版
+          {searched && state.query ? " · 本轮查询「" + state.query + "」" : ""}
+        </span>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/metrics"
+            className="flex min-h-8 items-center font-mono text-[10px] text-neutral-600 transition-colors hover:text-neutral-300 sm:min-h-0"
+          >
+            运行指标 →
+          </Link>
+          <FeedbackButton query={searched ? state.query : input.trim()} />
+        </div>
+      </footer>
 
       <SettingsPanel
         open={settingsOpen}

@@ -29,6 +29,7 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次） |
 | `/var/log/probe-update.log` | 更新日志（含构建输出） |
 | `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
+| `/opt/probe/app/.cache/feedback.jsonl` | 页脚反馈，一行一条（`.cache` 不在自动更新的覆盖范围内） |
 
 ## 环境变量（`/opt/probe/probe.env`）
 
@@ -73,6 +74,7 @@ systemctl status probe-web --no-pager -l
 journalctl -u probe-web -n 100 --no-pager
 curl -s http://127.0.0.1:3215/probe/api/version # 本机直连，绕过 nginx
 systemctl list-timers probe-update.timer --no-pager
+tail -n 5 /opt/probe/app/.cache/feedback.jsonl   # 最近的反馈
 systemctl start probe-heat.service              # 立刻算一次热榜（约 3~19 秒）
 tail -n 5 /var/log/probe-heat.log
 systemctl list-timers probe-heat.timer --no-pager

@@ -46,6 +46,7 @@ const ENV_ROWS: [string, string, string][] = [
   ["PROBE_RATE_LIMIT_PER_MIN", "/api/search 每 IP 每分钟检索次数", "3"],
   ["PROBE_TRANSLATE_RATE_LIMIT_PER_MIN", "/api/translate 每 IP 每分钟", "20"],
   ["PROBE_MODULE_RATE_LIMIT_PER_MIN", "/api/module 每 IP 每分钟", "12"],
+  ["PROBE_FEEDBACK_RATE_LIMIT_PER_MIN", "/api/feedback 每 IP 每分钟", "5"],
   ["PROBE_METRICS_KEY", "配了才能看到 /api/metrics 里的查询词", "未配 → 查询词脱敏"],
   ["PROBE_CRON_SECRET", "打开 /api/cron/heat 的口令", "未配 → 端点直接 503"],
 ];
@@ -60,6 +61,7 @@ const ROUTES: [string, string, string][] = [
   ["POST /api/search", "检索 + 面板流水线（SSE）", "按 IP 限流"],
   ["POST /api/translate", "对照翻译（抓正文 + 逐段译）", "按 IP 限流"],
   ["POST /api/module", "一句话生成面板", "按 IP 限流"],
+  ["POST /api/feedback", "页脚反馈（追加到 .cache/feedback.jsonl）", "按 IP 限流"],
   ["GET /api/metrics", "运行指标（内存，环形 200 条）", "默认脱敏查询词"],
   ["GET /api/cron/heat", "后台热度计算（30 天基线）", "需口令，未配即关"],
 ];
@@ -74,6 +76,7 @@ const ENV_SAMPLE = [
   "PROBE_RATE_LIMIT_PER_MIN=3",
   "PROBE_TRANSLATE_RATE_LIMIT_PER_MIN=20",
   "PROBE_MODULE_RATE_LIMIT_PER_MIN=12",
+  "PROBE_FEEDBACK_RATE_LIMIT_PER_MIN=5",
   "",
   "# 只在要看查询词时设（请求带 x-probe-metrics-key 头）",
   "PROBE_METRICS_KEY=…",
