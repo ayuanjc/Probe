@@ -228,7 +228,7 @@ function ModuleGrid({
                   type="button"
                   onClick={dismissHint}
                   aria-label="收起操作提示"
-                  className="cursor-pointer px-1 text-neutral-600 transition-colors hover:text-neutral-300"
+                  className="-my-1 cursor-pointer px-2 py-1.5 text-neutral-600 transition-colors hover:text-neutral-300"
                 >
                   ×
                 </button>
@@ -246,7 +246,7 @@ function ModuleGrid({
               type="button"
               onClick={toggleAll}
               aria-label={anyExpanded ? "收起全部图表" : "展开全部图表"}
-              className="cursor-pointer rounded border border-neutral-800 px-2.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+              className="min-h-8 cursor-pointer rounded border border-neutral-800 px-2.5 py-1 text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white sm:min-h-0 sm:py-0.5"
             >
               {anyExpanded ? "收起全部" : "展开全部"}
             </button>
@@ -255,7 +255,7 @@ function ModuleGrid({
             <button
               type="button"
               onClick={reset}
-              className="cursor-pointer rounded border border-neutral-800 px-2.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+              className="min-h-8 cursor-pointer rounded border border-neutral-800 px-2.5 py-1 text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white sm:min-h-0 sm:py-0.5"
             >
               重置布局
             </button>

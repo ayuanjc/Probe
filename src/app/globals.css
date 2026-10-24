@@ -358,3 +358,44 @@ kbd {
     animation: none;
   }
 }
+
+
+/* ── 手机端 ──────────────────────────────────────────────────────────────
+   这一屏在手机上要成立，只需要解决三件事：
+   1) 刘海/圆角：layout.tsx 用了 viewportFit: "cover"，贴边元素必须自己躲开安全区；
+   2) 横向拖动：ECharts 的 canvas 默认 touch-action: none，手指想上下翻页会被图吃掉；
+   3) 点按高亮：WebKit 默认给可点元素盖一层灰蓝，深色界面里像渲染故障。 */
+@layer base {
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 手机上不要跟着窗口缩放改字号：iOS 一转向就把正文放大成 18px。
+     双指缩放仍然可用（maximum-scale 没锁）。 */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}
+
+/* 横向安全区。用 --safe-pad 而不是写死 rem：
+   手机默认 1.25rem，sm 以上由工具类改成 2rem，仍然让位给刘海。 */
+.safe-x {
+  padding-left: max(var(--safe-pad, 1.25rem), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--safe-pad, 1.25rem), env(safe-area-inset-right, 0px));
+}
+
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* 图表外层：纵向手势留给页面滚动，横向才交给 ECharts（实体图里的节点可以拖）。 */
+.chart-touch {
+  touch-action: pan-y;
+}
+
+/* 抽屉内部滚到尽头时不要把页面带着滚（iOS 上尤其明显）。 */
+.scroll-thin,
+.scroll-contain {
+  overscroll-behavior: contain;
+}

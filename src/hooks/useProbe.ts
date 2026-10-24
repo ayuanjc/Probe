@@ -7,6 +7,7 @@ import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 import type { EntityGraph } from "@/lib/entity-graph";
 import type { ClarifyPayload } from "@/lib/polysemy";
 import { MODULE_SIZE } from "@/lib/module-catalog";
+import { appPath } from "@/lib/base-path";
 
 export type ModuleState = {
   id: string;
@@ -151,7 +152,7 @@ export function useProbe() {
     setState({ ...IDLE, status: "running", query: q });
 
     try {
-      const res = await fetch("/api/search", {
+      const res = await fetch(appPath("/api/search"), {
         method: "POST",
         headers: { "content-type": "application/json", ...(extraHeaders ?? {}) },
         body: JSON.stringify({ query: q }),

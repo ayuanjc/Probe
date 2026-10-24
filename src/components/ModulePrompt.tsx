@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, type FormEvent } from "react";
+import { appPath } from "@/lib/base-path";
 import { compile } from "@/lib/compile";
 import { DEFAULT_KIND, KIND_ZH, MODULE_SIZE, compileErrorText } from "@/lib/module-catalog";
 import type { DatasetMeta, ModulePlanReply } from "@/lib/module-plan";
@@ -82,7 +83,7 @@ export default function ModulePrompt({
     setOk(null);
 
     try {
-      const res = await fetch("/api/module", {
+      const res = await fetch(appPath("/api/module"), {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify({ instruction: ask, datasets: datasets.map(toMeta) }),

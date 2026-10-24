@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { appPath } from "@/lib/base-path";
 import type { TranslateResponse, TranslateResult } from "@/lib/translate-types";
 import type { RiskBand } from "@/lib/translate-risk";
 
@@ -99,7 +100,7 @@ export default function BilingualCompare({
       acRef.current = ac;
       setState({ status: "loading" });
       try {
-        const res = await fetch("/api/translate", {
+        const res = await fetch(appPath("/api/translate"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ url, title, text }),

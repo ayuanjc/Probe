@@ -123,7 +123,7 @@ function TopicCard({
 }) {
   const top = rank <= 3;
   return (
-    <article className="group flex flex-col rounded-md bg-[#0c0c0c] p-6 transition-colors hover:border-neutral-700 border border-transparent">
+    <article className="group flex flex-col rounded-md border border-transparent bg-[#0c0c0c] p-5 transition-colors hover:border-neutral-700 sm:p-6">
       <div className="flex items-baseline gap-2.5">
         <span
           className={

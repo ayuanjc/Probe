@@ -177,7 +177,7 @@ export default function SettingsPanel({
         role="dialog"
         aria-modal="true"
         aria-label="设置"
-        className="scroll-thin relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-neutral-800 bg-black"
+        className="scroll-thin safe-bottom relative flex h-full w-full max-w-[min(440px,100vw)] flex-col overflow-y-auto border-l border-neutral-800 bg-black"
       >
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-neutral-800 bg-black px-6 py-4">
           <div>

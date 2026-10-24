@@ -78,9 +78,12 @@ export default function SearchBar({
           }}
           aria-label="检索"
           placeholder="问一个需要证据的问题 —— 每个数字都会标注来源"
+          enterKeyHint="search"
+          autoComplete="off"
+          autoCapitalize="off"
           className={[
-            "min-w-0 flex-1 bg-transparent text-white caret-blue-500 outline-none placeholder:text-neutral-600",
-            lg ? "text-[15px]" : "text-sm",
+            "min-w-0 flex-1 bg-transparent text-[16px] text-white caret-blue-500 outline-none placeholder:text-neutral-600 sm:text-[15px]",
+            lg ? "" : "sm:text-sm",
           ].join(" ")}
           spellCheck={false}
         />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { appPath } from "@/lib/base-path";
 import type { MetricsSnapshot, RunView } from "@/lib/metrics";
 
 type Payload = MetricsSnapshot & {
@@ -63,7 +64,7 @@ export default function MetricsPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/metrics", { cache: "no-store" });
+      const res = await fetch(appPath("/api/metrics"), { cache: "no-store" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       setData((await res.json()) as Payload);
       setError(null);

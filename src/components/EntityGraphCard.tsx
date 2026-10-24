@@ -247,7 +247,7 @@ export default function EntityGraphCard({
         只给 min-height 会让百分比失效、canvas 退到默认 100px ——
         所以套一层定高 flex 列，让 ChartBox 的 flex-1 拿得到实际高度。
       */}
-      <div className="mt-2 flex h-[360px] flex-col">
+      <div className="chart-touch mt-2 flex h-[300px] flex-col sm:h-[360px]">
       <ChartBox
         option={option}
         minHeight={340}

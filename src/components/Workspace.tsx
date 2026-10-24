@@ -266,7 +266,7 @@ export default function Workspace({
     <button
       type="button"
       onClick={() => setSettingsOpen(true)}
-      className="rounded-md p-2 text-neutral-600 transition-colors hover:text-neutral-300"
+      className="flex h-10 w-10 items-center justify-center rounded-md text-neutral-600 transition-colors hover:text-neutral-300 sm:h-9 sm:w-9"
       aria-haspopup="dialog"
       aria-label="设置"
       title="设置"
@@ -278,7 +278,7 @@ export default function Workspace({
   const metricsLink = (
     <Link
       href="/metrics"
-      className="flex items-center gap-1.5 rounded-md px-2 py-2 font-mono text-[11px] text-neutral-500 transition-colors hover:text-white"
+      className="flex min-h-10 items-center gap-1.5 rounded-md px-2 font-mono text-[11px] text-neutral-500 transition-colors hover:text-white sm:min-h-9"
     >
       <ActivityIcon aria-hidden className="h-[13px] w-[13px]" strokeWidth={1.5} />
       运行指标
@@ -286,13 +286,13 @@ export default function Workspace({
   );
 
   return (
-    <main className="relative mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
+    <main className="safe-x relative mx-auto flex w-full max-w-[1560px] flex-col sm:[--safe-pad:2rem]">
       {/*
         首页是封面，没有顶栏 —— 设置和指标就都收在右上角这一行。
         只放图标按钮的话没人找得到设置，所以指标带文字、齿轮带 title。
       */}
       {!searched && (
-        <div className="absolute right-5 top-3 z-10 flex items-center gap-1 sm:right-8">
+        <div className="safe-x absolute right-0 top-[max(0.5rem,env(safe-area-inset-top))] z-10 flex items-center gap-1 sm:[--safe-pad:1.5rem]">
           {metricsLink}
           {settingsButton}
         </div>
