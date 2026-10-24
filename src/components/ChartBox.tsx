@@ -58,11 +58,18 @@ export default function ChartBox({
     };
   }, []);
 
+  /*
+   * 画布用绝对定位铺满容器，而不是 height:100%。
+   * 百分比高度要求父元素有确定高度：网格里卡片高度是定值（没问题），
+   * 但窄屏退回单列后卡片高度是 auto，100% 会解析成 auto —— ECharts 量到 0，
+   * 于是报 "Can't get DOM width or height"，随后按默认 100px 画，底下空一截。
+   * 容器给 minHeight 兜底，画布 inset:0 就跟它对齐。
+   */
   return (
-    <div ref={boxRef} className={"flex-1 " + (className ?? "")} style={{ minHeight }}>
+    <div ref={boxRef} className={"relative flex-1 " + (className ?? "")} style={{ minHeight }}>
       <Chart
         option={option}
-        style={{ height: "100%", width: "100%" }}
+        style={{ position: "absolute", inset: 0, height: "100%", width: "100%" }}
         notMerge
         lazyUpdate
         opts={{ renderer: "canvas" }}

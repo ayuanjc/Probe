@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowDown, RotateCcw, Settings as SettingsIcon } from "lucide-react";
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
@@ -13,7 +15,6 @@ import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
-import LandingHero from "./LandingHero";
 import type { Dataset } from "@/lib/schemas";
 import {
   DEFAULT_SETTINGS,
@@ -45,6 +46,13 @@ const PROVIDER_TEXT: Record<string, string> = {
   claims: "事实断言抽取",
   window: "时间窗过滤",
 };
+
+/**
+ * 布局动效的唯一参数。写在这里是为了首页与结果页共用同一条曲线：
+ * 从「居中大锁标 + 大输入行」到「顶栏小锁标 + 一行输入」是同一个元素在移动，
+ * 不是两个页面在切换 —— 所以两处必须同频，否则会看成两次跳转。
+ */
+const SPRING = { type: "spring", stiffness: 260, damping: 30, mass: 0.9 } as const;
 
 /** 意图里的时间窗是 ISO 时间戳，直接 slice(0,10) 拿到的是 UTC 日期。 */
 function fmtDay(iso: string): string {
@@ -92,7 +100,7 @@ export default function Workspace({
   initialQuery?: string;
   trending?: TrendingSnapshot | null;
 }) {
-  const { state, run, addModule } = useProbe();
+  const { state, run, reset, addModule } = useProbe();
   const [input, setInput] = useState(initialQuery);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -104,8 +112,15 @@ export default function Workspace({
 
   /** 图表「收起全部」：网格内的卡由 ModuleGrid 自己管，实体关系图在网格外，靠这个开关同步。 */
   const [graphCollapsed, setGraphCollapsed] = useState(false);
-  /** 还没问过 = 首页（搜索入口）；一旦发起检索就进结果页，热榜退到首页的下一屏。 */
-  const landing = state.status === "idle";
+
+  /**
+   * isSearched = 用户已经问过一次。
+   *
+   * 不用单独的 useState：状态源头在 useProbe 里（idle → running → done/failed），
+   * 再存一份布尔就会出现"两处各记一次"的漂移。idle 就是首页，其余都是结果页。
+   * 输入框的值仍在 input 里，跑过的查询在 state.query 里（布局快照按它做键）。
+   */
+  const searched = state.status !== "idle";
 
   /**
    * 设置里的 key 要跟着请求走，而 boot / 点话题这两条路径都写在闭包里，
@@ -131,6 +146,27 @@ export default function Workspace({
     applySettings(next);
   };
 
+  /**
+   * 顶部锁标 / 「新建搜索」共用：清空输入、中止流、回到首页态。
+   * 不刷新页面 —— 这正是这次改造的重点：状态归零靠 React，不靠一次整页重载。
+   */
+  const newSearch = useCallback(() => {
+    setInput("");
+    reset();
+    setGraphCollapsed(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("q");
+      window.history.replaceState(null, "", url.toString());
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [reset]);
+
+  // 从首页进入结果页时把视口拉回顶部，否则「锁标上推」这段动画有一半在屏幕外。
+  useEffect(() => {
+    if (searched && typeof window !== "undefined") window.scrollTo({ top: 0 });
+  }, [searched]);
+
   // 热榜点话题：填词、跑查询、同步 URL 要一起做，
   // 否则刷新后回不到刚才那个结果。
   const pickTopic = (name: string) => {
@@ -141,6 +177,10 @@ export default function Workspace({
       url.searchParams.set("q", name);
       window.history.replaceState(null, "", url.toString());
     }
+  };
+
+  const scrollToTrending = () => {
+    document.getElementById("trending")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   /**
@@ -176,211 +216,277 @@ export default function Workspace({
       aria-label="设置"
       title="设置"
     >
-      <svg
-        aria-hidden
-        viewBox="0 0 24 24"
-        className="h-[15px] w-[15px]"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.25}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
+      <SettingsIcon aria-hidden className="h-[15px] w-[15px]" strokeWidth={1.25} />
     </button>
   );
 
-  if (landing) {
-    return (
-      <>
-        <main className="mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
-          <div className="flex items-center justify-end pt-5">{settingsButton}</div>
-          <LandingHero
+  return (
+    <main className="mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
+      {/*
+        同一个容器承担两种形态：首页是占满首屏的竖排入口，结果页是顶部一行。
+        用 framer-motion 的 layout 而不是两套 DOM —— 元素只有一个，
+        位置和尺寸的变化由它自己插值，中途不会闪、也不会重建 ECharts。
+      */}
+      <motion.div
+        layout
+        transition={SPRING}
+        className={
+          searched
+            ? "flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-neutral-800 py-4"
+            : "flex min-h-[calc(100svh-5.5rem)] flex-col items-center justify-center gap-7 pb-14 pt-6"
+        }
+      >
+        <motion.div
+          layout
+          transition={SPRING}
+          className={searched ? "shrink-0" : "logo-in flex justify-center"}
+        >
+          <button
+            type="button"
+            onClick={newSearch}
+            aria-label="回到首页"
+            title="回到首页"
+            className="flex cursor-pointer items-center"
+          >
+            <ProbeLogo
+              orientation={searched ? "horizontal" : "vertical"}
+              size={searched ? 22 : "clamp(30px,4vw,56px)"}
+              subtitle={null}
+            />
+          </button>
+        </motion.div>
+
+        {/* 只在首页出现的一行标语：结果页顶栏里再放一句口号就成装饰了。 */}
+        {!searched && (
+          <motion.p
+            layout
+            transition={SPRING}
+            className="font-mono text-[11px] tracking-[0.18em] text-neutral-600"
+          >
+            无源不显示 · 缺失不填 0
+          </motion.p>
+        )}
+
+        <motion.div
+          layout
+          transition={SPRING}
+          className={searched ? "min-w-0 flex-1 basis-[240px]" : "w-full max-w-[720px]"}
+        >
+          <SearchBar
             running={running}
             value={input}
             onChange={setInput}
             onRun={runWithSettings}
-            hasTrending={Boolean(trending)}
+            size={searched ? "sm" : "lg"}
           />
-          <section id="trending" className="scroll-mt-6 border-t border-neutral-800 pb-16 pt-8">
-            {trending ? (
-              <TrendingBoard snapshot={trending} onPick={pickTopic} />
-            ) : (
-              <p className="text-[11px] text-neutral-600">
-                本轮没有取到热榜数据 —— 在上面输入一个问题就能开始。
-              </p>
-            )}
-          </section>
-        </main>
-        <SettingsPanel
-          open={settingsOpen}
-          settings={settings}
-          onChange={updateSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      </>
-    );
-  }
+        </motion.div>
 
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-8 sm:px-8">
-      {/* 一条细线切出功能区：上面只有身份与状态，下面是输入与结果。
-          锁标钉在左上角，工具靠右；一行放不下时自动折成两行。 */}
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-neutral-800 pb-5">
-        <a href="/" aria-label="回到首页" className="flex items-center">
-          <ProbeLogo size={28} />
-        </a>
-        <div className="flex items-center gap-3">
-          {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
-          {settingsButton}
-        </div>
-      </header>
+        {searched && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
+            <button
+              type="button"
+              onClick={newSearch}
+              aria-label="新建搜索"
+              title="新建搜索"
+              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 font-mono text-[11px] text-neutral-500 transition-colors hover:text-white"
+            >
+              <RotateCcw aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
+              新建搜索
+            </button>
+            {settingsButton}
+          </div>
+        )}
 
-      <SearchBar running={running} value={input} onChange={setInput} onRun={runWithSettings} />
-
-      {state.intent && (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-2.5 font-mono text-[10px] text-neutral-500">
-          <span className="text-blue-500">
-            意图 · {KIND_TEXT[state.intent.kind] ?? state.intent.kind}
-          </span>
-          <span>
-            实体{" "}
-            {state.intent.entities.length > 0
-              ? state.intent.entities.map((e) => e.name).join(" / ")
-              : "未识别"}
-          </span>
-          <span className="tabular-nums">
-            <Term k="window">窗口</Term> {fmtDay(state.intent.timeRange.from)} →{" "}
-            {fmtDay(state.intent.timeRange.to)}
-          </span>
-          <span className="tabular-nums">
-            <Term k="ambiguity">歧义</Term> {state.intent.ambiguity.toFixed(2)}
-          </span>
-        </div>
-      )}
-
-      {/*
-        两列：结果区在左，生成器固定在右。侧栏从 xl 起才是常驻的（1024–1279 之间
-        左列会被挤到 720px 的网格下限以下，那时把生成器放到结果下方更合适）。
-      */}
-      <div
-        className={
-          "grid grid-cols-1 items-start gap-6 " +
-          (diyReady ? "xl:grid-cols-[minmax(0,1fr)_340px]" : "")
-        }
-      >
-        <div className="flex min-w-0 flex-col gap-6">
-
-          {state.text && (
-            <div className="panel p-6">
-              <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-300">
-                {state.text}
-                {running && <span className="caret" />}
-              </p>
-            </div>
-          )}
-
-          {running && state.modules.length === 0 && (
-            <div className="flex items-center gap-2 px-1 font-mono text-[11px] text-neutral-500">
-              <span className="h-1 w-1 animate-pulse bg-blue-500" />
-              正在检索多源…
-            </div>
-          )}
-
-          {state.modules.length > 0 && (
-            <ModuleGrid
-              modules={state.modules}
-              sources={state.sources}
-              query={state.query}
-              running={running}
-              animation={settings.animation}
-              gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
-              onCollapseAll={setGraphCollapsed}
+        {!searched && (
+          <motion.button
+            layout
+            transition={SPRING}
+            type="button"
+            onClick={scrollToTrending}
+            className="flex items-center gap-1.5 text-xs text-neutral-600 transition-colors hover:text-neutral-300"
+          >
+            不看提问，先看今天的 24 小时热点
+            <ArrowDown
+              aria-hidden
+              className="h-3.5 w-3.5 animate-bounce motion-reduce:animate-none"
+              strokeWidth={1.5}
             />
+          </motion.button>
+        )}
+      </motion.div>
+
+      {searched && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.28, delay: 0.06 }}
+          className="flex flex-col gap-6 pt-6"
+        >
+          {state.intent && (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-2.5 font-mono text-[10px] text-neutral-500">
+              <span className="text-blue-500">
+                意图 · {KIND_TEXT[state.intent.kind] ?? state.intent.kind}
+              </span>
+              <span>
+                实体{" "}
+                {state.intent.entities.length > 0
+                  ? state.intent.entities.map((e) => e.name).join(" / ")
+                  : "未识别"}
+              </span>
+              <span className="tabular-nums">
+                <Term k="window">窗口</Term> {fmtDay(state.intent.timeRange.from)} →{" "}
+                {fmtDay(state.intent.timeRange.to)}
+              </span>
+              <span className="tabular-nums">
+                <Term k="ambiguity">歧义</Term> {state.intent.ambiguity.toFixed(2)}
+              </span>
+            </div>
           )}
 
           {/*
-            共现图放在面板与信源之间：它既解释「面板里那些词为什么一起出现」，
-            又需要下方的信源来当证据，所以在阅读顺序上正好夹在中间。
+            两列：结果区在左，生成器固定在右。侧栏从 xl 起才是常驻的（1024–1279 之间
+            左列会被挤到 720px 的网格下限以下，那时把生成器放到结果下方更合适）。
           */}
-          {state.entityGraph && (
-            <EntityGraphCard
-              graph={state.entityGraph}
-              sources={state.sources}
-              collapsed={graphCollapsed}
-              onToggle={() => setGraphCollapsed((v) => !v)}
-            />
-          )}
-
-          {state.sources.length > 0 && (
-            <section className="panel overflow-hidden">
-              <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pb-1 pt-4">
-                <span className="text-sm font-semibold text-white">
-                  原始信源
-                  <span className="ml-2 font-mono text-xs font-bold tabular-nums text-blue-500">
-                    {state.sources.length}
-                  </span>
-                </span>
-                <span className="font-mono text-[10px] text-neutral-600">
-                  点开即原文 · 「对照原文」给逐段双语对照
-                </span>
-              </header>
-              <div className="scroll-thin max-h-[340px] overflow-auto pb-2">
-                <SourceList sources={state.sources} />
-              </div>
-            </section>
-          )}
-
-          {state.status === "done" && state.degraded.length > 0 && (
-            <div className="rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[10px] leading-relaxed text-yellow-500/90">
-              <Term k="degraded">降级项</Term>：
-              {state.degraded.map(degradeText).join(" · ")}
-              （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
-            </div>
-          )}
-
-          {state.status === "done" && state.elapsedMs !== null && (
-            <footer className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
-              <span>耗时 {state.elapsedMs} ms</span>
-              <span>模块 {state.modules.length} 个</span>
-              <span>信源 {state.sources.length} 条</span>
-              {state.confidence && (
-                <span>
-                  <Term k="independence">独立稿源</Term> {state.confidence.nOwners} 个
-                </span>
+          <div
+            className={
+              "grid grid-cols-1 items-start gap-6 " +
+              (diyReady ? "xl:grid-cols-[minmax(0,1fr)_340px]" : "")
+            }
+          >
+            <div className="flex min-w-0 flex-col gap-6">
+              {/*
+                摘要：这是流式输出的落点。文字本身由 useProbe 按帧合帧追加，
+                这里只负责「有第一段字时才淡入」，避免留一个空盒子在等。
+              */}
+              {state.text && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.32, ease: "easeOut" }}
+                  className="panel p-6"
+                >
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-300">
+                    {state.text}
+                    {running && <span className="caret" />}
+                  </p>
+                </motion.div>
               )}
-              <span className="text-neutral-700">无源不显示 · 缺失不填 0</span>
-            </footer>
-          )}
 
-          {state.status === "failed" && (
-            <div className="rounded-md border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-[11px] text-red-400">
-              请求失败：{state.error}
+              {running && state.modules.length === 0 && (
+                <div className="flex items-center gap-2 px-1 font-mono text-[11px] text-neutral-500">
+                  <span className="h-1 w-1 animate-pulse bg-blue-500" />
+                  正在检索多源…
+                </div>
+              )}
+
+              {state.modules.length > 0 && (
+                <ModuleGrid
+                  modules={state.modules}
+                  sources={state.sources}
+                  query={state.query}
+                  running={running}
+                  animation={settings.animation}
+                  gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
+                  onCollapseAll={setGraphCollapsed}
+                />
+              )}
+
+              {/*
+                共现图放在面板与信源之间：它既解释「面板里那些词为什么一起出现」，
+                又需要下方的信源来当证据，所以在阅读顺序上正好夹在中间。
+              */}
+              {state.entityGraph && (
+                <EntityGraphCard
+                  graph={state.entityGraph}
+                  sources={state.sources}
+                  collapsed={graphCollapsed}
+                  onToggle={() => setGraphCollapsed((v) => !v)}
+                />
+              )}
+
+              {state.sources.length > 0 && (
+                <section className="panel overflow-hidden">
+                  <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pb-1 pt-4">
+                    <span className="text-sm font-semibold text-white">
+                      原始信源
+                      <span className="ml-2 font-mono text-xs font-bold tabular-nums text-blue-500">
+                        {state.sources.length}
+                      </span>
+                    </span>
+                    <span className="font-mono text-[10px] text-neutral-600">
+                      点开即原文 · 「对照原文」给逐段双语对照
+                    </span>
+                  </header>
+                  <div className="scroll-thin max-h-[340px] overflow-auto pb-2">
+                    <SourceList sources={state.sources} />
+                  </div>
+                </section>
+              )}
+
+              {state.status === "done" && state.degraded.length > 0 && (
+                <div className="rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[10px] leading-relaxed text-yellow-500/90">
+                  <Term k="degraded">降级项</Term>：
+                  {state.degraded.map(degradeText).join(" · ")}
+                  （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
+                </div>
+              )}
+
+              {state.status === "done" && state.elapsedMs !== null && (
+                <footer className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
+                  <span>耗时 {state.elapsedMs} ms</span>
+                  <span>模块 {state.modules.length} 个</span>
+                  <span>信源 {state.sources.length} 条</span>
+                  {state.confidence && (
+                    <span>
+                      <Term k="independence">独立稿源</Term> {state.confidence.nOwners} 个
+                    </span>
+                  )}
+                  <span className="text-neutral-700">无源不显示 · 缺失不填 0</span>
+                </footer>
+              )}
+
+              {state.status === "failed" && (
+                <div className="rounded-md border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-[11px] text-red-400">
+                  请求失败：{state.error}
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/*
-          侧栏只在「跑完且真有数据可出图」时出现：检索过程中连占位都不留
-          （进度已经在左列，一个还不能用的入口只是噪音）。
-          入口本身收在 DIY 浮层后面（portal + fixed，侧栏的 overflow 裁不到它）。
-        */}
-        {diyReady && (
-          <aside className="rise flex flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
-            <ModuleDock
-              datasets={datasets}
-              modules={state.modules}
-              confidence={state.confidence?.score ?? 0}
-              sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
-              headers={settingsHeaders(settings)}
-              onAdd={addModule}
-              onReveal={revealModule}
-            />
-          </aside>
-        )}
-      </div>
+            {/*
+              侧栏只在「跑完且真有数据可出图」时出现：检索过程中连占位都不留
+              （进度已经在左列，一个还不能用的入口只是噪音）。
+              入口本身收在 DIY 浮层后面（portal + fixed，侧栏的 overflow 裁不到它）。
+            */}
+            {diyReady && (
+              <aside className="rise flex flex-col gap-4 xl:sticky xl:top-6 xl:self-start">
+                <ModuleDock
+                  datasets={datasets}
+                  modules={state.modules}
+                  confidence={state.confidence?.score ?? 0}
+                  sourceIds={state.sources.slice(0, 20).map((s) => s.id)}
+                  headers={settingsHeaders(settings)}
+                  onAdd={addModule}
+                  onReveal={revealModule}
+                />
+              </aside>
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {/* 首页的第二屏：热榜。发起检索后收起 —— 结果页要专注，不靠猜你还在看榜。 */}
+      {!searched && (
+        <section id="trending" className="scroll-mt-6 border-t border-neutral-800 pb-16 pt-8">
+          {trending ? (
+            <TrendingBoard snapshot={trending} onPick={pickTopic} />
+          ) : (
+            <p className="text-[11px] text-neutral-600">
+              本轮没有取到热榜数据 —— 在上面输入一个问题就能开始。
+            </p>
+          )}
+        </section>
+      )}
 
       <SettingsPanel
         open={settingsOpen}

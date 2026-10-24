@@ -262,6 +262,15 @@ type ModuleSpec = {
   不另开路由；发起检索后切回小锁标 header + 搜索行 + 结果的紧凑布局，结果页锁标链回 `/`。
   热榜不与搜索框并排，是因为同屏会让人先读榜再决定问什么，把产品从「你说问题我给证据」
   退化成「看我们抓到了什么」。实测数据见 README「首页：入口一屏，热榜下一屏」。
+  返回入口不再刷新页面：结果页锁标本身就是「回到首页」按钮，右侧另有「新建搜索」（清空输入、
+  中止流、去掉 `?q=`、滚回顶部），两者都只改 React 状态。
+  🔧 实现备注（无刷新过渡）：首页与结果页是**同一棵树**，不是两个页面。顶区容器与锁标、输入行两个
+  子元素挂 framer-motion 的 `layout`（`SPRING = { stiffness: 260, damping: 30, mass: 0.9 }`，~480ms 收住），
+  换 `className` 即换形态（竖排居中 ⇄ 顶部一行、锁标 162px ⇄ 横排 22px、输入行 720px ⇄ flex-1）。
+  `isSearched` 不另存布尔，直接取 `state.status !== "idle"` —— 两份状态必然漂移。
+  数据卡片另走内层 `<motion.section>` 入场（`opacity 0→1`、`y 20→0`），不动外层 react-grid-layout
+  定位盒，否则和拖拽位移打架。首页示例 chip 只在 `size="lg"` 出现：顶栏那行是常驻控件，
+  摆一排快捷词会把行高撑到 185px。实测过渡与几何见 README「### 从封面到结果页」。
   🔧 实现备注（热点榜卡片）：名次（前三条目蓝色）、话题名、条数同排；标签行去边框、蓝色只给
   升温/爆发；热度分 / 热度 / r7 排成三格浅底指标组（标签 9px、值 14px 等宽）；新闻列表去掉
   分割线改用 gap；卡片 `#0c0c0c` 无边框、hover 才亮。近 14 天提及量画成内联 SVG 火花线
@@ -307,7 +316,7 @@ route(query)            // → Intent
 ```
 src/
   app/                    # App Router
-    page.tsx              # 搜索首页（暗黑工作台）
+    page.tsx              # 入口（首页封面与结果页同一棵树）
     api/search/route.ts   # SSE 流式端点
   agents/                 # 流水线四步，每步纯函数 + zod I/O
     route.ts retrieve.ts analyze.ts compose.ts pipeline.ts

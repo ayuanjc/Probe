@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
+import { motion } from "framer-motion";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
@@ -67,7 +68,12 @@ function ModuleCard({
   }, [module.spec, dataset, animation]);
 
   return (
-    <section
+    /* 卡片入场：从下方 20px 淡入。只动内层 section，外层是 react-grid-layout
+       的定位盒 —— 在网格项上做 transform 会和拖拽位移打架。 */
+    <motion.section
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
       className="panel flex h-full flex-col overflow-hidden"
       data-module-id={module.id}
     >
@@ -168,7 +174,7 @@ function ModuleCard({
         )}
       </div>
       )}
-    </section>
+    </motion.section>
   );
 }
 

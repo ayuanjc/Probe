@@ -428,7 +428,8 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
   话应该是「你说问题，我给证据」，而不是「看我们抓到了什么」。热榜是留客的入口，不是主页。
 - **发起检索就换布局**：`state.status !== "idle"` 时切回小锁标 header + 搜索行 + 结果。
   手里有结果的人不需要再看巨大的 Logo；把首页那套排版留在结果页只会挤掉数据。
-- **回得去**：结果页的锁标包了 `<a href="/" aria-label="回到首页">`，点一下回到封面。
+- **回得去**：结果页的锁标本身就是「回到首页」按钮，右侧另有 `新建搜索`（清空输入、
+  中止流、去掉 `?q=`、滚回顶部）。两者都不刷新页面 —— 状态归零靠 React，不靠一次重载。
 - **入场先画线，再落点**：轴线用 `stroke-dasharray/dashoffset` 从 45.3 画到 0（880ms），三个节点
   按 240 / 380 / 500ms 依次缩放落位；中间那颗原本就靠 `animate-pulse` 呼吸，入场动画会顶掉它，
   所以把「落位 + 呼吸」两段叠在同一条 `animation` 里。只在封面用（`.logo-in`）——Header 里
@@ -436,10 +437,46 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
   下若只是 `animation: none`，元素会停在 `dashoffset: 45.3` / `opacity: 0` 的初始样式上，
   画面里什么都没有。
 
-实测（prod，1440×1000）：锁标 svg `162×162` 在 `x=638.8`（画布中线 (1440−162)/2），搜索框
-`720×49`，`#trending` 顶端落在首屏之下；390×844 下锁标居中、搜索框铺满 `350`、热榜顶端
-`806.5` 仍在下一屏。点热榜话题后 7 个模块正常出图，`h1 svg` 消失、搜索框回到 `1376×54.5`，
-console 零 error / 零 warning。
+实测（prod，1440×1000）：锁标 svg `162×162` 在 `x=639`（画布中线 (1440−162)/2），搜索框
+`720×49` 在 `(360, 528)`，`#trending` 顶端落在首屏之下；390×844 下锁标居中、搜索框铺满
+`350`、热榜顶端 `912` 仍在下一屏。点热榜话题后 7 个模块正常出图，console 零 error / 零 warning。
+
+### 从封面到结果页：是同一个元素在移动，不是两个页面在切换
+
+回车之后没有跳转、没有重载、也没有两套 DOM 互相淡入淡出。锁标和输入行是**同一批元素**，
+`className` 换了、位置和尺寸由 framer-motion 的 `layout` 插值：
+
+```tsx
+<motion.div layout transition={SPRING}            /* 容器：竖排居中 ⇄ 顶部一行 */
+  className={searched ? "flex flex-wrap items-center gap-x-4 border-b … py-4"
+                      : "flex min-h-[calc(100svh-5.5rem)] flex-col items-center justify-center gap-7"}>
+  <motion.div layout transition={SPRING} …>        /* 锁标 162px 竖排 → 41px 横排 */
+  <motion.div layout transition={SPRING} …>        /* 输入行 720px 居中 → flex-1 顶栏 */
+```
+
+- **为什么不是两个组件**：两套 DOM 各自动画时，中间那 300ms 会出现两个锁标、两个输入框
+  （一个在飞、一个在原位等），而且输入框换实例会丢焦点、丢已输入的内容。元素只有一个，
+  状态也只有一个（`state.status !== "idle"` 就是 `isSearched`，不再另存一个布尔，
+  否则两处各记一次必然漂移）。
+- **只给容器和两个子元素 `layout`**：容器管换行与 padding，子元素管自己的宽高。
+  `SPRING = { stiffness: 260, damping: 30, mass: 0.9 }` 落在 ~480ms 收住 ——
+  再软就慢得像加载，再硬就是瞬移。
+- **卡片另走一条**：网格项外层是 react-grid-layout 的定位盒，在它上面做 `transform`
+  会和拖拽位移打架。所以入场只动内层 `<motion.section>`（`opacity 0→1`、`y 20→0`，
+  0.4s ease-out）。落定后实测 `transform: none`、`opacity: 1`，拖拽与快照写入照旧。
+- **顶栏在窄屏会换行**：输入行有 `basis-[240px]`，放不下就整行落下（390 宽时 header 变成
+  三行 171px 高：锁标 / 输入行铺满 350 / 工具 242），`scrollWidth` 仍是 390。
+  首页示例 chip 只在 `size="lg"` 出现 —— 顶栏那一行是常驻控件，摆一排快捷词会把行高撑到 185px。
+- **顺带修掉一个窄屏旧 bug**：`ChartBox` 的画布原来是 `height: 100%`，要求父元素有确定高度；
+  网格里卡片高度是定值所以看不出来，窄屏退回单列后卡片是 `auto`，100% 解析成 auto →
+  ECharts 量到 0，报 `Can't get DOM width or height`，然后按 100px 画、底下空一截。
+  改成容器 `relative` + 画布 `position: absolute; inset: 0`，实测移动端 canvas 从 `308×100`
+  变成 `308×180`，那条 warning 消失。
+
+过渡实测（1440，每 ~53ms 采一次几何）：锁标宽 `162 → 67 → 51 → 44 → 42 → 41`、`y 220 → 33`，
+输入行宽 `720 → 836 → 993 → 1047 → 1064`、`y 528 → 210`，~480ms 收住；结果页 header 高 `75`，
+搜索框 `940` 宽，工具组（置信度徽章 + 新建搜索 + 齿轮）靠右到 `x=1166`。点「新建搜索」后
+锁标回到 `162 @ (639, 220)`、地址栏的 `?q=` 被清掉、热榜回到下一页。
 
 ### 收紧视觉中心：一台入口不需要五个边框
 
@@ -552,7 +589,7 @@ src/
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
               translate-types · http · settings · runtime-config · config-headers · placement
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
-  components/ Workspace · LandingHero · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
+  components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
               Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
               ChartBox · EntityGraphCard
   hooks/      useProbe.ts
