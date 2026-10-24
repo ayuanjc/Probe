@@ -55,6 +55,10 @@ PROBE_MODULE_RATE_LIMIT_PER_MIN=20
 为什么不用 `git pull`：这台机器到 `github.com` 的 TLS 会被打断（`GnuTLS recv error (-110)`），
 `git clone` / `git fetch` 从没成功过；`api.github.com` 与 `codeload.github.com` 正常。
 
+更新那几十秒里进程不可用。还开着页面的浏览器靠 `/api/version` 的构建号比对得知「有新版本」，
+问不到就 10 秒后重试一次（否则轮询撞上重启窗口就要多等一分钟）。这条横幅只提示、不自动刷新 ——
+用户可能正读到摘要一半。
+
 ## 常用操作
 
 ```bash

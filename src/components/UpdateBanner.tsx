@@ -9,6 +9,8 @@ import { appPath } from "@/lib/base-path";
  * 变了才弹一条 —— 不自动刷新：用户可能正读到摘要一半。
  */
 const POLL_MS = 60_000;
+/** 重建那段窗口里进程会短暂不可用：失败后别等满一分钟，10 秒后再问一次。 */
+const RETRY_MS = 10_000;
 
 type Payload = { buildId: string; startedAt: string };
 
@@ -16,40 +18,53 @@ export default function UpdateBanner() {
   const [fresh, setFresh] = useState<Payload | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const mine = useRef<string | null>(null);
+  const retry = useRef<number | null>(null);
 
-  const check = useCallback(async () => {
+  /** 返回 false 表示这次没问到有效构建号（进程正在重启 / 网络抖动）。 */
+  const check = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch(appPath("/api/version"), { cache: "no-store" });
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const data = (await res.json()) as Payload;
-      if (!data?.buildId || data.buildId === "unknown") return;
+      if (!data?.buildId || data.buildId === "unknown") return false;
       if (mine.current === null) {
         mine.current = data.buildId;
-        return;
+        return true;
       }
       if (data.buildId !== mine.current) setFresh(data);
+      return true;
     } catch {
-      // 一次网络抖动不该让提示误报，也不该影响检索：下一轮再问。
+      // 一次网络抖动不该让提示误报，也不该影响检索：稍后重问。
+      return false;
     }
   }, []);
 
+  const schedule = useCallback(() => {
+    if (retry.current !== null) return;
+    retry.current = window.setTimeout(async () => {
+      retry.current = null;
+      if (!(await check())) schedule();
+    }, RETRY_MS);
+  }, [check]);
+
   useEffect(() => {
     let alive = true;
-    void check();
-    const timer = window.setInterval(() => {
-      if (alive && document.visibilityState === "visible") void check();
-    }, POLL_MS);
-    // 手机把标签页挂到后台会暂停定时器：切回来先查一次再等下一分钟。
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void check();
+    const tick = async () => {
+      if (!alive || document.visibilityState !== "visible") return;
+      if (!(await check())) schedule();
     };
-    document.addEventListener("visibilitychange", onVisible);
+    void tick();
+    const timer = window.setInterval(tick, POLL_MS);
+    // 手机把标签页挂到后台会暂停定时器：切回来先查一次再等下一分钟。
+    document.addEventListener("visibilitychange", tick);
     return () => {
       alive = false;
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      if (retry.current !== null) window.clearTimeout(retry.current);
+      retry.current = null;
+      document.removeEventListener("visibilitychange", tick);
     };
-  }, [check]);
+  }, [check, schedule]);
 
   if (!fresh || dismissed) return null;
 
