@@ -147,7 +147,11 @@ export async function requireAdmin(request: Request): Promise<AuthResult> {
 
 /* ----------------------------- 页面级闸门 ----------------------------- */
 
-/** 带 PROBE_BASE_PATH 前缀的站内路径（反代把应用挂在子路径下）。 */
+/**
+ * 给**裸 HTTP 跳转**（原样写 Location 的地方）拼 PROBE_BASE_PATH。
+ *
+ * ⚠️ 别把它传给 redirect() / <Link href> / router.push —— Next 自己会给这三样
+ * 叠上 basePath，再拼一次就是 /probe/probe/login（实测过）。这三样直接写 "/login"。 */
 export function sitePath(path: string): string {
   const raw = process.env.PROBE_BASE_PATH?.trim().replace(/\/+$/, "") ?? "";
   const base = raw && raw !== "/" ? (raw.startsWith("/") ? raw : `/${raw}`) : "";
@@ -173,17 +177,17 @@ export async function requirePageUser(
   options: { allowPendingPassword?: boolean } = {},
 ): Promise<StoredUser> {
   const user = await pageSessionUser();
-  if (!user) redirect(sitePath("/login"));
+  if (!user) redirect("/login");
   // 被派了初始密码的人先去改密：这不是安全边界（API 本来就能用），
   // 只是别让人一直拿着管理员发的临时密码干活。/account 自己传 allowPendingPassword 破环。
-  if (user.mustChangePassword && !options.allowPendingPassword) redirect(sitePath("/account"));
+  if (user.mustChangePassword && !options.allowPendingPassword) redirect("/account");
   return user;
 }
 
 export async function requirePageAdmin(): Promise<StoredUser> {
   const user = await pageSessionUser();
-  if (!user) redirect(sitePath("/login"));
-  if (user.role !== "admin") redirect(sitePath("/"));
+  if (!user) redirect("/login");
+  if (user.role !== "admin") redirect("/");
   return user;
 }
 

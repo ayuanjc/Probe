@@ -115,7 +115,7 @@ npm run auth -- create-admin admin
 PROBE_AUTH_MODE=off
 ```
 
-登录后在右下角身份条进 `/admin` 发邀请码或直接建用户。数据在 `.data/auth/store.json`
+登录后在右下角身份条进 `/ayuanjc`（后台路径刻意不叫 `/admin`）发邀请码或直接建用户。数据在 `.data/auth/store.json`
 （已在 `.gitignore` 里，别提交）。
 ## 四个阶段
 

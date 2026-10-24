@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { appPath } from "@/lib/base-path";
+import { appPath, stripBasePath } from "@/lib/base-path";
 
 /**
  * 登录 / 邀请码注册。
@@ -62,7 +62,8 @@ export function LoginPanel({ nextPath }: { nextPath: string }) {
       const { status, data } = await postJson("/api/auth/login", { username, password });
       if (status === 200) {
         // 用 replace 而不是 push：从登录页"后退"回登录页没有意义。
-        router.replace(nextPath || appPath("/"));
+        // ?next= 可能是外部拼进来的、已经带了 /probe 前缀，交给路由前先剥掉（路由会自己加）。
+        router.replace((nextPath && stripBasePath(nextPath)) || "/");
         router.refresh();
         return;
       }
@@ -113,7 +114,7 @@ export function LoginPanel({ nextPath }: { nextPath: string }) {
 
       <p className="mt-4 text-center font-mono text-[11px] text-neutral-600">
         有邀请码？{" "}
-        <Link href={appPath("/signup")} className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">
+        <Link href="/signup" className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">
           用它注册
         </Link>
       </p>
@@ -183,7 +184,7 @@ export function SignupPanel() {
     try {
       const { status, data } = await postJson("/api/auth/signup", { code, username, password });
       if (status === 201) {
-        router.replace(appPath("/"));
+        router.replace("/");
         router.refresh();
         return;
       }
@@ -272,7 +273,7 @@ export function SignupPanel() {
 
       <p className="mt-4 text-center font-mono text-[11px] text-neutral-600">
         已有账号？{" "}
-        <Link href={appPath("/login")} className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">
+        <Link href="/login" className="text-neutral-400 underline-offset-2 hover:text-white hover:underline">
           去登录
         </Link>
       </p>

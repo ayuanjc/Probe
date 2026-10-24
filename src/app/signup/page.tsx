@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import ProbeLogo from "@/components/ProbeLogo";
 import { SignupPanel } from "@/components/AuthPanels";
-import { pageUserOrNull, sitePath } from "@/lib/auth/guard";
+import { pageUserOrNull } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "邀请码注册" };
 
 /** 邀请码注册页。没有邀请码这条路就走不通 —— 本站不开放自由注册。 */
 export default async function SignupPage() {
-  if (await pageUserOrNull()) redirect(sitePath("/"));
+  if (await pageUserOrNull()) redirect("/");
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[420px] flex-col justify-center gap-6 px-5 py-10">

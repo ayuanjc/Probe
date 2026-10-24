@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import ProbeLogo from "@/components/ProbeLogo";
 import { ChangePasswordPanel } from "@/components/AuthPanels";
-import { requirePageUser, sitePath } from "@/lib/auth/guard";
+import { requirePageUser } from "@/lib/auth/guard";
 
 /**
  * 个人页：目前只有改密码。
@@ -17,7 +17,7 @@ export default async function AccountPage() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[460px] flex-col justify-center gap-6 px-5 py-10">
       <header className="flex flex-col items-center gap-3">
-        <Link href={sitePath("/")} aria-label="回到首页">
+        <Link href="/" aria-label="回到首页">
           <ProbeLogo size={26} />
         </Link>
         <p className="font-mono text-[11px] text-neutral-500">
@@ -41,7 +41,7 @@ export default async function AccountPage() {
       </div>
 
       <nav className="text-center font-mono text-[11px] text-neutral-600">
-        <Link href={sitePath("/")} className="transition-colors hover:text-white">
+        <Link href="/" className="transition-colors hover:text-white">
           ← 返回终端
         </Link>
       </nav>

@@ -14,3 +14,18 @@ export const BASE_PATH = (process.env.NEXT_PUBLIC_PROBE_BASE_PATH ?? "").replace
 export function appPath(p: string): string {
   return BASE_PATH + p;
 }
+
+/**
+ * 反过来：把已经带前缀的路径还原成路由路径。
+ *
+ * 两种路径要分清，混了会得到 /probe/probe/login：
+ * - **裸请求 / 裸跳转**（fetch、EventSource、window.location）必须 appPath() —— 没人替你加。
+ * - **Next 的路由**（<Link href>、router.push/replace、redirect()）自己会叠 basePath，必须写裸路径。
+ * 从 ?next= 这类外部传进来的值，可能已经带了前缀，过一遍 stripBasePath 再交给路由。
+ */
+export function stripBasePath(p: string): string {
+  if (BASE_PATH && (p === BASE_PATH || p.startsWith(BASE_PATH + "/"))) {
+    return p.slice(BASE_PATH.length) || "/";
+  }
+  return p;
+}

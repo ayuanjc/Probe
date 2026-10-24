@@ -2,11 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import AdminConsole from "@/components/AdminConsole";
 import ProbeLogo from "@/components/ProbeLogo";
-import { requirePageAdmin, sitePath } from "@/lib/auth/guard";
+import { requirePageAdmin } from "@/lib/auth/guard";
 
 /**
- * 后台管理。整页在服务端就把 admin 校验做掉：
- * 非管理员连这段 HTML 都拿不到，不会出现"页面能打开、接口全 403"的半吊子状态。
+ * 后台管理，挂在 `/ayuanjc`（不是 /admin）。
+ *
+ * 路由名本身就是一层遮挡：扫描器字典里没有 /probe/ayuanjc，被枚举到的概率远低于 /admin。
+ * 但它**不是**安全边界 —— 真正的边界是这里的 requirePageAdmin() 与 /api/admin/* 的 requireAdmin()，
+ * 换路径只是少掉一批扫描噪声，别把它当成"秘密入口"。
+ *
+ * 整页在服务端就把 admin 校验做掉：非管理员连这段 HTML 都拿不到，
+ * 不会出现"页面能打开、接口全 403"的半吊子状态。
  */
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "后台管理" };
@@ -17,14 +23,14 @@ export default async function AdminPage() {
   return (
     <main className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-5 py-8 sm:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 pb-5">
-        <Link href={sitePath("/")} className="flex items-center" aria-label="回到首页">
+        <Link href="/" className="flex items-center" aria-label="回到首页">
           <ProbeLogo size={22} />
         </Link>
         <nav className="flex items-center gap-4 font-mono text-[11px] text-neutral-500">
-          <Link href={sitePath("/metrics")} className="transition-colors hover:text-white">
+          <Link href="/metrics" className="transition-colors hover:text-white">
             指标
           </Link>
-          <Link href={sitePath("/")} className="transition-colors hover:text-white">
+          <Link href="/" className="transition-colors hover:text-white">
             ← 返回终端
           </Link>
         </nav>

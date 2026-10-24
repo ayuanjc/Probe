@@ -37,13 +37,25 @@ src/app/api/auth/
 src/app/api/admin/
   users  invites  audit
 src/app/
-  login/  signup/  account/  admin/
+  login/  signup/  account/  ayuanjc/     ← 后台在 /ayuanjc，不是 /admin
 src/components/
   AuthPanels.tsx   LoginPanel / SignupPanel / ChangePasswordPanel
   AdminConsole.tsx 用户 / 邀请码 / 审计 三个页签
   SessionBar.tsx   右下角身份条（谁登录着、退出、进后台）
 scripts/auth-cli.mjs  命令行运维（服务起不来时的最后一条路）
 ```
+
+### basePath 铁律（真的踩过）
+
+挂在 `/probe` 子路径下时，两类路径绝不能混：
+
+| 写法 | 是否自己加 `/probe` |
+| --- | --- |
+| `fetch` / `EventSource` / `window.location` | **要**，用 `appPath()` |
+| `<Link href>` / `router.push|replace` / `redirect()` | **不要**，直接写 `"/login"` |
+
+混了的结果是 `/probe/probe/login`（实测出过一次，登录完跳 404）。
+从 `?next=` 这类外部传进来的值先过 `stripBasePath()` 再交给路由。
 
 ---
 
@@ -98,7 +110,7 @@ npm run auth -- create-admin admin        # 不给 --password 就随机生成并
 
 ## 5. 发号与开户
 
-登录后台 `/admin`（只有 `role=admin` 能进）：
+登录后台 `/ayuanjc`（**不叫 /admin**，只有 `role=admin` 能进）：
 
 1. **邀请码页签** → 填备注 / 可用次数 / 有效小时（≤0 = 永久）→ 生成。
    明文码**只显示这一次**，刷新就没了（库里只有 SHA-256）。

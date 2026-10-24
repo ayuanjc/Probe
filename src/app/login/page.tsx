@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import ProbeLogo from "@/components/ProbeLogo";
 import { LoginPanel } from "@/components/AuthPanels";
-import { pageUserOrNull, sitePath } from "@/lib/auth/guard";
+import { pageUserOrNull } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "登录" };
@@ -16,7 +16,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  if (await pageUserOrNull()) redirect(sitePath("/"));
+  if (await pageUserOrNull()) redirect("/");
 
   const params = await searchParams;
   const raw = typeof params.next === "string" ? params.next : "";
