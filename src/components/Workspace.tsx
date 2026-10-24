@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowDown, RotateCcw, Settings as SettingsIcon } from "lucide-react";
+import {
+  Activity as ActivityIcon,
+  ArrowDown,
+  RotateCcw,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
@@ -229,8 +234,28 @@ export default function Workspace({
     </button>
   );
 
+  const metricsLink = (
+    <Link
+      href="/metrics"
+      className="flex items-center gap-1.5 rounded-md px-2 py-2 font-mono text-[11px] text-neutral-500 transition-colors hover:text-white"
+    >
+      <ActivityIcon aria-hidden className="h-[13px] w-[13px]" strokeWidth={1.5} />
+      运行指标
+    </Link>
+  );
+
   return (
-    <main className="mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
+    <main className="relative mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
+      {/*
+        首页是封面，没有顶栏 —— 设置和指标就都收在右上角这一行。
+        只放图标按钮的话没人找得到设置，所以指标带文字、齿轮带 title。
+      */}
+      {!searched && (
+        <div className="absolute right-5 top-3 z-10 flex items-center gap-1 sm:right-8">
+          {metricsLink}
+          {settingsButton}
+        </div>
+      )}
       {/*
         同一个容器承担两种形态：首页是占满首屏的竖排入口，结果页是顶部一行。
         用 framer-motion 的 layout 而不是两套 DOM —— 元素只有一个，
@@ -303,6 +328,8 @@ export default function Workspace({
               <RotateCcw aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
               新建搜索
             </button>
+            {/* 窄屏顶栏一行放不下四件东西，指标在手机上退回页脚那一个入口。 */}
+            <span className="hidden sm:flex">{metricsLink}</span>
             {settingsButton}
           </div>
         )}
@@ -514,10 +541,10 @@ export default function Workspace({
       )}
 
       {/* 指标页是查看端，不是主流程：留一个不抢注意力的入口就够。 */}
-      <nav className="flex justify-end px-1 pt-2 pb-4">
+      <nav className="flex justify-end px-1 pt-2 pb-4 sm:hidden">
         <Link
           href="/metrics"
-          className="font-mono text-[10px] text-neutral-700 transition-colors hover:text-neutral-300"
+          className="font-mono text-[10px] text-neutral-600 transition-colors hover:text-neutral-300"
         >
           运行指标 →
         </Link>
