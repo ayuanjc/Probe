@@ -87,7 +87,13 @@ async function gdeltSlot(fn: () => Promise<RawSource[]>): Promise<RawSource[]> {
 
 function isRateLimited(err: unknown): boolean {
   const m = err instanceof Error ? err.message : String(err);
-  return /http 429|cooldown|abort|timeout/i.test(m);
+  /**
+   * 别把 abort 算进来：用户关页面时 outer signal 会打断所有 fetch，
+   * 匹配到 "abort" 就会把 GDELT 全局冷冻 5 分钟 —— 一次关标签页惩罚之后所有查询。
+   * 冷却只留给真正的限流信号（429）与本地上游超时。
+   */
+  if (/abort/i.test(m)) return false;
+  return /http 429|cooldown|timeout/i.test(m);
 }
 
 /**

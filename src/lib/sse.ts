@@ -1,4 +1,5 @@
 
+import type { EntityGraph } from "./entity-graph";
 import type { Confidence, Field, Intent, ModuleSpec } from "./schemas";
 
 /**
@@ -47,12 +48,22 @@ export type ProbeEvent =
       data: { id: string; reason: ModuleErrorReason; fallback: "table" | "none"; detail?: string };
     }
   | { event: "sources"; data: { sources: SourceRef[]; confidence: Confidence } }
+  /**
+   * 实体共现图。放在 sources 之后、done 之前：它带着每条边的信源 id，
+   * 前端的「证据来源」要拿这些 id 去 sources 里查标题与链接。
+   */
+  | { event: "entity.graph"; data: EntityGraph }
   | {
       event: "done";
       data: {
         confidence: number;
         independentSources: number;
         degraded: string[];
+        /**
+         * 口径说明。以前这些只活在服务端 notes 里、从不外发，
+         * 于是"已抑制聚合数字""文章数指本次命中"这些话用户一句都看不到。
+         */
+        notes: string[];
         elapsedMs: number;
         stats?: Record<string, number>;
       };

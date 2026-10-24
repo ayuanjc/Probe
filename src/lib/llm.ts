@@ -80,18 +80,43 @@ export async function* streamSummary(prompt: string): AsyncGenerator<string> {
     yield* fixtureSummary();
     return;
   }
+  let emitted = false;
+  let failed = false;
   try {
     const result = streamText({
       model: p(resolvedModelId()),
       prompt,
       temperature: 0.2,
     });
-    for await (const delta of result.textStream) {
-      yield delta;
+    // 用 fullStream 而不是 textStream：textStream 只吐文本，把 provider 的错误
+    // （403 unsupported_country_region、401 key 无效…）吞成一条空流，
+    // 于是「调用失败」和「模型回了个空字符串」在这里长得一模一样。
+    for await (const part of result.fullStream) {
+      if (part.type === "text-delta") {
+        if (part.text.length > 0) emitted = true;
+        yield part.text;
+      } else if (part.type === "error") {
+        failed = true;
+        console.warn("[llm] stream error part:", part.error instanceof Error ? part.error.message : part.error);
+      }
     }
   } catch (err) {
+    failed = true;
     console.warn("[llm] stream failed:", err instanceof Error ? err.message : err);
-    yield* fixtureSummary();
+  }
+  // 已经吐过字 = 真摘要写了一半断掉。这时候不能接一段「当前没有可用的模型 key」：
+  // key 是有的（否则走不到这里），那句话是假的，而且会把半截真摘要说成模板产物。
+  // 一个字都没吐，才补一句中性的失败说明，让读者知道后面为什么是空的。
+  if (failed && !emitted) yield* failureNote();
+}
+
+/** 有 key 但调用失败时的说明：只陈述观察到的事实，不猜配置。 */
+function* failureNote(): Generator<string> {
+  const text =
+    "摘要没有生成：模型调用失败（key 无效、额度用尽或网络中断）。" +
+    "下面的面板与信源由本地流水线算出，不依赖模型，照常可读。";
+  for (let i = 0; i < text.length; i += 14) {
+    yield text.slice(i, i + 14);
   }
 }
 

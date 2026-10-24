@@ -124,10 +124,12 @@ export default function SettingsPanel({
 }: {
   open: boolean;
   settings: Settings;
-  onChange: (next: Settings) => void;
+  /** 返回 false 表示只生效、没存进本机（配额满、隐私模式）。 */
+  onChange: (next: Settings) => boolean;
   onClose: () => void;
 }) {
   const [armed, setArmed] = useState(false);
+  const [unsaved, setUnsaved] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -151,7 +153,8 @@ export default function SettingsPanel({
   if (!open) return null;
 
   function patch(p: Partial<Settings>) {
-    onChange({ ...settings, ...p });
+    const ok = onChange({ ...settings, ...p });
+    setUnsaved(!ok);
   }
 
   function doReset() {
@@ -190,6 +193,16 @@ export default function SettingsPanel({
             ESC
           </button>
         </header>
+
+        {unsaved && (
+          <p
+            role="status"
+            className="mx-6 mt-4 rounded-md border border-yellow-500/30 bg-yellow-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-yellow-500/90"
+          >
+            设置没能写进本机存储（可能是隐私模式或配额已满）：现在生效，
+            但刷新页面后会丢，这一轮的请求仍按刚才的配置走。
+          </p>
+        )}
 
         <Group
           title="自己的 API 密钥"

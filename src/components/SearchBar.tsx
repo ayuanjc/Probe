@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { ArrowRight, Search } from "lucide-react";
 
 const EXAMPLES = [
   "英伟达最近三个月的舆情变化",
@@ -14,19 +15,28 @@ const EXAMPLES = [
  *
  * 视觉上当一行干净的输入：纯黑底、1px 灰边框、左侧一枚细灰放大镜，
  * 聚焦只把边框提亮一档（不发光）。整行就是产品的入口。
+ *
+ * size="lg" 给首页那一版用，size="sm" 给结果页顶部那一行用 ——
+ * 同一个组件、同一份状态，由外层的布局动画负责「从居中到顶栏」这段过渡，
+ * 所以这里不做任何动画（两套 DOM 各自飞会互相打架）。
  */
 export default function SearchBar({
   running,
   value,
   onChange,
   onRun,
+  size = "sm",
+  autoFocus = false,
 }: {
   running: boolean;
   value: string;
   onChange: (value: string) => void;
   onRun: (query: string) => void;
+  size?: "sm" | "lg";
+  autoFocus?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lg = size === "lg";
 
   const submit = () => {
     if (!value.trim() || running) return;
@@ -51,50 +61,59 @@ export default function SearchBar({
 
   return (
     <div className="w-full">
-      <div className="flex items-center gap-3 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-3 transition-colors focus-within:border-neutral-600">
-        <svg
-          aria-hidden
-          viewBox="0 0 16 16"
-          className="h-4 w-4 shrink-0 text-neutral-600"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-        >
-          <circle cx="7" cy="7" r="4.25" />
-          <path d="m10.4 10.4 3.1 3.1" />
-        </svg>
+      <div
+        className={[
+          "flex items-center border border-neutral-800 bg-[#0f0f0f] transition-colors focus-within:border-neutral-600",
+          lg ? "gap-3 rounded-lg px-4 py-3" : "gap-3 rounded-md px-4 py-2.5",
+        ].join(" ")}
+      >
+        <Search aria-hidden className="h-4 w-4 shrink-0 text-neutral-600" strokeWidth={1.25} />
         <input
           ref={inputRef}
           value={value}
+          autoFocus={autoFocus}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
+          aria-label="检索"
           placeholder="问一个需要证据的问题 —— 每个数字都会标注来源"
-          className="min-w-0 flex-1 bg-transparent text-sm text-white caret-blue-500 outline-none placeholder:text-neutral-600"
+          className={[
+            "min-w-0 flex-1 bg-transparent text-white caret-blue-500 outline-none placeholder:text-neutral-600",
+            lg ? "text-[15px]" : "text-sm",
+          ].join(" ")}
           spellCheck={false}
         />
-        <kbd
-          title="按 / 聚焦搜索框"
-          className="hidden shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 sm:block"
-        >
-          /
-        </kbd>
-        <kbd className="hidden shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 sm:block">
-          ↵
-        </kbd>
+        {lg && (
+          <>
+            <kbd
+              title="按 / 聚焦搜索框"
+              className="hidden shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 sm:block"
+            >
+              /
+            </kbd>
+            <kbd className="hidden shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 sm:block">
+              ↵
+            </kbd>
+          </>
+        )}
+        {/* 幽灵按钮：没有底色，hover 只把字与箭头提亮。入口的视觉权重落在输入行本身。 */}
         <button
           type="button"
           onClick={submit}
           disabled={running || !value.trim()}
-          className="shrink-0 rounded-md bg-blue-600 px-3.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600"
+          className={[
+            "flex shrink-0 items-center gap-1 font-mono text-neutral-500 transition-colors hover:text-white disabled:cursor-not-allowed disabled:text-neutral-700 disabled:hover:text-neutral-700",
+            lg ? "text-xs" : "text-[11px]",
+          ].join(" ")}
         >
-          {running ? "检索中" : "检索"}
+          {running ? "检索中…" : "检索"}
+          {!running && <ArrowRight aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />}
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* 示例只在首页出现：结果页顶栏那一行是常驻控件，摆一排快捷词会把整行撑高。 */}
+      {lg && <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
         <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-neutral-600">
           试试
         </span>
@@ -106,12 +125,12 @@ export default function SearchBar({
               onChange(q);
               if (!running) onRun(q);
             }}
-            className="rounded border border-neutral-800 px-2.5 py-1 text-[11px] text-neutral-500 transition-colors hover:border-neutral-600 hover:text-neutral-300"
+            className={(lg ? "px-3 py-1" : "px-2.5 py-0.5") + " rounded-full bg-neutral-900 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"}
           >
             {q}
           </button>
         ))}
-      </div>
+      </div>}
     </div>
   );
 }

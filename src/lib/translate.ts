@@ -24,19 +24,6 @@ const SEG_TARGET_CHARS = 260;
 
 type Fetched = { ok: boolean; text: string; title: string; reason?: string; truncated?: boolean };
 
-/** 服务端抓外部 URL 的能力必须收口：内网地址一律不碰。 */
-function blockedHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
-  if (h === "0.0.0.0" || h === "::1") return true;
-  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
-  const m = /^172\.(\d{1,3})\./.exec(h);
-  if (m) {
-    const n = Number(m[1]);
-    if (n >= 16 && n <= 31) return true;
-  }
-  return false;
-}
 
 function decodeEntities(s: string): string {
   return s
@@ -96,9 +83,6 @@ export async function fetchArticle(url: string): Promise<Fetched> {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, text: "", title: "", reason: "url_invalid" };
   }
-  if (blockedHost(parsed.hostname)) {
-    return { ok: false, text: "", title: "", reason: "url_blocked" };
-  }
 
   {
     const rep = await getDirect(parsed.toString(), {
@@ -106,7 +90,15 @@ export async function fetchArticle(url: string): Promise<Fetched> {
       headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml" },
       maxBytes: 3_000_000,
     });
-    if (!rep.ok) return { ok: false, text: "", title: "", reason: rep.reason };
+    if (!rep.ok) {
+      // http.ts 是访客闸门：它按解析出的 IP 判私网，并逐跳复检重定向。
+      // 这里的两个新原因折回既有口径，UI 的 degraded 文案不用跟着改。
+      const reason =
+        rep.reason === "host_blocked" ? "url_blocked" :
+        rep.reason === "invalid_redirect" ? "fetch_failed" :
+        rep.reason;
+      return { ok: false, text: "", title: "", reason };
+    }
     if (rep.status >= 400) return { ok: false, text: "", title: "", reason: "http_" + rep.status };
 
     const type = rep.contentType;

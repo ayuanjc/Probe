@@ -1,6 +1,7 @@
 "use client";
 
-import type { TrendingSnapshot } from "@/lib/trending";
+import type { TrendingSnapshot, TrendingTopic } from "@/lib/trending";
+import type { HeatStatus } from "@/lib/schemas";
 import Term from "./Glossary";
 
 const TYPE_TEXT: Record<string, string> = {
@@ -12,16 +13,209 @@ const TYPE_TEXT: Record<string, string> = {
   product: "产品",
 };
 
+/**
+ * 状态标签不靠边框表达层级，只靠底色深浅：
+ * 爆发 / 升温是"要你看"的趋势 → 微弱蓝底；平稳 / 回落 / 长尾没有异常 → 中性灰底。
+ * 蓝色只允许出现在有意义的地方（异常、趋势、可点），不能当装饰用。
+ */
+const STATUS_TEXT: Record<HeatStatus, string> = {
+  burst: "爆发期",
+  rising: "升温期",
+  stable: "平稳期",
+  decaying: "回落期",
+  "long-tail": "长尾期",
+};
+
+const STATUS_CHIP: Record<HeatStatus, string> = {
+  burst: "bg-blue-500/10 text-blue-400",
+  rising: "bg-blue-500/10 text-blue-400",
+  stable: "bg-neutral-800 text-neutral-400",
+  decaying: "bg-neutral-800 text-neutral-500",
+  "long-tail": "bg-neutral-800 text-neutral-400",
+};
+
+/** 徽章与图例共用同一份顺序：爆发 → 升温 → 平稳 → 回落 → 长尾。 */
+const STATUS_ORDER: HeatStatus[] = ["burst", "rising", "stable", "decaying", "long-tail"];
+
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "未知";
   return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
+/** 基线的日期区间只写月-日：年份在"过去 30 天"这个语境里是噪声。 */
+function fmtDay(iso: string): string {
+  if (!iso) return "—";
+  return iso.slice(5).replace("-", "-");
+}
+
+/**
+ * 火花线只用内联 SVG，不上 ECharts。
+ * 首页有 12 张卡，为一条 14 点的折线各起一个 canvas 实例（含 zrender 初始化）
+ * 会把首屏压到几十毫秒一帧；而这里要的只是"最近两周是什么形状"，一条 polyline 就够。
+ * preserveAspectRatio="none" 让线随卡片宽度拉伸，所以描边必须 non-scaling-stroke，
+ * 否则不同宽度下线条一个粗一个细。
+ */
+function Spark({ values }: { values: number[] }) {
+  if (values.length < 3) return null;
+  const W = 100;
+  const H = 32;
+  const max = Math.max(...values, 1);
+  const step = W / (values.length - 1);
+  const pts = values.map((v, i) => [i * step, H - (v / max) * (H - 6) - 3] as const);
+  const line = pts.map((p) => p[0].toFixed(2) + "," + p[1].toFixed(2)).join(" ");
+  return (
+    <svg
+      viewBox={"0 0 " + W + " " + H}
+      preserveAspectRatio="none"
+      className="h-9 w-full"
+      role="img"
+      aria-label={"近 " + values.length + " 天每日提及条数：" + values.join("、")}
+    >
+      <polygon points={"0," + H + " " + line + " " + W + "," + H} fill="rgba(59,130,246,0.08)" />
+      <polyline
+        points={line}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth={1}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+/** 一格指标：标签在上、数字在下。横排逗号串读起来像日志，对齐成一列才像看板。 */
+function Cell({
+  label,
+  value,
+  accent,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  accent?: boolean;
+}) {
+  return (
+    <div className="px-3 py-2">
+      <div className="font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-neutral-600">
+        {label}
+      </div>
+      <div
+        className={
+          "mt-1.5 font-mono text-sm font-medium leading-none tabular-nums " +
+          (accent ? "text-blue-400" : "text-white")
+        }
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function TopicCard({
+  topic,
+  rank,
+  onPick,
+}: {
+  topic: TrendingTopic;
+  rank: number;
+  onPick: (name: string) => void;
+}) {
+  const top = rank <= 3;
+  return (
+    <article className="group flex flex-col rounded-md bg-[#0c0c0c] p-6 transition-colors hover:border-neutral-700 border border-transparent">
+      <div className="flex items-baseline gap-2.5">
+        <span
+          className={
+            "font-mono text-[10px] font-medium tabular-nums " +
+            (top ? "text-blue-500" : "text-neutral-700")
+          }
+        >
+          {String(rank).padStart(2, "0")}
+        </span>
+        {/* 术语气泡不能塞进按钮里：pointer 事件会被按钮吃掉，点它等于直接跑查询。 */}
+        <button
+          type="button"
+          onClick={() => onPick(topic.name)}
+          className="min-w-0 flex-1 truncate text-left text-[15px] font-medium text-white transition-colors hover:text-blue-400"
+        >
+          {topic.name}
+        </button>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-blue-500">
+          {topic.articles24h} 条
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <span className="rounded-sm bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
+          {TYPE_TEXT[topic.type] ?? topic.type}
+        </span>
+        {/* 没有基线就没有状态：不写"平稳期"冒充结论。 */}
+        {topic.status && (
+          <span
+            className={
+              "rounded-sm px-1.5 py-0.5 text-[10px] " + STATUS_CHIP[topic.status]
+            }
+            title={topic.statusNote}
+          >
+            <Term k="heatStatus">{STATUS_TEXT[topic.status]}</Term>
+          </span>
+        )}
+      </div>
+
+      {topic.spark && topic.spark.length >= 3 ? (
+        <div className="mt-4">
+          <Spark values={topic.spark} />
+          <div className="mt-1.5 font-mono text-[9px] text-neutral-700">
+            <Term k="baseline">近 {topic.spark.length} 天提及量</Term>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 指标组：浅底、无边框，靠分隔线对齐。 */}
+      <div className="mt-4 grid grid-cols-3 divide-x divide-neutral-800/70 rounded-sm bg-neutral-900/50">
+        <Cell label={<Term k="heatScore">热度分</Term>} value={
+          typeof topic.heatScore === "number" ? topic.heatScore.toFixed(2) : "—"
+        } />
+        <Cell label={<Term k="heat">热度</Term>} value={topic.heat} accent />
+        <Cell label={<Term k="r7">r7</Term>} value={
+          typeof topic.r7 === "number" ? topic.r7.toFixed(2) : "—"
+        } />
+      </div>
+
+      <ul className="mt-4 flex flex-col gap-3">
+        {topic.stories.map((s, i) => (
+          <li key={s.url + "::" + i} className="flex items-start gap-3">
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className={
+                "line-clamp-2 flex-1 text-sm leading-snug text-neutral-300 transition-colors hover:text-white " +
+                (i === 0 ? "" : "text-neutral-400")
+              }
+              title={s.title + " · " + s.host}
+            >
+              {s.title}
+            </a>
+            <span
+              className="shrink-0 pt-px font-mono text-[10px] tabular-nums text-neutral-600"
+              title={s.points + " 分 · " + s.comments + " 条评论 · " + s.host}
+            >
+              {s.points}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
 /**
  * 热榜是唯一不依赖用户 query 的入口，但它也最容易变成谎言的入口：
  * 单源聚合很容易被读成"全网热点"。所以标题写死"Hacker News 前沿"、
- * 副标题写明样本量和时间，降级时把缺了哪个维度说清楚。
+ * 副标题写明样本量与基线天数，降级时把缺了哪个维度说清楚 ——
+ * 尤其不能说"GDELT 出口被限流"：代码从未请求过 GDELT，那是在编原因。
  */
 export default function TrendingBoard({
   snapshot,
@@ -30,9 +224,14 @@ export default function TrendingBoard({
   snapshot: TrendingSnapshot;
   onPick: (name: string) => void;
 }) {
-  const { topics, fetchedStories, consideredStories, windowHours, fetchedAt, degraded } = snapshot;
-  const missingGdelt = degraded.includes("gdelt");
+  const { topics, fetchedStories, consideredStories, windowHours, fetchedAt, degraded, history } = snapshot;
+  const missingGdelt = degraded.includes("gdelt:not_configured");
+  const noBaseline = history.days === 0 || history.pending;
   const empty = topics.length === 0;
+  const legend = STATUS_ORDER.map((s) => ({
+    s,
+    n: topics.filter((t) => t.status === s).length,
+  })).filter((x) => x.n > 0);
 
   return (
     <section>
@@ -42,78 +241,62 @@ export default function TrendingBoard({
           <span className="font-mono text-[10px] text-neutral-600">
             <Term k="window">过去 {windowHours}h</Term>
           </span>
+          {!empty && (
+            <span className="font-mono text-[10px] tabular-nums text-neutral-700">
+              {topics.length} 个话题
+            </span>
+          )}
         </div>
         <span className="font-mono text-[10px] text-neutral-600">
           {consideredStories}/{fetchedStories} 条进入统计 · 更新于 {fmtTime(fetchedAt)}
+          {" · "}
+          {noBaseline ? (
+            "基线构建中"
+          ) : (
+            <Term k="baseline">
+              基线 {history.days} 天（{fmtDay(history.from)} ~ {fmtDay(history.to)}）
+            </Term>
+          )}
         </span>
       </header>
 
+      {legend.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-y border-neutral-800/70 py-2">
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-neutral-700">
+            状态分布
+          </span>
+          {legend.map(({ s, n }) => (
+            <span key={s} className="flex items-baseline gap-1.5">
+              <span className={"rounded-sm px-1.5 py-0.5 text-[10px] " + STATUS_CHIP[s]}>
+                {STATUS_TEXT[s]}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums text-neutral-500">{n}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {empty ? (
-        <div className="panel mt-4 p-8 text-center text-xs text-neutral-500">
+        <div className="mt-4 rounded-md bg-[#0c0c0c] p-8 text-center text-xs text-neutral-500">
           {fetchedStories === 0
             ? "Hacker News 本轮没有取到数据，热点榜暂不可用。"
             : "过去 " + windowHours + " 小时里没有话题被两条以上报道同时提到，榜单为空。"}
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {topics.map((t) => (
-            <article key={t.key} className="panel flex flex-col p-5">
-              {/* 术语气泡不能塞进按钮里：pointer 事件会被按钮吃掉，点它等于直接跑查询。 */}
-              <div className="flex items-start justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => onPick(t.name)}
-                  className="truncate text-left text-base font-semibold text-white transition-colors hover:text-blue-500"
-                >
-                  {t.name}
-                </button>
-                <span className="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-blue-500">
-                  {t.articles24h} 条
-                </span>
-              </div>
-
-              <div className="mt-3 flex items-baseline gap-3">
-                <span className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400">
-                  {TYPE_TEXT[t.type] ?? t.type}
-                </span>
-                <span className="font-mono text-[10px] text-neutral-600">
-                  <Term k="heat">热度</Term>{" "}
-                  <span className="font-bold tabular-nums text-blue-500">{t.heat}</span>
-                </span>
-                <span className="font-mono text-[10px] text-neutral-600">
-                  <Term k="articles24h">条数</Term>{" "}
-                  <span className="tabular-nums text-neutral-300">{t.articles24h}</span>
-                </span>
-              </div>
-
-              {/* 纯文字排列 + 细线分隔：不加左侧装饰，行距换行距。 */}
-              <ul className="mt-4 flex flex-col">
-                {t.stories.map((s, i) => (
-                  <li
-                    key={s.url + "::" + i}
-                    className="border-b border-neutral-800 py-2.5 last:border-b-0 last:pb-0"
-                  >
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="line-clamp-2 text-[13px] leading-relaxed text-neutral-400 transition-colors hover:text-neutral-200"
-                      title={s.title + " · " + s.host}
-                    >
-                      {s.title}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </article>
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {topics.map((t, i) => (
+            <TopicCard key={t.key} topic={t} rank={i + 1} onPick={onPick} />
           ))}
         </div>
       )}
 
       <p className="mt-4 text-[10px] leading-[1.8] text-neutral-600">
         {missingGdelt
-          ? "榜单只统计 Hacker News 单源 —— GDELT 新闻索引当前出口被限流，「多少家媒体在报」这一维度本轮缺位，所以这里给的是技术圈的讨论热度，不是全网热度。"
+          ? "榜单只统计 Hacker News 单源 —— GDELT 新闻索引尚未接入，「多少家媒体在报」这一维度缺位，所以这里给的是技术圈的讨论热度，不是全网热度。"
           : "榜单由 Hacker News 与 GDELT 共同统计。"}
+        {noBaseline
+          ? " 状态标签要等历史基线建好（约 20 秒）才会出现。"
+          : " 状态标签的比较对象是 30 天日序列：r7 = 近 7 日均值 ÷ 前 30 日均值。"}
         {" "}
         点话题名会把该词作为查询跑完整流水线；点标题直接开原文。
       </p>

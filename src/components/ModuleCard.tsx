@@ -1,11 +1,12 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useMemo } from "react";
+import { motion } from "framer-motion";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
+import ChartBox from "./ChartBox";
 
 /** compile() 的原因码，翻成人能读的一句。 */
 const REASON_TEXT: Record<string, string> = {
@@ -20,11 +21,6 @@ const REASON_TEXT: Record<string, string> = {
   graph_constraint: "共现关系不足以成图",
 };
 
-const Chart = dynamic(() => import("echarts-for-react"), {
-  ssr: false,
-  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-md" />,
-});
-
 /**
  * 每张卡都挂着一张 ECharts。流式期间摘要每变一个字父组件就重渲染一次，
  * 卡片若跟着重渲染，echarts-for-react 会重新走一遍 option diff —— 全部白干。
@@ -36,6 +32,8 @@ function ModuleCard({
   sources = [],
   draggable = false,
   animation = true,
+  collapsed = false,
+  onToggle,
 }: {
   module: ModuleState;
   sources?: SourceRef[];
@@ -43,6 +41,10 @@ function ModuleCard({
   draggable?: boolean;
   /** 设置里可关掉图表入场动画：关掉就直接出终态，少掉一次 240ms 的逐帧重绘。 */
   animation?: boolean;
+  /** 收起状态：只留标题栏，图表整个不挂载 —— 收起是为了腾地方，不是为了藏起来还占成本。 */
+  collapsed?: boolean;
+  /** 给了才渲染标题栏右侧的折叠按钮。 */
+  onToggle?: () => void;
 }) {
   const cited = useMemo(() => {
     const ids = new Set(module.sourceIds ?? []);
@@ -66,7 +68,12 @@ function ModuleCard({
   }, [module.spec, dataset, animation]);
 
   return (
-    <section
+    /* 卡片入场：从下方 20px 淡入。只动内层 section，外层是 react-grid-layout
+       的定位盒 —— 在网格项上做 transform 会和拖拽位移打架。 */
+    <motion.section
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
       className="panel flex h-full flex-col overflow-hidden"
       data-module-id={module.id}
     >
@@ -117,8 +124,21 @@ function ModuleCard({
             降级为表格：{REASON_TEXT[module.errorDetail ?? ""] ?? module.errorDetail}
           </span>
         )}
+        {onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            aria-label={(collapsed ? "展开" : "收起") + "「" + module.title + "」"}
+            className="shrink-0 cursor-pointer rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] leading-none text-neutral-500 transition-colors hover:border-neutral-600 hover:text-white"
+          >
+            <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
+          </button>
+        )}
       </header>
 
+      {/* 收起时不渲染 body：ECharts 实例跟着卸载，收起才真的省下渲染与内存。 */}
+      {!collapsed && (
       <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-2">
         {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded-md" />}
 
@@ -153,59 +173,8 @@ function ModuleCard({
           <p className="mt-3 text-[10px] leading-relaxed text-neutral-600">{module.spec.note}</p>
         )}
       </div>
-    </section>
-  );
-}
-
-/**
- * 图表容器：ECharts 只知道 window 尺寸，不知道"卡片被拖大了"。
- * 原来把卡片从 4×8 拖到 6×11，canvas 还是旧尺寸，图被拉花。
- * 这里用 ResizeObserver 盯容器，按帧去抖后再 resize（拖拽途中不重算，
- * 松手才真正重绘一次），顺手把 devicePixelRatio 上限压到 2 ——
- * 4K/2x 屏上 canvas 一帧要填 4 倍像素，那是白烧的电。
- */
-function ChartBox({ option }: { option: Record<string, unknown> }) {
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const instRef = useRef<{ resize: () => void } | null>(null);
-
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    let raf = 0;
-    let lastW = 0;
-    let lastH = 0;
-    const ro = new ResizeObserver(() => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w === lastW && h === lastH) return;
-      lastW = w;
-      lastH = h;
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        instRef.current?.resize();
-      });
-    });
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  return (
-    <div ref={boxRef} className="min-h-[180px] flex-1">
-      <Chart
-        option={option}
-        style={{ height: "100%", width: "100%" }}
-        notMerge
-        lazyUpdate
-        opts={{ renderer: "canvas" }}
-        onChartReady={(inst: { resize: () => void }) => {
-          instRef.current = inst;
-        }}
-      />
-    </div>
+      )}
+    </motion.section>
   );
 }
 
