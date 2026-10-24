@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, isCustomized, resetLocalData, type Settings } from "@/lib/settings";
 import ConfigDocs from "./ConfigDocs";
+import {
+  DEFAULT_MODEL,
+  OpenAiKeyHelp,
+  PROVIDERS,
+  TavilyKeyHelp,
+} from "./ApiKeyHelp";
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -22,6 +28,27 @@ function Label({ children }: { children: ReactNode }) {
     </span>
   );
 }
+
+/**
+ * 「指定模型」输入框的候选项（只是下拉建议，不限制手填）。
+ * 头两个取预设表里各家的示例模型，后面几个是常见的手填目标 —— 全都允许写不进去，
+ * 因为校验在后端：模型名带空格或非法字符会被当成没填，面板也就回落默认。
+ */
+const MODEL_OPTIONS: string[] = Array.from(
+  new Set([
+    DEFAULT_MODEL,
+    ...PROVIDERS.map((p) => p.model),
+    "gpt-4.1",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o4-mini",
+    "deepseek-reasoner",
+    "kimi-latest",
+    "glm-4.5-air",
+    "qwen-max",
+    "qwen2.5:14b",
+  ]),
+);
 
 const INPUT_CLASS =
   "w-full rounded-md border border-neutral-800 bg-[#0f0f0f] px-3 py-2 font-mono text-[12px] " +
@@ -248,17 +275,81 @@ export default function SettingsPanel({
         )}
 
         <Group
-          title="自己的 API 密钥"
-          hint="填了就用你的：服务端不再看自己的 env。留空则沿用服务端配置。"
+          title="API 配置"
+          hint="填了就用你的：服务端不再看自己的 env。留空则沿用服务端配置。接受任何 OpenAI 兼容的服务，不限于官方。"
         >
           <div className="space-y-1.5">
             <Label>OpenAI key</Label>
             <Secret
               value={settings.openaiKey}
               onChange={(v) => patch({ openaiKey: v })}
-              placeholder="sk-…（意图精修 / 断言抽取 / 摘要 / 翻译）"
+              placeholder="sk-…（意图精修 / 断言抽取 / 摘要 / 翻译；别家的 key 也放这一栏）"
             />
+            <OpenAiKeyHelp />
           </div>
+
+          <div className="space-y-1.5">
+            <Label>接口地址 Base URL</Label>
+            <input
+              type="text"
+              value={settings.openaiBaseUrl}
+              onChange={(e) => patch({ openaiBaseUrl: e.target.value })}
+              placeholder="留空 = https://api.openai.com/v1"
+              spellCheck={false}
+              autoComplete="off"
+              inputMode="url"
+              className={INPUT_CLASS}
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {PROVIDERS.map((p) => {
+                const active = (settings.openaiBaseUrl.trim() || "") === p.baseUrl;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    title={p.note}
+                    onClick={() => patch({ openaiBaseUrl: p.baseUrl, model: p.model })}
+                    className={
+                      "rounded-md border px-2 py-1 font-mono text-[10px] transition-colors " +
+                      (active
+                        ? "border-blue-500/50 bg-blue-500/10 text-blue-300"
+                        : "border-neutral-800 text-neutral-400 hover:border-neutral-600 hover:text-white")
+                    }
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="font-mono text-[10px] leading-relaxed text-neutral-600">
+              点标签 = 一次填好地址与模型；也可以自己写任何兼容网关。
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>指定模型</Label>
+            <input
+              type="text"
+              list="probe-model-options"
+              value={settings.model}
+              onChange={(e) => patch({ model: e.target.value })}
+              placeholder={DEFAULT_MODEL}
+              spellCheck={false}
+              autoComplete="off"
+              className={INPUT_CLASS}
+            />
+            <datalist id="probe-model-options">
+              {MODEL_OPTIONS.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+            <p className="font-mono text-[10px] leading-relaxed text-neutral-600">
+              {settings.model.trim()
+                ? "这一轮指定：" + settings.model.trim()
+                : "留空 = " + DEFAULT_MODEL + "（或服务端 PROBE_MODEL）"}
+            </p>
+          </div>
+
           <div className="space-y-1.5">
             <Label>Tavily key</Label>
             <Secret
@@ -266,22 +357,13 @@ export default function SettingsPanel({
               onChange={(v) => patch({ tavilyKey: v })}
               placeholder="tvly-…（网页检索；没填就只走免密钥的 HN / Wikipedia）"
             />
+            <TavilyKeyHelp />
           </div>
-          <div className="space-y-1.5">
-            <Label>模型</Label>
-            <input
-              type="text"
-              value={settings.model}
-              onChange={(e) => patch({ model: e.target.value })}
-              placeholder="留空 = gpt-4.1-mini"
-              spellCheck={false}
-              autoComplete="off"
-              className={INPUT_CLASS}
-            />
-          </div>
+
           <p className="rounded border border-neutral-800 bg-[#141414] px-3 py-2.5 text-[11px] leading-relaxed text-neutral-400">
             key 存在这台浏览器的 localStorage 里，每次检索 / 翻译时随请求头发给本服务，
             服务端只在这一轮请求里用它调上游 —— 不写数据库、不写日志、不跨请求复用。
+            接口地址与模型走同一条通道（x-probe-openai-base-url / x-probe-model）。
             换台设备或清站点数据就没了。
           </p>
         </Group>

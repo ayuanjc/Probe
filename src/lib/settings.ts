@@ -14,6 +14,8 @@ export type FontSize = "sm" | "md" | "lg";
 
 export type Settings = {
   openaiKey: string;
+  /** OpenAI 兼容服务的接口根地址。空串 = 官方 https://api.openai.com/v1。 */
+  openaiBaseUrl: string;
   tavilyKey: string;
   model: string;
   density: Density;
@@ -26,6 +28,7 @@ export const KEY_PREFIX = "probe:";
 
 export const DEFAULT_SETTINGS: Settings = {
   openaiKey: "",
+  openaiBaseUrl: "",
   tavilyKey: "",
   model: "",
   density: "normal",
@@ -53,6 +56,7 @@ export function readSettings(): Settings {
     const o = JSON.parse(raw) as Partial<Settings>;
     return {
       openaiKey: str(o.openaiKey, 400),
+      openaiBaseUrl: str(o.openaiBaseUrl, 300),
       tavilyKey: str(o.tavilyKey, 400),
       model: str(o.model, 64),
       density: pick(o.density, ["compact", "normal"] as const, DEFAULT_SETTINGS.density),
@@ -89,9 +93,11 @@ export function applySettings(s: Settings): void {
 export function settingsHeaders(s: Settings): Record<string, string> {
   const h: Record<string, string> = {};
   const openai = s.openaiKey.trim();
+  const baseUrl = s.openaiBaseUrl.trim();
   const tavily = s.tavilyKey.trim();
   const model = s.model.trim();
   if (openai) h[CONFIG_HEADERS.openaiKey] = openai;
+  if (baseUrl) h[CONFIG_HEADERS.openaiBaseUrl] = baseUrl;
   if (tavily) h[CONFIG_HEADERS.tavilyKey] = tavily;
   if (model) h[CONFIG_HEADERS.model] = model;
   return h;

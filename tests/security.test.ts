@@ -9,6 +9,15 @@ import {
   stripControlChars,
 } from "../src/lib/request-guard";
 import { isPrivateAddress, portAllowed } from "../src/lib/http";
+import {
+  DEFAULT_MODEL_ID,
+  cleanBaseUrl,
+  configFromRequest,
+  modelIsExplicit,
+  resolvedModelId,
+  resolvedOpenaiBaseUrl,
+  withRuntimeConfig,
+} from "../src/lib/runtime-config";
 
 /* ---------------------------- 环境变量解析 ---------------------------- */
 
@@ -242,3 +251,77 @@ test("portAllowed：默认只允许 80/443，端口越权不被当作文章地�
     assert.equal(portAllowed(9200), false);
   });
 });
+
+/* ------------------------ 用户自填的模型接口地址 ------------------------ */
+
+test("cleanBaseUrl：合法地址规范化（去尾斜杠、去 query / userinfo）", () => {
+  const cases: [string, string | undefined][] = [
+    ["https://api.deepseek.com/v1", "https://api.deepseek.com/v1"],
+    ["https://api.deepseek.com/v1/", "https://api.deepseek.com/v1"],
+    ["https://api.deepseek.com/v1///", "https://api.deepseek.com/v1"],
+    ["  https://open.bigmodel.cn/api/paas/v4  ", "https://open.bigmodel.cn/api/paas/v4"],
+    ["https://api.openai.com/v1?debug=1", "https://api.openai.com/v1"],
+    ["https://api.openai.com/v1#frag", "https://api.openai.com/v1"],
+    ["http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1"],
+  ];
+  for (const [input, want] of cases) assert.equal(cleanBaseUrl(input), want, input);
+});
+
+test("cleanBaseUrl：非 http(s)、缺 scheme、带空白、元数据地址一律当没填", () => {
+  const bad = [
+    "ftp://api.example.com/v1",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "api.deepseek.com/v1", // 缺 scheme
+    "",
+    "https://a.co/v1 extra",
+    "http://169.254.169.254/latest/meta-data",
+    "https://metadata.google.internal/",
+    "https://a.b", // 少于 12 字符
+  ];
+  for (const v of bad) assert.equal(cleanBaseUrl(v), undefined, v);
+});
+
+test("resolvedOpenaiBaseUrl / resolvedModelId：面板值优先于环境变量", () => {
+  withEnv("OPENAI_BASE_URL", "https://api.siliconflow.cn/v1/", () => {
+    withEnv("PROBE_MODEL", "env-model", () => {
+      assert.equal(resolvedOpenaiBaseUrl(), "https://api.siliconflow.cn/v1");
+      assert.equal(resolvedModelId(), "env-model");
+      assert.equal(modelIsExplicit(), true);
+
+      withRuntimeConfig(
+        { openaiBaseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+        () => {
+          assert.equal(resolvedOpenaiBaseUrl(), "https://api.deepseek.com/v1");
+          assert.equal(resolvedModelId(), "deepseek-chat");
+        },
+      );
+    });
+  });
+  withEnv("OPENAI_BASE_URL", undefined, () => {
+    withEnv("PROBE_MODEL", undefined, () => {
+      assert.equal(resolvedOpenaiBaseUrl(), undefined);
+      assert.equal(resolvedModelId(), DEFAULT_MODEL_ID);
+      assert.equal(modelIsExplicit(), false);
+    });
+  });
+});
+
+test("configFromRequest：三个头一起到达时才进运行时配置，脏地址被丢掉", () => {
+  const good = new Request("http://x.test/api/search", {
+    headers: {
+      "x-probe-openai-key": "sk-test-1234567890",
+      "x-probe-openai-base-url": "https://api.deepseek.com/v1/",
+      "x-probe-model": "deepseek-chat",
+    },
+  });
+  const cfg = configFromRequest(good);
+  assert.equal(cfg.openaiBaseUrl, "https://api.deepseek.com/v1");
+  assert.equal(cfg.model, "deepseek-chat");
+
+  const bad = new Request("http://x.test/api/search", {
+    headers: { "x-probe-openai-key": "sk-test-1234567890", "x-probe-openai-base-url": "ftp://nope" },
+  });
+  assert.equal(configFromRequest(bad).openaiBaseUrl, undefined);
+});
+

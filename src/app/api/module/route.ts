@@ -179,7 +179,10 @@ export async function POST(request: Request) {
     return { ...rule, message: rule.message + "（" + why + "）" };
   };
 
-  if (!llmEnabled()) return json(fallback("未配置模型 key，走本地关键词规则"));
+  // 注意：key 的判断必须放进 withRuntimeConfig 里面。设置面板填的 key 是随请求头进来的，
+  // 在外面读运行时配置等于读空 —— 之前就因为这个，用户自带 key 时这里永远走规则方案，
+  // 面板填了 OpenAI key 却「没生效」，且没有任何提示。
+  const cfg = configFromRequest(request);
 
   const prompt =
     "可用数据集：\n" +
@@ -192,10 +195,16 @@ export async function POST(request: Request) {
   if (!release) return json(fallback("服务正忙，先走本地关键词规则"), 200);
 
   let pick: z.infer<typeof PickSchema> | null = null;
+  /** 没拿到方案时说清是哪一种：没 key / 有 key 但上游没给。 */
+  let why = "模型没有返回可用方案";
   try {
-    pick = await withRuntimeConfig(configFromRequest(request), () =>
-      generateStructured({ schema: PickSchema, system: SYSTEM, prompt }),
-    );
+    pick = await withRuntimeConfig(cfg, async () => {
+      if (!llmEnabled()) {
+        why = "未配置模型 key，走本地关键词规则";
+        return null;
+      }
+      return generateStructured({ schema: PickSchema, system: SYSTEM, prompt });
+    });
   } catch (err) {
     // 生成失败不向用户暴露内部原因，回落到规则方案。
     publicMessage(err, "面板生成失败");
@@ -203,7 +212,7 @@ export async function POST(request: Request) {
     release();
   }
 
-  if (!pick) return json(fallback("模型没有返回可用方案"));
+  if (!pick) return json(fallback(why));
 
   const planned = specFromPick(pick, datasets);
   if (!planned.ok) return json(fallback(planned.message));
@@ -213,5 +222,8 @@ export async function POST(request: Request) {
     ...planned.spec,
     title: planned.spec.title.trim() || planned.reason,
   };
-  return json({ ...planned, spec, model: modelId() });
+  // 回显的模型名也要取请求里的那个：modelId() 读的是运行时配置，
+  // 在 withRuntimeConfig 外面直接调，拿到的是 env / 默认值 —— 面板填了 deepseek-chat
+  // 却回显 gpt-4.1-mini，用户会以为设置没生效。
+  return json({ ...planned, spec, model: cfg.model || modelId() });
 }

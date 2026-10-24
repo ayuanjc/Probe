@@ -2,7 +2,12 @@
 import { generateObject, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { z } from "zod";
-import { keySource, resolvedModelId, resolvedOpenaiKey } from "@/lib/runtime-config";
+import {
+  keySource,
+  resolvedModelId,
+  resolvedOpenaiBaseUrl,
+  resolvedOpenaiKey,
+} from "@/lib/runtime-config";
 import { readPositiveInt } from "@/lib/rate-limit";
 import type { UsageSink } from "@/lib/metrics";
 
@@ -21,13 +26,30 @@ const clients = new Map<string, Client>();
 function client(): Client | null {
   const key = resolvedOpenaiKey();
   if (!key) return null;
-  const hit = clients.get(key);
+  // 缓存键必须带上接口地址：同一个 key 既能打官方，也能打 DeepSeek / 网关，
+  // 只按 key 缓存会让「换了地址但地址没生效」这种问题看起来像上游抽风。
+  const baseUrl = resolvedOpenaiBaseUrl();
+  const cacheKey = key + "\u0000" + (baseUrl ?? "");
+  const hit = clients.get(cacheKey);
   if (hit) return hit;
-  // 同一把 key 复用实例；表本身要有上限，否则切着玩会把旧 key 赖在内存里。
+  // 同一组配置复用实例；表本身要有上限，否则切着玩会把旧 key 赖在内存里。
   if (clients.size > 8) clients.clear();
-  const made = createOpenAI({ apiKey: key });
-  clients.set(key, made);
+  const made = createOpenAI(baseUrl ? { apiKey: key, baseURL: baseUrl } : { apiKey: key });
+  clients.set(cacheKey, made);
   return made;
+}
+
+/**
+ * 一律走 chat completions，不走 OpenAI 新的 /responses。
+ *
+ * 理由：设置面板允许填任何「OpenAI 兼容」服务的接口地址，而那些服务
+ * （DeepSeek / Kimi / 智谱 / 硅基流动 / 本地 Ollama …）实现的是
+ * /chat/completions —— provider 默认会打 /v1/responses，于是「填了别家的地址
+ * 却一直 404」。这里用的只有结构化 JSON 与流式文本，chat completions 全都覆盖。
+ */
+function chatModel(p: Client) {
+  const id = resolvedModelId();
+  return p.chat(id);
 }
 
 /* ------------------------- 每日调用预算 ------------------------- */
@@ -131,7 +153,7 @@ export async function generateStructured<T>(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await generateObject({
-        model: p(resolvedModelId()),
+        model: chatModel(p),
         schema: args.schema,
         system: args.system,
         prompt: args.prompt,
@@ -179,7 +201,7 @@ export async function* streamSummary(
   let outChars = 0;
   try {
     const result = streamText({
-      model: p(resolvedModelId()),
+      model: chatModel(p),
       prompt,
       temperature: 0.2,
       /**

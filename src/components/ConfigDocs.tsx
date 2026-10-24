@@ -24,6 +24,13 @@ const CONFIG_ROWS: { label: string; store: string; header: string; env: string; 
     fallback: "都没有：摘要走本地模板，断言抽取关闭",
   },
   {
+    label: "接口地址",
+    store: "设置 → openaiBaseUrl",
+    header: "x-probe-openai-base-url",
+    env: "OPENAI_BASE_URL",
+    fallback: "都没有：https://api.openai.com/v1",
+  },
+  {
     label: "Tavily key",
     store: "设置 → tavilyKey",
     header: "x-probe-tavily-key",
@@ -31,7 +38,7 @@ const CONFIG_ROWS: { label: string; store: string; header: string; env: string; 
     fallback: "都没有：只走免密钥的 HN / Wikipedia",
   },
   {
-    label: "模型",
+    label: "指定模型",
     store: "设置 → model",
     header: "x-probe-model",
     env: "PROBE_MODEL",
@@ -41,6 +48,7 @@ const CONFIG_ROWS: { label: string; store: string; header: string; env: string; 
 
 const ENV_ROWS: [string, string, string][] = [
   ["OPENAI_API_KEY", "意图精修 / 断言抽取 / 摘要 / 段落翻译", "空"],
+  ["OPENAI_BASE_URL", "OpenAI 兼容接口地址（网关 / DeepSeek / 本地 Ollama）", "空 = 官方"],
   ["TAVILY_API_KEY", "网页检索（Tavily 搜索层）", "空"],
   ["PROBE_MODEL", "模型 id", "gpt-4.1-mini"],
   ["PROBE_RATE_LIMIT_PER_MIN", "/api/search 每 IP 每分钟检索次数", "3"],
@@ -69,6 +77,8 @@ const ROUTES: [string, string, string][] = [
 const ENV_SAMPLE = [
   "# .env.local（仓库根目录，改完要重启 dev / start）",
   "OPENAI_API_KEY=sk-…",
+  "# 走别家 / 自建网关时才需要（含 /v1，例如 DeepSeek 是 https://api.deepseek.com/v1）",
+  "# OPENAI_BASE_URL=https://api.deepseek.com/v1",
   "TAVILY_API_KEY=tvly-…",
   "PROBE_MODEL=gpt-4.1-mini",
   "",
@@ -200,10 +210,11 @@ export default function ConfigDocs() {
           </pre>
         </div>
         <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-500">
-          .env.example 里还有 <span className="font-mono text-[10px] text-neutral-400">OPENAI_BASE_URL</span>、
-          <span className="font-mono text-[10px] text-neutral-400">PROBE_DAILY_TOKEN_BUDGET</span>、
+          .env.example 里还有 <span className="font-mono text-[10px] text-neutral-400">PROBE_DAILY_TOKEN_BUDGET</span>、
           <span className="font-mono text-[10px] text-neutral-400">PROBE_CACHE_TTL_SECONDS</span>
           —— 代码目前没有读取它们，写了不会生效。留在这里是为了不让示例和实现各说各话。
+          （<span className="font-mono text-[10px] text-neutral-400">OPENAI_BASE_URL</span> 已经从这份名单里摘掉了：
+          它现在是真读的，见上表「接口地址」。）
         </p>
       </Section>
 

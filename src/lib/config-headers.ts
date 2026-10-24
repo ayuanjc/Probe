@@ -6,6 +6,7 @@
  */
 export const CONFIG_HEADERS = {
   openaiKey: "x-probe-openai-key",
+  openaiBaseUrl: "x-probe-openai-base-url",
   model: "x-probe-model",
   tavilyKey: "x-probe-tavily-key",
 } as const;

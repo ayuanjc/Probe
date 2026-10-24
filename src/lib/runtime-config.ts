@@ -15,6 +15,8 @@ import { CONFIG_HEADERS } from "@/lib/config-headers";
 
 export type RuntimeConfig = {
   openaiKey?: string;
+  /** OpenAI 兼容服务的接口根地址（含 /v1）。空 = 官方 https://api.openai.com/v1。 */
+  openaiBaseUrl?: string;
   model?: string;
   tavilyKey?: string;
 };
@@ -45,20 +47,50 @@ function cleanModel(v: string | null): string | undefined {
   return t;
 }
 
+/**
+ * 接口地址只接受 http(s) 绝对 URL，且只留 scheme + host + path：
+ * 去掉尾斜杠、去掉 query / fragment / userinfo —— 这三样在 baseURL 里没有任何意义，
+ * 却能让「看起来填对了」的地址在 SDK 拼 path 时变成 https://host/v1/../authors/bearer 这种笑话。
+ *
+ * 元数据地址单独挡掉：这台机器在云上，任何用户的 key 都足以把服务端变成一个
+ * 「带凭证访问 169.254.169.254」的跳板。填了别人的网关不拦，填元数据地址一律当没填。
+ */
+const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal", "metadata"]);
+
+export function cleanBaseUrl(v: string | null | undefined): string | undefined {
+  if (!v) return undefined;
+  const t = v.trim();
+  if (t.length < 12 || t.length > 300) return undefined;
+  if (/\s/.test(t)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(t);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!url.hostname) return undefined;
+  if (BLOCKED_HOSTS.has(url.hostname.toLowerCase())) return undefined;
+  const path = url.pathname.replace(/\/+$/, "");
+  return url.origin + path;
+}
+
 export function configFromRequest(request: Request): RuntimeConfig {
   const h = request.headers;
   const cfg: RuntimeConfig = {};
   const openai = cleanKey(h.get(CONFIG_HEADERS.openaiKey));
   const tavily = cleanKey(h.get(CONFIG_HEADERS.tavilyKey));
   const model = cleanModel(h.get(CONFIG_HEADERS.model));
+  const baseUrl = cleanBaseUrl(h.get(CONFIG_HEADERS.openaiBaseUrl));
   if (openai) cfg.openaiKey = openai;
   if (tavily) cfg.tavilyKey = tavily;
   if (model) cfg.model = model;
+  if (baseUrl) cfg.openaiBaseUrl = baseUrl;
   return cfg;
 }
 
 export function withRuntimeConfig<T>(cfg: RuntimeConfig, fn: () => T): T {
-  if (!cfg.openaiKey && !cfg.model && !cfg.tavilyKey) return fn();
+  if (!cfg.openaiKey && !cfg.model && !cfg.tavilyKey && !cfg.openaiBaseUrl) return fn();
   return store.run(cfg, fn);
 }
 
@@ -70,8 +102,22 @@ export function resolvedOpenaiKey(): string | undefined {
   return currentConfig().openaiKey || process.env.OPENAI_API_KEY || undefined;
 }
 
+/** 接口根地址。三个来源：面板填的 → OPENAI_BASE_URL → 不填（SDK 自己走官方地址）。 */
+export function resolvedOpenaiBaseUrl(): string | undefined {
+  return currentConfig().openaiBaseUrl || cleanBaseUrl(process.env.OPENAI_BASE_URL) || undefined;
+}
+
+/** 明确指定用哪个模型：面板填的 → PROBE_MODEL → 官方默认。 */
 export function resolvedModelId(): string {
-  return currentConfig().model || process.env.PROBE_MODEL || "gpt-4.1-mini";
+  return currentConfig().model || process.env.PROBE_MODEL || DEFAULT_MODEL_ID;
+}
+
+/** 面板空着、env 也没配时用的模型；设置面板的 placeholder 也读它，免得两处对不上。 */
+export const DEFAULT_MODEL_ID = "gpt-4.1-mini";
+
+/** 用户是不是明确指定了模型（面板或 env 都算），界面据此显示「已指定」。 */
+export function modelIsExplicit(): boolean {
+  return Boolean(currentConfig().model || process.env.PROBE_MODEL);
 }
 
 export function resolvedTavilyKey(): string | undefined {

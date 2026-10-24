@@ -62,12 +62,17 @@
 
 ![歧义澄清卡：两种读法 + 各自的检索方向](docs/images/clarify.png)
 
-### 设置：自己的 key 只留在本机
+### 设置：API 配置，key 只留在本机
 
 key 存 `localStorage`，随请求以 `x-probe-*` 头发给服务端，服务端不落盘。
 没配也完全能用：检索与图表真实，摘要走本地模板，断言抽取关闭（不是用假数据填空）。
 
-![设置面板：API 密钥、外观、一键还原](docs/images/settings.png)
+「API 配置」这一节不只接受 OpenAI 官方：填上**接口地址（Base URL）**与**指定模型**就能接
+DeepSeek、Kimi、智谱 GLM、阿里百炼、硅基流动、OpenRouter、自建网关或本地 Ollama
+（面板里有一排预设，点一下把地址与模型一起填好）。两个 key 输入框下面各有一份
+「如何配置」——写着去哪注册、点哪里拿 key、以及填错时的典型症状：
+
+![设置面板：API 配置、外观、一键还原](docs/images/settings.png)
 
 ### 手机：一列、40px 触摸目标、16px 输入框
 
@@ -94,7 +99,8 @@ npm run dev                  # http://localhost:3210
 | 变量 | 作用 |
 | --- | --- |
 | `OPENAI_API_KEY` | 意图精修、断言抽取、流式摘要 |
-| `PROBE_MODEL` | 默认 `gpt-4.1-mini` |
+| `OPENAI_BASE_URL` | OpenAI 兼容接口地址（要带 `/v1`）；空 = 官方。DeepSeek / 本地 Ollama 走这个 |
+| `PROBE_MODEL` | 指定模型，默认 `gpt-4.1-mini`（面板里的「指定模型」优先于它） |
 | `TAVILY_API_KEY` | 补一路通用搜索，显著提升信源多样性 |
 | `PROBE_RATE_LIMIT_PER_MIN` | 单用户每分钟检索上限，默认 3（PRD 附录 B） |
 
@@ -473,8 +479,9 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 1. **三层配置**：每一项的三层落点并排写（存哪 / 哪个头 / 哪个 env / 都没有时怎样），
    并写明优先级是「请求头 > env > 内置默认」—— 填了面板里的 key，这一轮就完全不看服务端 env。
 2. **服务端环境变量**：8 个真正被读取的变量 + 一句默认值，外加一个可复制的 `.env.local` 示例。
-   顺带把 `.env.example` 里写了但**代码没读**的三个（`OPENAI_BASE_URL`、
-   `PROBE_DAILY_TOKEN_BUDGET`、`PROBE_CACHE_TTL_SECONDS`）照实标出来：配了不生效比没写更伤人。
+   顺带把 `.env.example` 里写了但**代码没读**的两个（`PROBE_DAILY_TOKEN_BUDGET`、
+   `PROBE_CACHE_TTL_SECONDS`）照实标出来：配了不生效比没写更伤人。（`OPENAI_BASE_URL`
+   已经从这份名单里摘掉——它现在真的被读。）
 3. **本机存储键**：`probe:settings:v1`、`probe:layout:<LAYOUT_VERSION>:<查询词>`、`probe:grid-hint:v1`，
    版本号从 `layout.ts` 直接 import——文档写死版本号，改代码那天就过期了。
 4. **接口与鉴权**：五个路由的限流默认值、`/api/metrics` 默认脱敏查询词、`/api/cron/heat` 未配口令直接 503。
