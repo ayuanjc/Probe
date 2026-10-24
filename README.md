@@ -57,6 +57,14 @@ key 存 `localStorage`，随请求以 `x-probe-*` 头发给服务端，服务端
 
 ![设置面板：API 密钥、外观、一键还原](docs/images/settings.png)
 
+### 手机：一列、40px 触摸目标、16px 输入框
+
+窄屏不是把桌面版缩一缩：卡片回到单列、图表高度降到 300px、设置齿轮与工具按钮撑到 40px（拇指够得着），
+输入框字号提到 16px —— iOS 上低于 16px 聚焦会自动放大整页，一放大就再也回不到原样。
+刘海与底部横条用 `env(safe-area-inset-*)` 让开，横向不留半截被裁的浮层。
+
+<img src="docs/images/mobile-home.png" alt="手机首页：锁标、搜索行、下一屏热榜" width="320">
+<img src="docs/images/mobile-result.png" alt="手机结果页：单列卡片与更矮的图表" width="320">
 ---
 
 ## 快速开始
@@ -760,6 +768,60 @@ curl -s -H "Authorization: Bearer $PROBE_CRON_SECRET" http://127.0.0.1:3211/api/
 
 部署时把它接到平台的 cron（Vercel Cron / systemd timer / crontab 都行），
 一小时一次足够：基线是日粒度的，太勤只是重复抓同一批数据。
+
+## 预览站：挂在现有 80 端口下，每 5 分钟自己更新一次
+
+`http://106.52.116.164/probe` 跑的是 `main` 的最新构建。整台机器 80 端口本来归另一个项目，
+所以这套预览不是新开端口、也不是新域名，而是**在现有 nginx 站点里加一个 `location /probe`**。
+
+### 一条链路
+
+```
+浏览器 → nginx :80 /probe → 127.0.0.1:3215 (next start, basePath=/probe)
+                                  ↑ systemd probe-web.service
+                                  ↑ /opt/probe/update.sh（systemd timer，5 分钟一次）
+```
+
+### 几个不能说"差不多"的决定
+
+**basePath 靠环境变量，不写死。** `next.config.ts` 读 `PROBE_BASE_PATH`，本地不设就照常在根路径跑。
+但 Next 的 basePath 只改写路由和 `/_next/*` —— 客户端手写的 `fetch("/api/…")` 它一个字都不动，
+所以那些地方统一走 `src/lib/base-path.ts` 的 `appPath()`。漏掉一处的表现是：页面能开、检索永远失败。
+
+**自动更新用 tarball，不用 git。** 这台机器连 `github.com` 会 `GnuTLS recv error (-110)`（`api.github.com`
+与 `codeload.github.com` 反而正常），`git clone` 从来没成功过。`update.sh` 于是走：
+问 `api.github.com` 要 main 的 sha → sha 变了才 `curl codeload…/tar.gz/<sha>` → 覆盖源码
+（`tar` 管道，机器上没有 rsync）→ 构建 → 换目录 → 重启 → 自检。
+
+**构建进 `.next-staging`，成功了才换。** 直接往 `.next` 上构建，一次失败的构建会把正在服务的产物弄成半截，
+整站白屏 —— 预览站没人看着，这种事故要走一次才知道。换完重启，`curl /probe/api/version` 不通就
+把 `.next-old` 换回来再重启，线上继续跑旧版本。
+
+**版本横幅按构建号比对，不按时间猜。** `/api/version` 在**进程启动时**读一次 `.next/BUILD_ID`（不是每个请求读），
+否则更新一落地，旧进程会立刻报出新版本号、横幅在没人更新过的时候就开始弹。前端每分钟比一次，
+只在自己手里的号与线上不同时提示「刷新」，并且允许「稍后」。
+
+**手机端的安全区与 16px 是硬要求，不是样式偏好。** 输入框低于 16px，iOS 聚焦会整页放大；
+`env(safe-area-inset-*)` 不处理，刘海机底部按钮会压在横条上。
+
+### 运维动作
+
+```bash
+# 现在线上是哪个 commit
+cat /opt/probe/deployed-sha
+
+# 手动触发一次更新（等价于 timer 到点）
+systemctl start probe-update.service
+tail -40 /var/log/probe-update.log
+
+# 服务本身
+systemctl status probe-web --no-pager -l
+journalctl -u probe-web -n 50 --no-pager
+```
+
+配置在 `/opt/probe/probe.env`（`PROBE_BASE_PATH`、限流阈值、以及想接的话 `OPENAI_API_KEY`）。
+改完 `systemctl restart probe-web` 即可，不需要重新构建 —— 除非改的是 `NEXT_PUBLIC_*`，那个会被打进前端。
+完整的落盘路径、回滚步骤与 nginx 片段见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 ## 目录
 
 ```
@@ -768,11 +830,12 @@ src/
   lib/        schemas · confidence · heat · heat-history · topic-terms · entity-graph · compile · layout · module-catalog · module-plan · sse · llm
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
               translate-types · http · settings · runtime-config · config-headers · placement · metrics · polysemy
+              base-path
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
-              api/metrics/route.ts · api/cron/heat/route.ts · metrics/page.tsx
+              api/metrics/route.ts · api/cron/heat/route.ts · api/version/route.ts · metrics/page.tsx
   components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
               Glossary · BilingualCompare · SettingsPanel · ConfigDocs · ModuleDock · ModulePrompt
-              EntityGraphCard · MetricsPanel · ClarifyCard
+              EntityGraphCard · MetricsPanel · ClarifyCard · UpdateBanner
   hooks/      useProbe.ts
 ```
 

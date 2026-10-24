@@ -130,6 +130,12 @@ export default function BilingualCompare({
     if (started.current.has(key)) return;
     started.current.add(key);
     void load();
+    // 卸载时把这把锁放掉：React 严格模式下 effect 会「挂载 → 卸载 → 再挂载」，
+    // 第一次的请求被 cleanup 中止，锁若不解除，第二次挂载就什么都不做，
+    // 面板永远停在「正在抓正文并分段翻译…」。生产环境不复现，开发环境天天见。
+    return () => {
+      started.current.delete(key);
+    };
   }, [key, load]);
 
   useEffect(() => () => acRef.current?.abort(), []);

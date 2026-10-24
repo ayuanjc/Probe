@@ -1,12 +1,14 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
 import ChartBox from "./ChartBox";
+import { anchorVisible, placeFloating } from "@/lib/placement";
 
 /** compile() 的原因码，翻成人能读的一句。 */
 const REASON_TEXT: Record<string, string> = {
@@ -67,6 +69,76 @@ function ModuleCard({
     return { ...out, option: { ...out.option, animation: false } };
   }, [module.spec, dataset, animation]);
 
+  /**
+   * 溯源浮层挂在 body 上（portal）+ fixed，不贴卡片。
+   * 卡片是 overflow-hidden，320px 的浮层在手机上有一截会被裁掉；
+   * 拖拽网格又给每张卡加了 transform —— 任何祖先 transform 都会把 fixed 的参照系
+   * 从视口改成那块元素，浮层会跟着卡片跑。位置一律实测（@/lib/placement）。
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [provOpen, setProvOpen] = useState(false);
+  const [provPos, setProvPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const provBtnRef = useRef<HTMLButtonElement | null>(null);
+  const provPanelRef = useRef<HTMLDivElement | null>(null);
+  const provId = useId();
+
+  const placeProv = useCallback(() => {
+    const anchor = provBtnRef.current;
+    const panel = provPanelRef.current;
+    if (!anchor || !panel) return;
+    const a = anchor.getBoundingClientRect();
+    const vh = window.innerHeight;
+    if (!anchorVisible(a, vh)) {
+      setProvOpen(false);
+      return;
+    }
+    const next = placeFloating({
+      anchor: a,
+      panel: { width: panel.offsetWidth, height: panel.offsetHeight },
+      viewport: { width: window.innerWidth, height: vh },
+      align: "right",
+      maxWidth: 320,
+      gap: 6,
+    });
+    setProvPos((prev) =>
+      prev && prev.left === next.left && prev.top === next.top ? prev : next,
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!provOpen) {
+      setProvPos(null);
+      return;
+    }
+    placeProv();
+    const onMove = () => placeProv();
+    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onMove, true);
+    return () => {
+      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onMove, true);
+    };
+  }, [provOpen, placeProv]);
+
+  useEffect(() => {
+    if (!provOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (provBtnRef.current?.contains(t) || provPanelRef.current?.contains(t)) return;
+      setProvOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProvOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [provOpen]);
+
   return (
     /* 卡片入场：从下方 20px 淡入。只动内层 section，外层是 react-grid-layout
        的定位盒 —— 在网格项上做 transform 会和拖拽位移打架。 */
@@ -99,25 +171,16 @@ function ModuleCard({
         {module.status !== "plan" && cited.length > 0 && (
           // PRD 附录 C：模块里的每个数字都要能在两次点击内回到原文。
           // 这里给出该模块实际引用的条目，不是全量信源 —— 全量等于没指认。
-          <details className="relative shrink-0">
-            <summary className="cursor-pointer select-none list-none rounded border border-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white">
-              溯源 {cited.length} 条
-            </summary>
-            <div className="scroll-thin absolute right-0 top-7 z-20 max-h-56 w-80 overflow-auto rounded-md border border-neutral-800 bg-[#111] p-1">
-              {cited.map((s) => (
-                <a
-                  key={s.id}
-                  href={s.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="block truncate rounded px-2 py-1.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
-                  title={s.title}
-                >
-                  {s.title}
-                </a>
-              ))}
-            </div>
-          </details>
+          <button
+            ref={provBtnRef}
+            type="button"
+            aria-expanded={provOpen}
+            aria-controls={provId}
+            onClick={() => setProvOpen((v) => !v)}
+            className="shrink-0 cursor-pointer rounded border border-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+          >
+            溯源 {cited.length} 条
+          </button>
         )}
         {module.status === "error" && (
           <span className="shrink-0 font-mono text-[10px] text-red-400">
@@ -174,6 +237,42 @@ function ModuleCard({
         )}
       </div>
       )}
+
+      {provOpen && mounted
+        ? createPortal(
+            <div
+              ref={provPanelRef}
+              id={provId}
+              role="group"
+              data-provenance
+              aria-label={"「" + module.title + "」引用的原文"}
+              style={{
+                position: "fixed",
+                left: provPos ? provPos.left : 0,
+                top: provPos ? provPos.top : 0,
+                width: provPos ? provPos.width : 320,
+                maxHeight: 240,
+                // 位置要等量完尺寸才知道：首次渲染先隐身，别闪一下
+                visibility: provPos ? "visible" : "hidden",
+              }}
+              className="scroll-thin z-[80] overflow-auto rounded-md border border-neutral-800 bg-[#111] p-1"
+            >
+              {cited.map((s) => (
+                <a
+                  key={s.id}
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="block truncate rounded px-2 py-1.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"
+                  title={s.title}
+                >
+                  {s.title}
+                </a>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </motion.section>
   );
 }
