@@ -502,6 +502,12 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
    复原、快照也不会被收起状态污染（下次打开仍是展开的）。拖拽落盘前要把收起中的卡的高
    换回原值，否则一次拖动就会把 80px 写进快照。实体关系图不在网格里，靠 `onCollapseAll`
    这个信号同步收起 —— 一排标题栏中间留一张还亮着的图，像没听指令。
+9. **后退键回到「上一次结果」，不是「上一个页面」**：每次从界面发起的检索（输入框回车、
+   点热榜话题）都会写一条 `?q=` 历史，`popstate` 再按地址栏那个词重跑；「新建搜索」用
+   `replaceState` 清掉 —— 它要的是回到起点，不该在历史里留一条空记录。这里踩过一次：
+   `onRun` 曾直接绑 `run`，只有 `pickTopic` 写 URL，于是结果页里换词回车之后地址栏还是旧词，
+   按后退直接离开整站（`q=null`、0 张卡）。现在两条入口都走同一个 `startSearch()`：
+   先跑、再写历史 —— 顺序反了后退会读到还没开始跑的那一轮。
 
 ## 歧义澄清：只报读法，不猜意图
 
@@ -768,6 +774,36 @@ curl -s -H "Authorization: Bearer $PROBE_CRON_SECRET" http://127.0.0.1:3211/api/
 
 部署时把它接到平台的 cron（Vercel Cron / systemd timer / crontab 都行），
 一小时一次足够：基线是日粒度的，太勤只是重复抓同一批数据。
+
+### 预览站上真的排上了：systemd timer，30 分钟一次
+
+端点是端点，定时器是定时器。预览站上两者都装好了，所以热榜在没人访问时也在更新：
+
+```
+/opt/probe/heat-cron.sh              # 从 probe.env 读 secret，curl 打 127.0.0.1:3215/probe/api/cron/heat
+/etc/systemd/system/probe-heat.service   # oneshot，失败重试 3 次（间隔 10s）
+/etc/systemd/system/probe-heat.timer     # OnBootSec=2min、OnUnitActiveSec=30min
+```
+
+实测返回：
+
+```json
+{"ok":true,"elapsedMs":4456,"history":{"days":30,"from":"2026-09-24","to":"2026-10-23","pending":false},
+ "trending":{"topics":12,"considered":625,"fetched":994,"degraded":["gdelt:not_configured"],"withStatus":12}}
+```
+
+三件当时必须弄明白的事：
+
+1. **先证伪"口令没生效"**：不带密钥打 `POST /probe/api/cron/heat` 必须回 **401**，
+   而不是 200 带一份空数据。401 出来才说明这条路是通的、只是没带钥匙。
+2. **定时器跑在谁的时间上**：`OnUnitActiveSec=30min` 从「上次跑完」算起，不是墙钟整点 ——
+   一次重建 19 秒不会让下一次被挤掉。`list-timers` 看下次触发时间就够了。
+3. **一次瞬时失败不判死刑**：22 秒后紧接着的第二次运行拿到的是
+   `topics:0` + `hn:failed`，同一分钟里上一次还是 12 个话题。journal 里是
+   `hn failed: The operation was aborted due to timeout` —— HN 的单次抖动。
+   所以抓取给了**一次重试**（间隔 800ms），两次都空才记 `hn:failed`；
+   而失败快照只缓存 **60 秒**（正常是 10 分钟），别让一次坏运气把空榜钉十分钟。
+   这条同样适用于页面首访：抓到 0 条时下一次刷新就会重新试，不是继续端旧的空榜。
 
 ## 预览站：挂在现有 80 端口下，每 5 分钟自己更新一次
 

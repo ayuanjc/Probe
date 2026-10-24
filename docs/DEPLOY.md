@@ -13,6 +13,7 @@
 
 systemd probe-web.service    next start -H 127.0.0.1 -p 3215（Restart=always, MemoryMax=1200M）
 systemd probe-update.timer   每 5 分钟 → probe-update.service → /opt/probe/update.sh
+systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe/heat-cron.sh
 ```
 
 ## 落盘路径
@@ -25,7 +26,9 @@ systemd probe-update.timer   每 5 分钟 → probe-update.service → /opt/prob
 | `/opt/probe/deployed-sha` | 线上是哪个 commit（`update.sh` 写，`git` 不在场） |
 | `/opt/probe/update.sh` | 自动更新脚本 |
 | `/opt/probe/stage` | 解压临时目录（更新完即删） |
+| `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次） |
 | `/var/log/probe-update.log` | 更新日志（含构建输出） |
+| `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
 
 ## 环境变量（`/opt/probe/probe.env`）
 
@@ -35,6 +38,7 @@ NEXT_PUBLIC_PROBE_BASE_PATH=/probe  # 打进前端的 basePath，客户端 fetch
 PROBE_RATE_LIMIT_PER_MIN=20         # 每 IP 检索限流，默认 3 对预览来说太低
 PROBE_TRANSLATE_RATE_LIMIT_PER_MIN=40
 PROBE_MODULE_RATE_LIMIT_PER_MIN=20
+PROBE_CRON_SECRET=<32 位 hex>       # 热榜定时任务的钥匙；不配 /api/cron/heat 直接 503
 # OPENAI_API_KEY=               # 接上就换成模型摘要，字段名见 .env.example
 ```
 
@@ -69,6 +73,10 @@ systemctl status probe-web --no-pager -l
 journalctl -u probe-web -n 100 --no-pager
 curl -s http://127.0.0.1:3215/probe/api/version # 本机直连，绕过 nginx
 systemctl list-timers probe-update.timer --no-pager
+systemctl start probe-heat.service              # 立刻算一次热榜（约 3~19 秒）
+tail -n 5 /var/log/probe-heat.log
+systemctl list-timers probe-heat.timer --no-pager
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3215/probe/api/cron/heat  # 期望 401
 ```
 
 ### 回滚到上一个构建
@@ -113,3 +121,5 @@ location /probe {
 - **`/probe/` 会 308 到 `/probe`**：Next 的 basePath 规范化行为，浏览器跟一跳就对了，不要试图在 nginx 里改写。
 - **MSYS / Git Bash 会把 `PROBE_BASE_PATH=/probe` 当路径改写成 `C:/Users/...`**：本机构建带 basePath 时用 pwsh 设环境变量，别用 bash。
 - **npm registry**：这台机器到 `registry.npmjs.org` 要 14 秒，`registry.npmmirror.com` 1.7 秒。`npm config set registry https://registry.npmmirror.com` 之后 `npm ci` 15 秒装完。
+- **热榜 Cron 偶发 `topics:0`**：同一条 HN 请求一次通、一次 `aborted due to timeout`。端点里已给抓取一次重试（800ms 后），失败快照只缓存 60 秒。看到日志里 `hn:failed` 先确认是不是单次抖动，不用急着查服务。
+- **别把 `curl` 直接管道给 `grep -m1`**：`update.sh` 里那样写会让 curl 收 SIGPIPE 报 `curl: (23) Failure writing output to destination` 并退出非零。先 `-o` 落文件再 grep。

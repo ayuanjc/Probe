@@ -124,4 +124,34 @@
 - `IntentSchema.timeRange` 改成真日期校验（`YYYY-MM-DD` 或 ISO 时间戳 + 日历自检 + `from <= to`）；规则路径给 ISO、模型给日期，两种都收。
 
 ### 仍未修（下一轮）
-- `dedupe` 的 O(n²) 标题比对、`translate` 缓存整表清空、`compile` heatmap/radar 的 NaN 上限、`heat.ts` 的 1e-6 与哨兵 99、`SourceList`/`SettingsPanel` 的 aria-expanded / aria-pressed、`Workspace` 的 popstate、`llm.ts` 的无差别重试。
+- （第二轮列的七条已在第三轮清空，见下）
+
+## 修复记录（第三轮：P2 清单 + Cron 与历史导航）
+
+### 性能与内存
+- **`dedupe` 的 O(n²) 标题比对**：改按 token 数分桶（`bucketOf(n) = floor(log2(max(1,n)) * 2)`），
+  只与同桶及左右邻桶比。Jaccard > 0.92 要求 min/max ≥ 0.92 ⇒ token 数对数差 ≤ 0.12 ⇒ 桶差 ≤ 1，
+  所以这是**等价压缩**而不是近似。400 组随机标题（含中文 bigram、英文大小写变体）与旧全量比较零处不一致。
+- **`translate` 缓存整表清空**：写满时删最老的一半（按插入序），不再 `clear()`。清空会让正在读的
+  同一篇文档下一段全部重翻，而 MyMemory 有每日配额。
+
+### 图表与数值
+- **`compile` heatmap / radar 的 NaN 上限**：缺数据行是 `null`/`""`，`Math.max` 吃进 NaN 会把整根轴写坏。
+  改成只对 `Number.isFinite` 的值取 `Math.max(1, …)`。
+- **`heat.ts` 的哨兵 99**：新增 `RATIO_CAP = 9.99`，`ratio7d()` 与 `seriesStats().r7` 都夹到它。
+  99 会出现在排序与文案里，读者会当成真实倍数；`1e-6` 保留（只用来挡 MAD=0，Infinity 会让百分位链变 NaN）。
+
+### 无障碍
+- `SourceList` 的「原文片段」「对照原文」加 `aria-expanded` + 带标题的 `aria-label`；
+  `SettingsPanel` 的 `Chip` 加 `aria-pressed`。
+
+### 网络重试
+- `llm.ts` 的 `generateStructured` 不再无差别重试：`isTransient(err)` 只对 408/409/425/429/5xx/网络类
+  错误重试一次，401/403/400/404 与「key 无效 / 模型不存在」直接放弃（重试只是把同一个错误再说一遍）。
+- `trending.ts` 的 HN 抓取给一次重试（800ms 间隔）：实测同一分钟内前一次成功、后一次
+  `The operation was aborted due to timeout`。两次都空才记 `hn:failed`。
+
+### 历史导航
+- `Workspace` 的 `popstate` 现在真的能回到上一次结果：所有界面发起的检索统一走 `startSearch()`
+  （先 `run` 再 `pushState`），「新建搜索」用 `replaceState` 清 `?q=`。
+  实测 Rust → OpenAI → 后退回到 `?q=Rust` 且 7 张卡都在，前进回到 OpenAI 同样 7 张。

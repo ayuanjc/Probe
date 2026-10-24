@@ -432,7 +432,10 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
   带 `PROBE_CRON_SECRET` 才工作，未配置回 503 `cron_disabled`、密钥不符回 401，
   通过后先 `ensureHistory()` 再 `getTrending(true)`，返回基线区间与快照计数（实测基线新鲜时 2.8 秒、
   重建约 19 秒）。鉴权不是形式：这个端点一次能触发 60 次外部请求，无鉴权被扫到就是免费放大器。
-  争议态（GDELT tone）仍缺数据源，见 2.3 的 GDELT 429 结论。
+  预览站上已用 **systemd timer 每 30 分钟**真跑（`probe-heat.timer` → `heat-cron.sh`，失败重试 3 次，
+  日志 `/var/log/probe-heat.log`），实测 `{"ok":true,"elapsedMs":4456,…,"topics":12,"withStatus":12}`。
+  争议态（GDELT tone）仍缺数据源，见 2.3 的 GDELT 429 结论 —— 本轮在本机与服务器上又各实测一遍，
+  DOC API 无论 `tonechart` 还是 `artlist`、间隔 6.5 秒、带 UA，一律 429，结论不变。
 - 实体关系图：**先用 Postgres 邻接表 + pgvector 做 2 跳查询出树状图**，Neo4j 仅在明确触到性能上限后再评估。
   🔧 **实现备注（Phase 3 第 2 项，本轮快照版已落地）**：仓库没有 Postgres、也没有 embedding，
   所以落地的是「本轮信源的共现快照」——`src/lib/entity-graph.ts` 从这一轮 RawSource 抽实体、
