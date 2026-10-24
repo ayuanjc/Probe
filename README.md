@@ -409,6 +409,24 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
 "一键还原"清掉所有 `probe:` 前缀的本机键（设置 + 每个查询词的布局快照），然后整页重载。
 按钮要按两次，第二次 4 秒内有效：这个操作没有撤销。
 
+### 配置文档：把「配置到底写在哪」摊在面板里
+
+面板最后多了一节「配置文档」（`src/components/ConfigDocs.tsx`）。它解决的不是"没文档"，
+而是**配置分散在三层、每层都可能失效**：浏览器设置 → 请求头 → 服务端 env。四个可折叠小节：
+
+1. **三层配置**：每一项的三层落点并排写（存哪 / 哪个头 / 哪个 env / 都没有时怎样），
+   并写明优先级是「请求头 > env > 内置默认」—— 填了面板里的 key，这一轮就完全不看服务端 env。
+2. **服务端环境变量**：8 个真正被读取的变量 + 一句默认值，外加一个可复制的 `.env.local` 示例。
+   顺带把 `.env.example` 里写了但**代码没读**的三个（`OPENAI_BASE_URL`、
+   `PROBE_DAILY_TOKEN_BUDGET`、`PROBE_CACHE_TTL_SECONDS`）照实标出来：配了不生效比没写更伤人。
+3. **本机存储键**：`probe:settings:v1`、`probe:layout:<LAYOUT_VERSION>:<查询词>`、`probe:grid-hint:v1`，
+   版本号从 `layout.ts` 直接 import——文档写死版本号，改代码那天就过期了。
+4. **接口与鉴权**：五个路由的限流默认值、`/api/metrics` 默认脱敏查询词、`/api/cron/heat` 未配口令直接 503。
+
+还有一条容易被当成 bug 的规则写在第一节里：**脏值一律当没填**（key 8–400 字符且不含空白，
+模型要匹配 `[A-Za-z0-9._:-]{2,64}`）。填错不报错、只是静默回落 —— 所以"我填了 key 但没生效"
+先回来对格式，而不是去怀疑缓存。
+
 ## 性能：帧率按「最长的那一帧」算，不按平均值
 
 平均值骗人。240Hz 屏上一秒 240 帧，只要有 3 帧掉了 60ms，手感就是「卡一下」，而平均帧率仍然是 230fps。所以这里的验收口径是 **LoAF（long-animation-frame）**：浏览器原生告诉你「这一帧超过 50ms 了吗、渲染开始得多晚、里面脚本占多少」。
@@ -753,7 +771,7 @@ src/
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
               api/metrics/route.ts · api/cron/heat/route.ts · metrics/page.tsx
   components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
-              Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
+              Glossary · BilingualCompare · SettingsPanel · ConfigDocs · ModuleDock · ModulePrompt
               EntityGraphCard · MetricsPanel · ClarifyCard
   hooks/      useProbe.ts
 ```

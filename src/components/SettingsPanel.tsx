@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, isCustomized, resetLocalData, type Settings } from "@/lib/settings";
+import ConfigDocs from "./ConfigDocs";
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -284,6 +285,13 @@ export default function SettingsPanel({
             字号改的是 rem 基准，所以间距会跟着等比缩放 —— 这正是 Tailwind 的工作方式。
             关掉动画后过渡被 CSS 直接掐断，图表入场时长归零。
           </p>
+        </Group>
+
+        <Group
+          title="配置文档"
+          hint="每一项到底写在哪、发到哪、优先级如何 —— 抄的是代码，不是设想。"
+        >
+          <ConfigDocs />
         </Group>
 
         <Group
