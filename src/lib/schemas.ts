@@ -21,11 +21,30 @@ export const EntitySchema = z.object({
   candidates: z.array(z.string()).optional(),
 });
 
+/**
+ * 日期只接受 YYYY-MM-DD，且必须是真实存在的日历日。
+ * 以前这里只写 z.string()，于是模型吐出 "2026-13-45" 或 "最近三个月" 这种字符串也过审，
+ * 一路拼进 GDELT 的时间过滤条件 —— 上游报错被当成限流，还会连带冷却五分钟。
+ */
+const DayString = z
+  .string()
+  // 规则路径给的是完整 ISO 时间戳，模型给的多半是 YYYY-MM-DD，两种都要收。
+  .regex(/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/, "日期必须是 YYYY-MM-DD 或 ISO 时间戳")
+  .refine((s) => {
+    if (Number.isNaN(Date.parse(s))) return false;
+    // 格式对但日子不存在（2026-13-45）时 Date 会静默滚到下个月，所以自己核一遍日历。
+    const [y, m, d] = s.slice(0, 10).split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  }, "日期不存在");
+
 export const IntentSchema = z.object({
   query: z.string().min(1),
   kind: IntentKind,
   entities: z.array(EntitySchema).max(8),
-  timeRange: z.object({ from: z.string(), to: z.string() }),
+  timeRange: z
+    .object({ from: DayString, to: DayString })
+    .refine((r) => Date.parse(r.from) <= Date.parse(r.to), { message: "from 不能晚于 to" }),
   dimensions: z.array(Dimension).max(6),
   /** 0~1。> 0.35 时前端先渲染澄清卡（PRD 2.1）。 */
   ambiguity: z.number().min(0).max(1),

@@ -1,6 +1,6 @@
 
 import { z } from "zod";
-import { ClaimSchema } from "@/lib/schemas";
+import { ClaimSchema, DatasetSchema } from "@/lib/schemas";
 import type { Claim, Confidence, Dataset, Intent, RawSource } from "@/lib/schemas";
 import {
   computeConfidence,
@@ -30,25 +30,44 @@ export type AnalysisResult = {
   notes: string[];
 };
 
-function dedupe(sources: RawSource[]): { kept: RawSource[]; merged: number } {
+type DedupeResult = {
+  kept: RawSource[];
+  /** 因 URL/标题重复而合并掉的条数。这个数才是"去重合并"该报的量。 */
+  merged: number;
+  /** 连 URL 都没有、根本进不了去重流程的条数。它们不算"被合并"。 */
+  dropped: number;
+};
+
+function dedupe(sources: RawSource[]): DedupeResult {
   const seenUrl = new Set<string>();
   const seenTitle: string[] = [];
   const out: RawSource[] = [];
+  let merged = 0;
+  let dropped = 0;
 
   for (const s of sources) {
     const key = (s.canonical ?? s.url).replace(/[?#].*$/, "").replace(/\/$/, "");
-    if (!key) continue;
-    if (seenUrl.has(key)) continue;
+    if (!key) {
+      dropped++;
+      continue;
+    }
+    if (seenUrl.has(key)) {
+      merged++;
+      continue;
+    }
 
     // 跨源标题几乎一致 → 视为同一稿件的转载，只保留第一条。
     const dup = seenTitle.some((t) => titleSimilarity(t, s.title) > 0.92);
-    if (dup) continue;
+    if (dup) {
+      merged++;
+      continue;
+    }
 
     seenUrl.add(key);
     seenTitle.push(s.title);
     out.push(s);
   }
-  return { kept: out, merged: sources.length - out.length };
+  return { kept: out, merged, dropped };
 }
 
 async function extractClaims(
@@ -87,10 +106,19 @@ async function extractClaims(
   if (!parsed) return { claims: [], source: "none" };
 
   const validIds = new Set(sources.map((s) => s.id));
-  const claims = parsed.claims.filter((c) => {
-    if (!c.quote || c.quote.trim().length < 4) return false;
-    return c.sourceIds.some((id) => validIds.has(id));
-  });
+  /**
+   * 只要求"有一个合法 id"是不够的：夹带伪造 id 的 claim 会保留下来，
+   * 而下游（confidence 的一致性比对、转载排除）会按 sourceIds 里的每一项去查，
+   * 伪造的那条既查不到也不报错，等于悄悄污染了核验口径。
+   * 先裁到合法 id，裁空就整条丢掉 —— 没有出处的事实不是事实。
+   */
+  const claims: Claim[] = [];
+  for (const c of parsed.claims) {
+    if (!c.quote || c.quote.trim().length < 4) continue;
+    const ids = c.sourceIds.filter((id) => validIds.has(id));
+    if (ids.length === 0) continue;
+    claims.push({ ...c, sourceIds: ids });
+  }
 
   return { claims, source: "llm" };
 }
@@ -194,7 +222,8 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
     weekdayCount[p.wd]++;
     const age = (nowMs - new Date(s.publishedAt).getTime()) / 3_600_000;
     if (age >= 0 && age <= 24) fresh++;
-    if (typeof s.tone === "number" && age >= 0 && age <= 24 * 7) {
+    // NaN 也是 "number"：上游给坏值时它会一路变成 null 落进 ECharts。
+    if (typeof s.tone === "number" && Number.isFinite(s.tone) && age >= 0 && age <= 24 * 7) {
       tonePoints.push({ hours: Math.round(age * 10) / 10, tone: s.tone });
     }
   }
@@ -215,7 +244,9 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
     const ownerRows: { owner: string; articles: number }[] = sortedOwners
       .slice(0, TOP_OWNERS)
       .map(([owner, articles]) => ({ owner, articles }));
-    if (sortedOwners.length > TOP_OWNERS + 1) {
+    // 阈值是 TOP_OWNERS 而不是 TOP_OWNERS + 1：恰好 8 家时第 8 家既没进表、
+    // 也没被算进"其他"，各柱相加就小于总条数了。
+    if (sortedOwners.length > TOP_OWNERS) {
       const rest = sortedOwners.slice(TOP_OWNERS);
       ownerRows.push({
         owner: "其他 " + rest.length + " 家",
@@ -324,7 +355,12 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
   }
 
 
-  if (hourCells.size >= 2) {
+  /**
+   * 时段/星期这两张是分布图，P 档置信度下不出（与 323 行那句口径一致）。
+   * 它们一度写在 allowNumbers 之外，于是"已抑制分布图"的说明旁边
+   * 照样挂着两张分布图 —— 说明与事实互相打脸。
+   */
+  if (allowNumbers && hourCells.size >= 2) {
     datasets.push({
       id: "ds-hours",
       name: "发布时段热力图",
@@ -347,7 +383,7 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
   const weekdayRows = weekdayCount
     .map((articles, wd) => ({ weekday: WD_NAME[wd], articles }))
     .filter((r) => r.articles > 0);
-  if (weekdayRows.length >= 3) {
+  if (allowNumbers && weekdayRows.length >= 3) {
     datasets.push({
       id: "ds-weekday",
       name: "星期分布",
@@ -365,8 +401,10 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
    * fresh ⊆ dated ⊆ sources ⊆ raw，所以这张图不可能自相矛盾。
    * 断言数不进来：claim 可以来自没有发布时间的条目，放进来会破坏包含关系。
    */
+  // 首级必须叫"原始命中"：ds-summary 里另有一个"条目数"取的是去重后的值，
+  // 两个同名标签配两个不同数字，读的人只会问哪个对。
   const flowRows = [
-    { stage: "命中条目", articles: raw.length },
+    { stage: "原始命中", articles: raw.length },
     { stage: "去重后", articles: sources.length },
     { stage: "有发布时间", articles: dated },
     ...(fresh > 0 ? [{ stage: "24h 内", articles: fresh }] : []),
@@ -397,6 +435,24 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
     });
   }
 
+  /**
+   * KPI 里混着两种东西：条目计数（每一条都能在下面的列表里点开核对）
+   * 与派生统计（独立信源、疑似转载 —— 都是推断出来的）。
+   * 低置信时只留前者：把数得清的东西藏起来没有意义，
+   * 但把推断当数字印上去，就违反了"低档不出聚合数字"。
+   */
+  const summaryRows: { label: string; value: number }[] = [
+    { label: "条目数", value: sources.length },
+    ...(deduped.merged > 0 ? [{ label: "去重合并", value: deduped.merged }] : []),
+    ...(deduped.dropped > 0 ? [{ label: "无链接跳过", value: deduped.dropped }] : []),
+  ];
+  if (allowNumbers) {
+    summaryRows.push({ label: "独立信源", value: confidence.nOwners });
+    summaryRows.push({ label: "疑似转载", value: syndicatedIds.length });
+    // 抽到 0 条就不显示这一栏：KPI 里的 0 会被读成"确实没有事实"，
+    // 而真相是这一轮根本没有做抽取。缺失的东西不占数字位。
+    if (claims.length > 0) summaryRows.push({ label: "可核验断言", value: claims.length });
+  }
   datasets.push({
     id: "ds-summary",
     name: "本次检索概况",
@@ -404,24 +460,56 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
       { name: "label", type: "string" },
       { name: "value", type: "number" },
     ],
-    rows: [
-      { label: "命中条目", value: sources.length },
-      { label: "独立信源", value: confidence.nOwners },
-      { label: "疑似转载", value: syndicatedIds.length },
-      ...(deduped.merged > 0 ? [{ label: "去重合并", value: deduped.merged }] : []),
-      // 抽到 0 条就不显示这一栏：KPI 里的 0 会被读成"确实没有事实"，
-      // 而真相是这一轮根本没有做抽取。缺失的东西不占数字位。
-      ...(claims.length > 0 ? [{ label: "可核验断言", value: claims.length }] : []),
-    ],
+    rows: summaryRows,
   });
 
   notes.push("口径说明：文章数指本次检索命中的条目，不是全网总量。");
+  if (!allowNumbers) {
+    notes.push(
+      "低置信档只抑制派生统计（独立信源、疑似转载、可核验断言），条目计数照常 —— 每一条都能在下面的列表里点开核对。",
+    );
+  }
+  if (confidence.nChecked === 0) {
+    notes.push(
+      "本轮没有可交叉核对的断言：置信度不含一致性证据，已封顶 0.64（" +
+        (claimSource === "none" ? "未配置模型 key，抽取未运行。" : "抽到的断言没有两条以上独立来源对得上。") +
+        "）",
+    );
+  }
+  if (deduped.merged > 0) {
+    notes.push(
+      "去掉了 " + deduped.merged + " 条重复或疑似转载条目（同 URL 或标题相似度 > 0.92），保留的是各来源里最完整的那一条。",
+    );
+  }
+
+  /**
+   * 出口自检：rows 里的 NaN/Infinity 经 JSON.stringify 会静默变成 null，
+   * 而 null 在 DatasetSchema 里是合法值 —— 坏数字就这样一路走到 ECharts，
+   * 既不报错也不显示，图只是少一块。这里先剪掉非有限数字行，再按 schema 过一遍；
+   * 被剪掉这件事要记进 degraded，不能悄悄发生。
+   */
+  const clean: Dataset[] = [];
+  let badRows = 0;
+  for (const ds of datasets) {
+    const rows = ds.rows.filter((row) =>
+      Object.values(row).every((v) => typeof v !== "number" || Number.isFinite(v)),
+    );
+    badRows += ds.rows.length - rows.length;
+    if (rows.length === 0) continue;
+    const parsed = DatasetSchema.safeParse({ ...ds, rows });
+    if (!parsed.success) {
+      degraded.push("dataset:invalid_" + ds.id);
+      continue;
+    }
+    clean.push(parsed.data);
+  }
+  if (badRows > 0) degraded.push("rows:non_finite");
 
   return {
     sources,
     syndicatedIds,
     claims,
-    datasets,
+    datasets: clean,
     confidence,
     degraded,
     notes,

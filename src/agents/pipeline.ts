@@ -71,6 +71,7 @@ export async function* runPipeline(
         confidence: 0,
         independentSources: 0,
         degraded: [],
+        notes: ["这条输入没有可检索的主体：流水线在检索前就停了，因此没有任何面板与信源。"],
         elapsedMs: Date.now() - started,
       },
     };
@@ -226,6 +227,7 @@ export async function* runPipeline(
       confidence: analysis.confidence.score,
       independentSources: analysis.confidence.nOwners,
       degraded,
+      notes: analysis.notes,
       elapsedMs: Date.now() - started,
       stats: retrieved.stats,
     },

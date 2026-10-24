@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
 import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 import type { EntityGraph } from "@/lib/entity-graph";
+import { MODULE_SIZE } from "@/lib/module-catalog";
 
 export type ModuleState = {
   id: string;
@@ -36,6 +37,8 @@ export type ProbeState = {
   /** 本轮信源的实体共现图；出不了图时是 null（界面上那张卡就不出现）。 */
   entityGraph: EntityGraph | null;
   degraded: string[];
+  /** 后端对口径的补充说明（例如「低置信：聚合数字已抑制」）。 */
+  notes: string[];
   elapsedMs: number | null;
   error: string | null;
 };
@@ -50,6 +53,7 @@ const IDLE: ProbeState = {
   confidence: null,
   entityGraph: null,
   degraded: [],
+  notes: [],
   elapsedMs: null,
   error: null,
 };
@@ -57,6 +61,12 @@ const IDLE: ProbeState = {
 export function useProbe() {
   const [state, setState] = useState<ProbeState>(IDLE);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * 轮次令牌：两次检索的响应可能交错落地（用户连点、或第一次还没读完就换了词）。
+   * 只有"当前这一轮"允许写 state —— 否则上一轮迟到的 sources / done 会把新答案覆盖掉，
+   * 或者把刚开始的新一轮直接标成 done。
+   */
+  const seqRef = useRef(0);
 
   /**
    * 流式合帧：text.delta 一个 token 一次 setState，等于一个 token 一次整树重渲染。
@@ -94,8 +104,16 @@ export function useProbe() {
     [flushText],
   );
 
-  // 组件卸载后还在跑 rAF 会往已卸载的 state 里写。
-  useEffect(() => () => cancelFlush(), [cancelFlush]);
+  // 卸载后还在跑的 rAF 与流都会往已卸载的 state 里写：两个都停掉。
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      cancelFlush();
+      pendingText.current = "";
+    },
+    [cancelFlush],
+  );
 
   /**
    * extraHeaders 用来随请求带上「设置」里用户自己的 key。
@@ -106,8 +124,13 @@ export function useProbe() {
     if (!q) return;
 
     abortRef.current?.abort();
+    cancelFlush();
+    pendingText.current = "";
     const controller = new AbortController();
     abortRef.current = controller;
+    const seq = ++seqRef.current;
+    /** 本轮是否仍然是"当前轮"：换轮、重置、卸载都会让它为假。 */
+    const current = () => seqRef.current === seq && abortRef.current === controller;
 
     setState({ ...IDLE, status: "running", query: q });
 
@@ -118,6 +141,8 @@ export function useProbe() {
         body: JSON.stringify({ query: q }),
         signal: controller.signal,
       });
+
+      if (!current()) return;
 
       if (!res.ok || !res.body) {
         /**
@@ -140,16 +165,28 @@ export function useProbe() {
 
       while (true) {
         const { done, value } = await reader.read();
+        if (!current()) return;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const parsed = decodeChunk(buffer);
         buffer = parsed.rest;
         for (const event of parsed.events) applyEvent(event);
       }
+
+      /**
+       * 收尾：解码器可能还压着半个多字节字符，缓冲区也可能剩最后一个事件块
+       * （代理截断、或服务端末条事件没以空行收尾）。以前直接 break 会把 done 丢掉，
+       * 界面就永远停在"检索中"。所以补一个换行再解析一次。
+       */
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        for (const event of decodeChunk(buffer + "\n\n").events) applyEvent(event);
+      }
+      if (!current()) return;
       flushText();
       setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
     } catch (err) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !current()) return;
       setState((s) => ({
         ...s,
         status: "failed",
@@ -158,6 +195,7 @@ export function useProbe() {
     }
 
     function applyEvent(event: ProbeEvent) {
+      if (!current()) return;
       if (event.event === "text.delta") {
         queueText(event.data.delta);
         return;
@@ -179,10 +217,31 @@ export function useProbe() {
           case "module.ready":
             return {
               ...s,
-              modules: s.modules.map((m) =>
-                m.id === event.data.id
-                  ? {
-                      ...m,
+              // 找不到对应的 plan 就补一条，而不是把它丢掉 —— 丢掉的模块等于少画一张图。
+              modules: s.modules.some((m) => m.id === event.data.id)
+                ? s.modules.map((m) =>
+                    m.id === event.data.id
+                      ? {
+                          ...m,
+                          status: "ready",
+                          spec: event.data.spec,
+                          rows: event.data.rows,
+                          fields: event.data.fields,
+                          confidence: event.data.confidence,
+                          sourceIds: event.data.sources,
+                          datasetName: event.data.datasetName,
+                        }
+                      : m,
+                  )
+                : [
+                    ...s.modules,
+                    {
+                      id: event.data.id,
+                      kind: event.data.spec.kind,
+                      title: event.data.spec.title,
+                      // 尺寸不在 spec 里（spec 只说画什么），要按注册表补，否则这张卡是 0×0。
+                      w: MODULE_SIZE[event.data.spec.kind].w,
+                      h: MODULE_SIZE[event.data.spec.kind].h,
                       status: "ready",
                       spec: event.data.spec,
                       rows: event.data.rows,
@@ -190,9 +249,8 @@ export function useProbe() {
                       confidence: event.data.confidence,
                       sourceIds: event.data.sources,
                       datasetName: event.data.datasetName,
-                    }
-                  : m,
-              ),
+                    },
+                  ],
             };
           case "module.error":
             return {
@@ -212,6 +270,7 @@ export function useProbe() {
               ...s,
               status: "done",
               degraded: event.data.degraded,
+              notes: event.data.notes ?? [],
               elapsedMs: event.data.elapsedMs,
             };
           case "error":
@@ -221,10 +280,12 @@ export function useProbe() {
         }
       });
     }
-  }, []);
+  }, [cancelFlush, flushText, queueText]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
+    seqRef.current += 1;
     cancelFlush();
     pendingText.current = "";
     setState(IDLE);

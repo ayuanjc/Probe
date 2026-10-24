@@ -139,11 +139,17 @@ export default function Workspace({
     applySettings(s);
   }, []);
 
-  const updateSettings = (next: Settings) => {
+  /**
+   * 返回是否真的写进了本机：配额满 / 隐私模式下 setItem 会抛，
+   * 面板据此提示"只在本次会话生效"，而不是继续写着"只存本机"。
+   * 即时生效与"存没存住"是两件事，所以先 apply 再返回结果。
+   */
+  const updateSettings = (next: Settings): boolean => {
     settingsRef.current = next;
     setSettings(next);
-    writeSettings(next);
+    const saved = writeSettings(next);
     applySettings(next);
+    return saved;
   };
 
   /**
@@ -422,6 +428,22 @@ export default function Workspace({
                     <SourceList sources={state.sources} />
                   </div>
                 </section>
+              )}
+
+              {/*
+                口径说明：服务端一直在算这些（抑制了哪些数字、去重合并了几条、
+                "文章数"到底指什么），但以前只写进服务端 notes，用户一句也看不到。
+                用中性色而不是警示色 —— 它们是解释，不是故障。
+              */}
+              {state.status === "done" && state.notes.length > 0 && (
+                <div className="rounded-md border border-neutral-800 px-4 py-3 text-[10px] leading-relaxed text-neutral-500">
+                  <span className="text-neutral-400">口径</span>
+                  <ul className="mt-1 flex flex-col gap-1">
+                    {state.notes.map((n) => (
+                      <li key={n}>{n}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
 
               {state.status === "done" && state.degraded.length > 0 && (

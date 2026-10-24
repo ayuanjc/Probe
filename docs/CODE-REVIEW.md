@@ -80,3 +80,48 @@
 3. 低置信抑制补齐（#10 #11）——代码里已经写了承诺，只是没执行。
 4. 前端交互四条（#23 #24 #25 #26）——溯源看不到、串味、输入法回车、编造的降级原因。
 5. 其余 P1 按文件归并修，P2 择机。
+---
+
+## 修复记录（第二轮：全量测试 + 防御性编程）
+
+测试基线：`node ../.probe-qa/full-api.mjs` 35 项、`python ../.probe-qa/full-ui.py` 31 项，跑在 `next start -p 3211`（`PROBE_RATE_LIMIT_PER_MIN=200`）。
+本轮之前 API 34/35（notes 未外发）、UI 29/31；本轮之后 **API 35/35、UI 31/31**。
+
+### 数据正确性
+- **低置信抑制补齐**（#10）：`analyze.ts` 的 `ds-hours`、`ds-weekday` 移进 `allowNumbers`；`ds-summary` 拆成「条目计数（照出）」与「派生统计：独立信源/疑似转载/可核验断言（低档不出）」。说明与事实不再互相打脸。
+- **口径说明终于能看见**（#11）：`notes` 经 `done` 事件外发（`sse.ts` 补字段、`pipeline.ts` 转发、`useProbe` 收进 state、`Workspace` 用中性色列表渲染）。另补三条新口径：低档抑制了哪些数字、`nChecked === 0` 时的封顶原因、去重合并了几条。
+- **信源分布少一根柱**（#18）：阈值 `> TOP_OWNERS + 1` → `> TOP_OWNERS`，恰好 8 家时不再静默丢第 8 家。
+- **同一标签两个数**：漏斗首级 `命中条目`（raw）改名 `原始命中`，KPI 侧改 `条目数`（去重后）。
+- **NaN 挡住**：`tone` 判 `Number.isFinite`；出口对每个 dataset 剪掉非有限数字行再 `DatasetSchema.safeParse`，被剪记进 `degraded`（`rows:non_finite` / `dataset:invalid_*`）。
+- **伪造 id 的 claim**（#8）：先 `sourceIds.filter(validIds)` 再判非空，裁空整条丢。
+
+### 置信度
+- **一致性口径**（#19）：按 `sourceId` 收敛后统计「独立来源说了什么」，单源说三遍不再算三次核对（`nChecked` 计来源数，组内来源 < 2 不参与）。
+- **未核验封顶**（#20）：`nChecked === 0` 由 0.74 降到 **0.64**，稳落 medium，不再贴着高档。
+- **排序键防 NaN**（#12）：`Date.parse` 不可解析时排最后，`gapHours` 不再 NaN，转载规则复活。
+- **band 用舍入后的分数**：0.74996 不再显示 0.75 却算 medium。
+
+### 文本与实体
+- **中文 bigram 去空格**（#21）：「华为发布新机」与「华为 发布 新机」现在同一集合（Jaccard 从 0.43 → 1）。
+- **空集不再相等**（#16）：`jaccard` 任一为空返回 0，空标题不再互相吞并。
+- **owner 取 eTLD+1**（#17）：`news.x.com` / `amp.x.com` 归一家，二级后缀（co.uk / com.cn …）保留三段，解析失败保留原串。
+- **数量级折进数值**（#23）：`3.2 billion` → 3200000000，`1.5万` → 15000；中文刻度与英文刻度分开映射（亿 = 1e8、billion = 1e9）。
+- **别名要词边界**（#15）：`meta` 不再命中 `metadata`、`eu` 不再命中 `europe`。
+
+### 网络与抓取
+- **半截正文不再当成功**（#14）：`getDirect` 只有在按字节上限主动截断时回 `ok:true`，传输中断回 `fetch_failed`、超时回 `timeout`。
+- **客户端断线不再冻 GDELT**（#13）：`isRateLimited` 先排除 abort，关标签页不会再让 GDELT 冷却五分钟。
+
+### 前端与状态
+- **串味与竞态**：`useProbe` 加轮次令牌 `seqRef`（读流每轮、`applyEvent`、catch、收尾都校验），`run()` 清 `pendingText`，卸载真 abort，流末补解码器尾巴（末条无空行时 `done` 不再丢）；`module.ready` 无对应 plan 时补插一张卡。
+- **快照**：`layout.ts` 兼容本机存 `"null"`（原来抛 TypeError 崩整个网格）、`restored === 0` 回默认排布、`saveLayout` 落盘前 clamp 而不是"夹不进去就报存不下"。
+- **收起全部方向**：`ModuleGrid.toggleAll` 改判 `every(collapsed)`，换查询后旧 id 残留不再让文案与动作相反。
+- **对照面板**：只缓存成功结果（`CACHE_MAX = 24` 先进先出）、`AbortController` + `!res.ok` 判失败、自动加载只发一次（一次点击不再双发）、`!ok` 分支也能重试；每段加 `data-seg`（分段与配色是两个概念，没有引擎时只分段不上色）。
+- **设置写盘失败能看见**：`updateSettings` 返回 boolean，面板顶部给 `role="status"` 的提示。
+- **实体图的无障碍入口**：默认视图也给一排 `data-entity-chip` 按钮（画布键盘到不了）。
+
+### 校验
+- `IntentSchema.timeRange` 改成真日期校验（`YYYY-MM-DD` 或 ISO 时间戳 + 日历自检 + `from <= to`）；规则路径给 ISO、模型给日期，两种都收。
+
+### 仍未修（下一轮）
+- `dedupe` 的 O(n²) 标题比对、`translate` 缓存整表清空、`compile` heatmap/radar 的 NaN 上限、`heat.ts` 的 1e-6 与哨兵 99、`SourceList`/`SettingsPanel` 的 aria-expanded / aria-pressed、`Workspace` 的 popstate、`llm.ts` 的无差别重试。

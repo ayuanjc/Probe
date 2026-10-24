@@ -59,6 +59,11 @@ export type ProbeEvent =
         confidence: number;
         independentSources: number;
         degraded: string[];
+        /**
+         * 口径说明。以前这些只活在服务端 notes 里、从不外发，
+         * 于是"已抑制聚合数字""文章数指本次命中"这些话用户一句都看不到。
+         */
+        notes: string[];
         elapsedMs: number;
         stats?: Record<string, number>;
       };

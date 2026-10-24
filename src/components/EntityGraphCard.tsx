@@ -217,6 +217,31 @@ export default function EntityGraphCard({
       </div>
 
       {/*
+        画布上的节点键盘到不了、读屏也读不到，所以默认视图同样给一排可点的实体。
+        这不是"给测试用的钩子"，是这张卡唯一能被键盘操作的入口。
+      */}
+      {!focus && (
+        <ul className="mt-3 flex flex-wrap gap-1.5">
+          {[...graph.nodes]
+            .sort((a, b) => b.mentions - a.mentions)
+            .slice(0, 10)
+            .map((n) => (
+              <li key={n.id}>
+                <button
+                  type="button"
+                  data-entity-chip={n.id}
+                  onClick={() => setPicked(n.id)}
+                  className="rounded border border-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+                >
+                  {labels.get(n.id) ?? n.name}
+                  <span className="ml-1 text-neutral-600">×{n.mentions}</span>
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
+
+      {/*
         ECharts 的容器高度必须能算成确定值：它的 canvas 用 height:100%，
         而 100% 只对「高度已定」的父元素生效。这里父级是普通块（不是 flex 列），
         只给 min-height 会让百分比失效、canvas 退到默认 100px ——
@@ -253,8 +278,10 @@ export default function EntityGraphCard({
             <ul className="mt-2 flex flex-wrap gap-1.5">
               {neighbors.map((n) => (
                 <li key={n.node.id}>
+                  {/* 画布上的节点键盘到不了，这一排 chip 是它的无障碍与测试替身。 */}
                   <button
                     type="button"
+                    data-entity-chip={n.node.id}
                     onClick={() => setPicked(n.node.id)}
                     className="rounded border border-neutral-800 px-2 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
                   >

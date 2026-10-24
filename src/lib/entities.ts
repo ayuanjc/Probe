@@ -99,6 +99,19 @@ export function aliasOf(raw: string): Alias | null {
 const CJK = /[\u4e00-\u9fa5]/;
 
 /**
+ * 英文别名必须有词边界。词典匹配用的是 includes，于是 "meta" 会命中 "metadata"、
+ * "eu" 会命中 "europe"、"ai" 会命中 "said" —— 抽出来的实体是假的，
+ * 而实体又会进检索与关系图，错一次就污染一整轮。
+ * 中文没有空格分词，仍按子串匹配。
+ */
+function hasAlias(q: string, needle: string): boolean {
+  if (CJK.test(needle)) return q.includes(needle);
+  const words = q.split(/[^a-z0-9]+/).filter(Boolean);
+  if (!needle.includes(" ")) return words.includes(needle);
+  return (" " + words.join(" ") + " ").includes(" " + needle + " ");
+}
+
+/**
  * 实体抽取：词典命中 > 引号内容 > 英文专名 > 中文复合名词。
  * 顺序有讲究——词典命中带英文别名，能直接救回 GDELT 的中文查询。
  */
@@ -116,9 +129,10 @@ export function extractEntities(query: string): Entity[] {
   };
 
   // 1) 词典：整句里出现的中文/英文别名
+  const ql = query.toLowerCase();
   for (const a of ALIASES) {
     for (const z of a.zh) {
-      if (query.toLowerCase().includes(z.toLowerCase())) {
+      if (hasAlias(ql, z.toLowerCase())) {
         // 别名本身是英文小写时（rust / docker / tls），展示名用规范写法，
         // 否则界面上会写着 "rust"。中文别名保持中文。
         const display = /[\u4e00-\u9fa5]/.test(z) ? z : a.en;

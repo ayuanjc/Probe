@@ -119,6 +119,8 @@ function ModuleGrid({
     const loaded = loadLayout(query, defaults);
     setLayout(loaded.items);
     setNotice(loaded.notice);
+    // 已不在这一轮里的 id 别留在 collapsed：否则"收起/展开全部"的方向会算错。
+    setCollapsed((prev) => prev.filter((id) => idsRef.current.includes(id)));
   }, [signature, query, defaults, modules.length]);
 
   const unlocked = !running && modules.length > 0;
@@ -141,11 +143,17 @@ function ModuleGrid({
   }, []);
 
   const toggleAll = useCallback(() => {
-    const next = collapsed.length > 0 ? [] : modules.map((m) => m.id);
+    /**
+     * 方向由"当前是否全部收起"决定，而不是由 collapsed.length 决定：
+     * 换查询后旧 id 还留在 collapsed 里（下面的 effect 会清，但清理是异步的），
+     * 那一刻按钮写着"收起全部"、点下去执行的却是全展开。
+     */
+    const allCollapsed = modules.length > 0 && modules.every((m) => collapsedRef.current.has(m.id));
+    const next = allCollapsed ? [] : modules.map((m) => m.id);
     setCollapsed(next);
     setNotice(null);
     onCollapseAll?.(next.length > 0);
-  }, [collapsed.length, modules, onCollapseAll]);
+  }, [modules, onCollapseAll]);
 
   /**
    * 拖拽/缩放期间给 <body> 挂一个标记：

@@ -167,6 +167,7 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
   }
 
   return new Promise<DirectReply>((resolve) => {
+    let timedOut = false;
     const send = parsed.protocol === "https:" ? httpsRequest : httpRequest;
     const req = send(
       parsed,
@@ -223,19 +224,28 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
           });
         });
         res.on("error", () => {
-          // destroy 之后的 error 是正常收尾，已经攒到的字节仍然有用。
-          resolve({
-            ok: true,
-            status,
-            contentType: String(res.headers["content-type"] ?? ""),
-            body: Buffer.concat(chunks).toString("utf8"),
-            truncated,
-          });
+          /**
+           * 只有"被我们自己按字节上限掐断"才叫成功（truncated 已经标出来了）。
+           * 其它情况是传输中断或超时：把半截正文当成功返回，会让下游把
+           * 一篇残缺的文章当成完整文章去分段翻译 —— 那比直接失败更糟。
+           */
+          if (truncated) {
+            resolve({
+              ok: true,
+              status,
+              contentType: String(res.headers["content-type"] ?? ""),
+              body: Buffer.concat(chunks).toString("utf8"),
+              truncated: true,
+            });
+            return;
+          }
+          resolve({ ok: false, reason: timedOut ? "timeout" : "fetch_failed" });
         });
       },
     );
 
     req.setTimeout(timeoutMs, () => {
+      timedOut = true;
       req.destroy(new Error("timeout"));
     });
     req.on("error", (err: NodeJS.ErrnoException) => {

@@ -25,9 +25,16 @@ export function independenceScore(nOwners: number): number {
  * 同一 owner 内部不算转载（那是同一家自己的多篇），只影响 owner 计数。
  */
 export function findSyndicatedIds(sources: RawSource[]): Set<string> {
-  const order = [...sources].sort(
-    (a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt),
-  );
+  /**
+   * 排序键要防不可解析的时间：date - date = NaN 时比较器既不正也不负，
+   * 排序退化成"数组原样"，后面的 gapHours 也变 NaN，那条「晚 >6h 且相似」的转载规则就静默失效了。
+   * 没时间的排到最后，与 retrieve.ts「保留无时间条目」的取舍保持一致。
+   */
+  const ts = (s: string): number => {
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? Infinity : t;
+  };
+  const order = [...sources].sort((a, b) => ts(a.publishedAt) - ts(b.publishedAt));
   const syndicated = new Set<string>();
   const canonicalSeen = new Set<string>();
 
@@ -63,27 +70,35 @@ export function consistencyScore(
   // 没有可比对的断言时给中性 0.5，而不是 1：什么都没检查不等于万事一致。
   if (usable.length === 0) return { value: 0.5, nChecked: 0, nConflicts: 0 };
 
-  const groups = new Map<string, string[]>();
+  /**
+   * 分组键必须带单位。只按 attr 分组时，"营收 $3.2B" 与 "营收 3.2 million"
+   * 会被归一成同一个数字，然后判为"完全一致"——三个数量级的差距被当成共识。
+   * 单位不同就归入不同组，组内不足两条即不参与比对。
+   */
+  const groups = new Map<string, Map<string, string>>();
   for (const c of usable) {
-    /**
-     * 分组键必须带单位。只按 attr 分组时，"营收 $3.2B" 与 "营收 3.2 million"
-     * 会被 normalizeValue 都压成 "3.2"，然后判为"完全一致"——
-     * 三个数量级的差距被当成共识，这是这套分档里最不该发生的错。
-     * 单位不同就归入不同组，组内不足两条即不参与比对。
-     */
     const key = c.attr.toLowerCase() + "\u0000" + (c.unit ?? "").toLowerCase();
-    const arr = groups.get(key) ?? [];
-    arr.push(normalizeValue(c.value));
-    groups.set(key, arr);
+    const bySource = groups.get(key) ?? new Map<string, string>();
+    // 同一来源说三遍不算三次核对：按 sourceId 收敛，后说的覆盖先说的。
+    for (const id of c.sourceIds) {
+      if (excluded.has(id)) continue;
+      bySource.set(id, normalizeValue(c.value));
+    }
+    groups.set(key, bySource);
   }
 
+  /**
+   * 口径是"每一条独立来源的说法"，不是"每一条断言"。
+   * 以前按断言计数，同一篇稿子拆出的三条相同 value 就能把 nChecked 顶到 3、
+   * conflicts 为 0、consistency 拿满分，而实际上只有一个来源说过这件事。
+   */
   let nChecked = 0;
   let nConflicts = 0;
-  for (const values of groups.values()) {
-    if (values.length < 2) continue;
-    nChecked += values.length;
+  for (const bySource of groups.values()) {
+    if (bySource.size < 2) continue;
+    nChecked += bySource.size;
     const freq = new Map<string, number>();
-    for (const v of values) freq.set(v, (freq.get(v) ?? 0) + 1);
+    for (const v of bySource.values()) freq.set(v, (freq.get(v) ?? 0) + 1);
     let modeValue = "";
     let modeCount = -1;
     for (const [v, n] of freq) {
@@ -92,7 +107,7 @@ export function consistencyScore(
         modeValue = v;
       }
     }
-    nConflicts += values.filter((v) => v !== modeValue).length;
+    for (const v of bySource.values()) if (v !== modeValue) nConflicts += 1;
   }
 
   if (nChecked === 0) return { value: 0.5, nChecked: 0, nConflicts: 0 };
@@ -144,9 +159,10 @@ export function computeConfidence(
    * 总分就会越过 0.75 —— 可这个 0.75 里没有任何一条事实被两个来源对上过，
    * 它只是在说"我数了 39 篇文章，它们来自 26 个域名"。
    * 独立性靠域名数量堆得动，一手性靠"没识别出转载"就能满分。
-   * 只有一致性这一维真正代表"核验过"，它空转时，置信度不该顶到高档。
+   * 只有一致性这一维真正代表"核验过"，它空转时，置信度不该接近高档：
+   * 封到 0.64，稳落 medium，且界面上会把这条限制写成一行口径说明。
    */
-  if (consistency.nChecked === 0) score = Math.min(score, 0.74);
+  if (consistency.nChecked === 0) score = Math.min(score, 0.64);
 
   /**
    * 演示样本封顶。fixture 的"多家在报道"是我们自己写进样本里的，
@@ -156,12 +172,15 @@ export function computeConfidence(
   const demoOnly = sources.every((s) => s.provider === "fixture");
   if (demoOnly) score = Math.min(score, 0.34);
 
+  // 先舍入再分档：否则 0.74996 显示成 0.75、档位却是 medium，界面自相矛盾。
+  const rounded = Number(score.toFixed(4));
+
   return {
     independence,
     firstHand,
     consistency: consistency.value,
-    score: Number(score.toFixed(4)),
-    band: bandOf(score),
+    score: rounded,
+    band: bandOf(rounded),
     nOwners: owners.size,
     nSyndicated: syndicated.size,
     nChecked: consistency.nChecked,

@@ -149,6 +149,15 @@ export function loadLayout(query: string, defaults: GridItem[]): LoadResult {
     return { items: defaults, notice: "上次保存的布局无法解析，已回到默认排布。" };
   }
 
+  /**
+   * 先确认解出来的是个对象：本机里可能存着 "null"、"[]"、"3" 这类合法 JSON 但结构不对的值
+   * （旧版本写的、别的脚本写的、手改的）。不判这一下，下面读 .layoutVersion 直接 TypeError，
+   * 而它在 effect 里跑 —— 整个网格会白掉，且不只是一个键丢了的问题。
+   */
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { items: defaults, notice: "本机存的布局数据格式不对，已回到默认排布。" };
+  }
+
   // 版本先判，再判结构：格式对但版本不同，说明是旧坐标，直接丢。
   const version = (parsed as { layoutVersion?: unknown }).layoutVersion;
   const schemaVersion = (parsed as { schemaVersion?: unknown }).schemaVersion;
@@ -165,7 +174,8 @@ export function loadLayout(query: string, defaults: GridItem[]): LoadResult {
   }
 
   const { items, restored, missing } = reconcile(result.data.items, defaults);
-  if (restored === 0) return { items, notice: null };
+  // 一个 id 都对不上（模块全换了）时不能返回"整体下移后的排布"：顶部会空一大片。
+  if (restored === 0) return { items: defaults, notice: null };
 
   const notes = ["已恢复上次布局（" + restored + " 项）"];
   if (missing > 0) notes.push("丢弃 " + missing + " 个已不存在的模块位置");
@@ -177,9 +187,22 @@ export function saveLayout(query: string, items: GridItem[], aliveIds: string[])
   if (!ls) return false;
 
   const alive = new Set(aliveIds);
+  /**
+   * 落盘前先夹到 schema 的合法区间，而不是"夹不进去就报存不下"。
+   * 拖到大尺寸（h > 60）或模块多过 32 张时，schema 会拒绝整份快照，
+   * 界面就一直显示"本机存储写入失败"——那是把自己的边界当成用户的问题。
+   */
+  const seen = new Set<string>();
   const clean = items
-    .filter((it) => alive.has(it.i))
-    .map((it) => ({ i: it.i, x: it.x, y: it.y, w: it.w, h: it.h }));
+    .filter((it) => alive.has(it.i) && !seen.has(it.i) && Boolean(seen.add(it.i)))
+    .map((it) => ({
+      i: it.i,
+      x: Math.min(Math.max(0, Math.round(it.x)), GRID_COLS - 1),
+      y: Math.min(Math.max(0, Math.round(it.y)), 2000),
+      w: Math.min(Math.max(1, Math.round(it.w)), GRID_COLS),
+      h: Math.min(Math.max(1, Math.round(it.h)), 60),
+    }))
+    .slice(0, 32);
 
   const snapshot: LayoutSnapshot = {
     schemaVersion: LAYOUT_SCHEMA_VERSION,
