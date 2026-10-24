@@ -40,6 +40,7 @@ PROBE_RATE_LIMIT_PER_MIN=20         # 每 IP 检索限流，默认 3 对预览�
 PROBE_TRANSLATE_RATE_LIMIT_PER_MIN=40
 PROBE_MODULE_RATE_LIMIT_PER_MIN=20
 PROBE_CRON_SECRET=<32 位 hex>       # 热榜定时任务的钥匙；不配 /api/cron/heat 直接 503
+PROBE_SITE_URL=http://106.52.116.164 # 分享卡 og:url / og:image 的绝对前缀（不带 NEXT_PUBLIC_，部署时读）
 # OPENAI_API_KEY=               # 接上就换成模型摘要，字段名见 .env.example
 ```
 

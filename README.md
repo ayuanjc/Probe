@@ -22,6 +22,18 @@
 
 ![首页：锁标 + 搜索行，热榜在折叠线之下](docs/images/home.png)
 
+### 标语：两句话，两种字距
+
+锁标下面一行：`Micro in, Macro out` ｜ `见微，知著`。两句在同一个行盒里，但字距不是同一个值 ——
+拉丁 0.12em 就到顶，再拉开字母之间就散了；汉字要 0.26em，否则四个字挤成一团。
+
+汉字末尾会多留一个字距的空白（`letter-spacing` 加在每个字后面，包括最后一个），
+所以补一个等量负边距 `-mr-[0.26em]` 才真正视觉居中。实测 1440 视口下：拉丁 140px、
+分隔线 1px、汉字 69.3px、两处间隔各 12px，整体中心落在 720。
+
+色阶是反过来的：汉字 `neutral-500`、拉丁 `neutral-600`。11px 下汉字本来就比拉丁字母压得住，
+而这里的主读者是中文，拉丁半句是呼应 —— 让字母更亮会让一句话读成两句话。
+
 ### 24 小时热点榜：排位、火花线、三格指标
 
 排位是扫读入口，数字是细节 —— 两者不该抢字号。中间那条线是近 14 天每日提及条数，
@@ -901,6 +913,30 @@ journalctl -u probe-web -n 50 --no-pager
 改完 `systemctl restart probe-web` 即可，不需要重新构建 —— 除非改的是 `NEXT_PUBLIC_*`，那个会被打进前端。
 完整的落盘路径、回滚步骤与 nginx 片段见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
+## 分享卡与主屏图标：交给文件约定，别手写 URL
+
+- `src/app/opengraph-image.png`（1200×630）与 `src/app/apple-icon.png`（180×180）走 Next 的元数据文件约定：
+  构建过程负责路由、内容哈希与 `<meta>`，`og:image` / `twitter:image` / `apple-touch-icon` 自动生成。
+  手写 `images: [{ url: "/og.png" }]` 就要自己拼 basePath 与哈希，换部署路径必然错一次。
+- `src/app/manifest.ts`：主屏幕安装（`display: standalone`、纯黑底、theme 与 background 都 `#000`）。
+- `metadataBase` 来自 `PROBE_SITE_URL` —— 分享卡要的是绝对地址，而它只能部署时确定。
+  用不带 `NEXT_PUBLIC_` 前缀的变量：带前缀的值会在**构建期**被内联，换域名就得重新构建。
+
+三个真踩到的坑：
+
+1. **Next 只给打包出来的图片资源加 basePath**，手写的字符串路径不会。子路径部署（`/probe`）时
+   `url: "/"` 生成的是裸域名，得写成 `BASE_PATH + "/"`。实测修正前后：`http://106.52.116.164` → `http://106.52.116.164/probe/`。
+2. **manifest 里的 `start_url` / `scope` / `icons` 全是字符串**，同理必须自己带前缀，否则装到主屏后打开的是 404。
+3. 分享卡上的 **og:image 是静态 PNG**（不是动态生成）：一张固定构图 22 KB，比每次请求跑一次 `ImageResponse` 便宜，
+   也不必担心字体在服务端不存在 —— 卡片上那句中文在部分 Linux 镜像里会渲染成方框。
+
+验证方式（子路径构建）：
+
+```
+curl -s localhost:3300/probe | grep -o '<meta property="og:image"[^>]*>'
+curl -s localhost:3300/probe/manifest.webmanifest
+```
+
 ## 版本号：一个数字，两个用途
 
 页脚左下角是 `探针 V0.1.0`，`GET /api/version` 里同时给 `version` 与 `buildId`。
@@ -931,8 +967,9 @@ src/
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
               translate-types · http · settings · runtime-config · config-headers · placement · metrics · polysemy
               base-path
-  app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
-              api/metrics/route.ts · api/cron/heat/route.ts · api/version/route.ts · metrics/page.tsx
+  app/        layout · page · globals.css · manifest.ts · api/search/route.ts · api/translate/route.ts · api/module/route.ts
+              api/metrics/route.ts · api/cron/heat/route.ts · api/version/route.ts · api/feedback/route.ts · metrics/page.tsx
+              icon.svg · apple-icon.png · opengraph-image.png（元数据文件约定，不手写 URL）
   components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
               Glossary · BilingualCompare · SettingsPanel · ConfigDocs · ModuleDock · ModulePrompt
               EntityGraphCard · MetricsPanel · ClarifyCard · UpdateBanner

@@ -1,12 +1,41 @@
-
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import UpdateBanner from "@/components/UpdateBanner";
+import { BASE_PATH } from "@/lib/base-path";
 
+/**
+ * 分享卡上的绝对地址从哪来：NEXT_PUBLIC_ 前缀会在构建期被内联，这里要的是部署时再定，
+ * 所以用不带前缀的服务端变量 PROBE_SITE_URL。默认值只服务本地开发，正式部署必填。
+ */
+const SITE_URL = process.env.PROBE_SITE_URL ?? "http://localhost:3210";
+
+const TITLE = "探针 · Probe";
+// 分享卡上的那两句话：一句口号定调，一句说清它到底给什么。
+const DESCRIPTION = "见微，知著：每个数字都能点回原文。";
+
+/**
+ * openGraph / twitter 只写文案，图片交给文件约定：src/app/opengraph-image.png（1200×630）。
+ * 手写 images 数组就要自己拼 basePath 与哈希，文件约定由 Next 负责，换部署路径不用改代码。
+ */
 export const metadata: Metadata = {
-  title: "探针 · Probe",
-  description: "高置信度情报终端：每个数字都能点回原文。",
+  metadataBase: new URL(SITE_URL),
+  title: { default: TITLE, template: "%s · 探针" },
+  description: DESCRIPTION,
+  applicationName: "探针",
+  openGraph: {
+    type: "website",
+    locale: "zh_CN",
+    siteName: TITLE,
+    title: TITLE,
+    description: DESCRIPTION,
+    // 子路径部署时 canonical 要带前缀：Next 只给打包出来的图片资源加 basePath，
+    // 手写的这些字符串路径它不会改写。
+    url: BASE_PATH + "/",
+  },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
+  appleWebApp: { capable: true, title: "探针", statusBarStyle: "black-translucent" },
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 /**
