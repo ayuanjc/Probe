@@ -25,3 +25,6 @@ coverage/
 
 # 本地验证产物（截图、DOM dump、SSE 抓包、浏览器 profile）
 .tmp/
+
+# 历史基线缓存：首次构建跑 60 次 HN 请求，属于运行时产物
+.cache/

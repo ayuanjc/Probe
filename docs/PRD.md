@@ -158,6 +158,22 @@ r7 = 近 7 日均值 / 前 30 日均值
 争议态：见下（正交标签，可与上述状态叠加）
 ```
 
+🔧 **实现备注（Phase 3 第 1 项，公式与状态机已落地）**
+
+- 落地位置：`src/lib/heat.ts` 的 `seriesStats` / `statusFromSeries` / `statusReason` / `heatScore`，
+  基线管线 `src/lib/heat-history.ts`，接线 `src/lib/trending.ts`（名次改按 `score` 排，不再是 articles_24h）。
+- **分位窗口是 30 天，不是 90 天**：基线从 30 天开始攒（90 天只是上限）。攒满 90 天前写「90 天分位」
+  就是不成立的说法，所以代码、README 与术语气泡统一按 30 天表述。
+- **长尾的「持续 ≥5 天」用日量替代滚动 r7**：逐日算滚动 7 日 r7 要每天再滑一次窗，实现改为
+  「日量 / 30 天中位数连续落在 [1, 2] 的天数 ≥ 5」。两者语义接近但不完全等价，
+  标签 tooltip 写的是实现口径，不写这里原话。
+- **r7 > 2 但今天未达 P95 时归入升温期**：阈值表没有定义这一格。按「相对自己走高、但今天还不算历史高位」
+  处理，`statusReason()` 会把判据原文写进 tooltip。
+- 序列不足 14 天不出任何标签（`seriesStats` 返回 null）：两周不到算不出「平时是什么样」。
+- 争议态（GDELT GKG tone）**未实现**：GDELT 尚未接入，`degraded` 如实写 `gdelt:not_configured`，
+  UI 不再声称「GDELT 出口被限流」。
+- 后台 Cron 暂由「首页访问触发 + 10 分钟内存快照 + `.cache/hn-history.json` 落盘」替代；
+  serverless 部署需要外部定时器调用 `ensureHistory()`，否则基线只在有人访问时才更新。
 🔧 **V1.1 争议态与情感数据源**
 
 “正负面新闻数量对比”必须先回答 sentiment 从哪来——否则这一格就是全产品唯一“自己编数据却叫数据”的地方。
@@ -374,7 +390,8 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 
 ### Phase 3（热度算法、状态机与实体图 — 3 个月）
 
-- 后台 Cron 热点计算任务：完整热度公式 + 状态阈值表 + 争议态（GDELT tone）。
+- 后台 Cron 热点计算任务：热度公式 + 状态阈值表 **已实现**（见 2.3 实现备注），名次改按 score 排；
+  后台 Cron 与争议态（GDELT tone）待接入 —— 现由首页访问触发，争议态缺数据源。
 - 实体关系图：**先用 Postgres 邻接表 + pgvector 做 2 跳查询出树状图**，Neo4j 仅在明确触到性能上限后再评估。
 - 可观测性面板（耗时 / token / 降级率 / 置信度分布）。
 - **验收**：附录 C 四条全过；热点状态标签与阈值表一致。
