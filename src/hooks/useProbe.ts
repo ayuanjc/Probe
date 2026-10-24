@@ -104,16 +104,28 @@ export function useProbe() {
     [flushText],
   );
 
-  // 卸载后还在跑的 rAF 与流都会往已卸载的 state 里写：两个都停掉。
-  useEffect(
-    () => () => {
-      abortRef.current?.abort();
-      abortRef.current = null;
-      cancelFlush();
-      pendingText.current = "";
-    },
-    [cancelFlush],
-  );
+  /**
+   * 卸载后还在跑的 rAF 与流都要停掉，但不能「一卸载就 abort」。
+   *
+   * 开发模式的 StrictMode 会在挂载后立刻卸载再挂载一次，而首页「带 ?q= 自启一轮」的
+   * effect 用 booted ref 只发一次 —— 如果在第一次卸载时就 abort，那条请求会被杀掉，
+   * 而 booted 已经是 true，第二次挂载不会再发，页面就永远停在「检索中」。
+   * 所以卸载后延到下一个宏任务再决定：仍在挂载（说明是 StrictMode 抖动）就不动它。
+   */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      window.setTimeout(() => {
+        if (mountedRef.current) return;
+        abortRef.current?.abort();
+        abortRef.current = null;
+        cancelFlush();
+        pendingText.current = "";
+      }, 0);
+    };
+  }, [cancelFlush]);
 
   /**
    * extraHeaders 用来随请求带上「设置」里用户自己的 key。

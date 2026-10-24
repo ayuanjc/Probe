@@ -238,7 +238,7 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
     const { hits } = await fetchStories(since);
     stories = hits.map(toStory).filter((s): s is TrendingStory => s !== null);
   } catch (err) {
-    degraded.push("hn");
+    degraded.push("hn:failed");
     console.warn("[trending] hn failed:", err instanceof Error ? err.message : err);
   }
 
@@ -278,7 +278,19 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
     degraded,
   };
 
+  /**
+   * 缓存时长分三档，理由都是同一件事：别让一次坏运气钉住十分钟。
+   * - 基线没就绪 / 抓取失败 / 一个话题都没聚出来 → 60 秒，下一个人再看就是新的一次尝试；
+   * - 一切正常 → 10 分钟，HN 是分钟级更新的，没必要更勤。
+   * 之前只有「基线没就绪」算短档，于是一次瞬时网络失败（fetch failed）会把
+   * 「0/0 条进入统计」的空榜钉满十分钟 —— 页面上看起来像产品坏了，其实是缓存。
+   */
   const baselineReady = Boolean(history) && !historyState.pending;
-  cache = { at: now, ttl: baselineReady ? CACHE_TTL_MS : CACHE_TTL_PENDING_MS, snapshot };
+  const failed = degraded.some((c) => c.endsWith(":failed")) || topics.length === 0;
+  cache = {
+    at: now,
+    ttl: baselineReady && !failed ? CACHE_TTL_MS : CACHE_TTL_PENDING_MS,
+    snapshot,
+  };
   return snapshot;
 }
