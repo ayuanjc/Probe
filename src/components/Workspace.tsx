@@ -376,14 +376,22 @@ export default function Workspace({
           </button>
         </motion.div>
 
-        {/* 只在首页出现的一行标语：结果页顶栏里再放一句口号就成装饰了。 */}
+        {/* 只在首页出现的一行标语：结果页顶栏里再放一句口号就成装饰了。
+            中英各一句，间距按字宽分开调：拉丁句拉开 0.12em 就够，汉字在同一档里
+            会显得挤，配 0.26em；汉字尾部多出一个字距，补等量负边距才真正居中。 */}
         {!searched && (
           <motion.p
             layout
             transition={SPRING}
-            className="font-mono text-[11px] tracking-[0.18em] text-neutral-600"
+            className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-neutral-600"
           >
-            无源不显示 · 缺失不填 0
+            <span className="font-mono text-[11px] tracking-[0.12em] text-neutral-600">
+              Micro in, Macro out
+            </span>
+            <span aria-hidden className="h-3 w-px bg-neutral-800" />
+            {/* 汉字在 11px 上本来就比拉丁字母压得住，所以让它是两级里更亮的那个：
+                这里的主读者是中文，拉丁半句是呼应不是主角。 */}
+            <span className="-mr-[0.26em] text-[11px] tracking-[0.26em] text-neutral-500">见微，知著</span>
           </motion.p>
         )}
 

@@ -110,7 +110,7 @@ export default function ProbeLogo({
   orientation = "horizontal",
   nodeColor = "#3b82f6",
   lineColor = "rgba(255,255,255,0.9)",
-  subtitle = "探针 · 高置信度情报终端",
+  subtitle = "Micro in, Macro out · 见微，知著",
   className,
 }: ProbeLogoProps) {
   const vertical = orientation === "vertical";
