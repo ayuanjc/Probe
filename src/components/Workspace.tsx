@@ -5,6 +5,7 @@ import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
 import ModuleGrid from "./ModuleGrid";
+import EntityGraphCard from "./EntityGraphCard";
 import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
 import ProbeLogo from "./ProbeLogo";
@@ -258,6 +259,12 @@ export default function Workspace({
               gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
             />
           )}
+
+          {/*
+            共现图放在面板与信源之间：它既解释「面板里那些词为什么一起出现」，
+            又需要下方的信源来当证据，所以在阅读顺序上正好夹在中间。
+          */}
+          {state.entityGraph && <EntityGraphCard graph={state.entityGraph} sources={state.sources} />}
 
           {state.sources.length > 0 && (
             <section className="panel overflow-hidden">

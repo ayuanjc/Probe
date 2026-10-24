@@ -3,6 +3,7 @@ import type { ProbeEvent, SourceRef } from "@/lib/sse";
 import type { Intent } from "@/lib/schemas";
 import { streamSummary } from "@/lib/llm";
 import { isDemoOnly } from "@/lib/confidence";
+import { buildEntityGraph } from "@/lib/entity-graph";
 import { routeQuery } from "./route";
 import { retrieve } from "./retrieve";
 import { analyze } from "./analyze";
@@ -208,6 +209,16 @@ export async function* runPipeline(
   }));
 
   yield { event: "sources", data: { sources: sourceRefs, confidence: analysis.confidence } };
+
+  /**
+   * 共现图要在 sources 之后发：节点里存的是信源 id，前端拿它去刚收到的
+   * SourceRef 里换标题与链接。出不了图（实体太散、边太少）就整条不发 ——
+   * 与其画一张全是孤立点、看不出结构的图，不如不出现这张卡。
+   */
+  const graph = buildEntityGraph(analysis.sources, intent.query);
+  if (graph.graph) {
+    yield { event: "entity.graph", data: graph.graph };
+  }
 
   yield {
     event: "done",

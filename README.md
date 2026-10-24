@@ -436,17 +436,50 @@ Esc、点外部、再点一次都能关。
 路由限流 12 次/分钟（`PROBE_MODULE_RATE_LIMIT_PER_MIN`），和搜索分开计数：
 本机规则是廉价调用，但走到模型路径要花钱，别让它变成无限次试用。
 
+## 实体关系图：边是「一起出现过」，不是「有关系」
+
+PRD 里这一项写的是 Postgres 邻接表 + pgvector 的「向量近邻 2 跳」。这个仓库没有数据库、
+也没有 embedding，所以落地的是**本轮信源的共现快照**：节点是实体，边是两个名字在
+同一条标题里同时出现过，权重是共同出现的信源条数。它跟着这一轮走，刷新或换问题就重建——
+这件事同时写在图和术语气泡里，不让人误以为底下有个知识库。
+
+三个决定值得单独说：
+
+- **词边界匹配**。词典里 `meta` / `eu` 这类短别名用 `includes` 会命中 `metadata` / `europe`，
+  凭空造出一个假枢纽。所以英文一律走 `(?<![A-Za-z0-9])term(?![A-Za-z0-9])`，中文才用 `includes`。
+- **边权下限是 1，不是 2**。第一版卡 2，结果四条完全不同的查询给出同一张 4 节点图——
+  本轮信源常常只有二十几条，卡 2 等于让多数真实查询出不了图。所以 weight 1 也画，但画成
+  虚线灰色，语义是「只有一条信源这么写，当候选看」。
+- **一次性实体要么不进，要么必须连着主干**。只出现一次的词典实体（Linux、WebAssembly）
+  只有在与主干节点共现时才补进来；否则图里全是孤立的单点，那不是结构，是毛球。
+
+出不了图就整张卡不出现（主干 <4 个实体的函数返回 null 并给原因），而不是画一张全是散点的图
+假装有信息。真实查询 `Rust` 的实测：8 个节点 / 8 条边 / 41 条信源，SSE payload 1.4 KB，
+枢纽是 Rust（40 条信源），外圈是 TypeScript、Adobe、微软、Linux、WebAssembly、Python、大语言模型。
+
+交互上只做一件事：点一个节点，只看它 **2 跳**之内的邻域（1 跳 = 直接同现，2 跳 = 那些
+实体的邻居），右侧列出该实体自己的证据信源。2 跳是**共现边的 2 跳，不是向量近邻**——
+没有 embedding 就不假装有。
+
+画布上的圆点键盘到不了、读屏也念不出来，所以图下面并排放着同一批入口（按被提及次数
+排序的前 6 个实体）。这是无障碍兜底，不是第二套导航。
+
+一个踩到的坑：ECharts 的 canvas 用 `height: 100%`，只对「高度已定」的父元素生效。
+卡片里之所以没问题，是因为父级是 flex 列；这里父级是普通块，只给 `min-height` 会让
+百分比失效、canvas 退到默认 100px。套一层定高 `flex` 列解决（实测从 100px 变 360px）。
+
 ## 目录
 
 ```
 src/
   agents/     route · retrieve · analyze · compose · pipeline
-  lib/        schemas · confidence · heat · heat-history · topic-terms · compile · layout · module-catalog · module-plan · sse · llm
+  lib/        schemas · confidence · heat · heat-history · topic-terms · entity-graph · compile · layout · module-catalog · module-plan · sse · llm
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
               translate-types · http · settings · runtime-config · config-headers · placement
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
   components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
               Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
+              ChartBox · EntityGraphCard
   hooks/      useProbe.ts
 ```
 

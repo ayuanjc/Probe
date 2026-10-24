@@ -1,4 +1,5 @@
 
+import type { EntityGraph } from "./entity-graph";
 import type { Confidence, Field, Intent, ModuleSpec } from "./schemas";
 
 /**
@@ -47,6 +48,11 @@ export type ProbeEvent =
       data: { id: string; reason: ModuleErrorReason; fallback: "table" | "none"; detail?: string };
     }
   | { event: "sources"; data: { sources: SourceRef[]; confidence: Confidence } }
+  /**
+   * 实体共现图。放在 sources 之后、done 之前：它带着每条边的信源 id，
+   * 前端的「证据来源」要拿这些 id 去 sources 里查标题与链接。
+   */
+  | { event: "entity.graph"; data: EntityGraph }
   | {
       event: "done";
       data: {

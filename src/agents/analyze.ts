@@ -11,6 +11,7 @@ import {
 import { generateStructured, llmEnabled } from "@/lib/llm";
 import { toneBucket } from "@/lib/heat";
 import { titleSimilarity } from "@/lib/text";
+import { titleTerms } from "@/lib/entity-graph";
 
 /**
  * 分析层：去重 → 抽取 → 聚合。三条硬规则：
@@ -128,30 +129,6 @@ function hourParts(iso: string): { wd: number; hour: number } | null {
   if (wd === undefined || !Number.isFinite(h)) return null;
   // en-US 的 hour12:false 在午夜给的是 24，不是 0。
   return { wd, hour: ((h % 24) + 24) % 24 };
-}
-
-/**
- * 标题里的专名候选：连续大写开头的词串（Nvidia / Hacker News / GPT-5）。
- * 句首普通大写字会被抽出一些噪声，交给「至少出现在 3 条标题里」这道闸筛掉。
- */
-const TERM_STOP = new Set([
-  "The", "A", "An", "In", "On", "At", "For", "And", "But", "How", "Why", "What", "New",
-  "This", "That", "It", "Is", "Are", "To", "Of", "With", "From", "After", "Before", "As",
-  "By", "Not", "No", "Its", "His", "Her", "Their", "We", "You", "They", "My", "Our", "More",
-  "Most", "Some", "One", "Two", "Three", "Best", "Top", "When", "Where", "Who", "Which", "Just",
-  "Now", "Still", "Even", "Only", "Also", "Can", "Could", "Should", "Would", "Will", "Has", "Have",
-]);
-
-function titleTerms(title: string): string[] {
-  const found = title.match(/[A-Z][A-Za-z0-9]*(?:[ .+-][A-Z][A-Za-z0-9]*)*/g) ?? [];
-  const out = new Set<string>();
-  for (const rawTerm of found) {
-    const term = rawTerm.replace(/[ .,]+$/, "").trim();
-    if (term.length < 2 || term.length > 26) continue;
-    if (TERM_STOP.has(term)) continue;
-    out.add(term);
-  }
-  return [...out];
 }
 
 export async function analyze(intent: Intent, raw: RawSource[]): Promise<AnalysisResult> {

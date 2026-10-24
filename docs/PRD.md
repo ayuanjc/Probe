@@ -393,6 +393,14 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 - 后台 Cron 热点计算任务：热度公式 + 状态阈值表 **已实现**（见 2.3 实现备注），名次改按 score 排；
   后台 Cron 与争议态（GDELT tone）待接入 —— 现由首页访问触发，争议态缺数据源。
 - 实体关系图：**先用 Postgres 邻接表 + pgvector 做 2 跳查询出树状图**，Neo4j 仅在明确触到性能上限后再评估。
+  🔧 **实现备注（Phase 3 第 2 项，本轮快照版已落地）**：仓库没有 Postgres、也没有 embedding，
+  所以落地的是「本轮信源的共现快照」——`src/lib/entity-graph.ts` 从这一轮 RawSource 抽实体、
+  按「同一条标题里同时出现」建边，`neighborhood(graph, id, 2)` 做共现边的 2 跳 BFS。
+  与 PRD 的差异逐条如实标注：① 不持久（跟着这一轮走，刷新即重建），不是知识库；
+  ② 2 跳是共现边的 2 跳，不是向量近邻；③ 边权下限取 1（权 1 画虚线当候选）而不是 2，
+  因为本轮信源常只有二十几条，卡 2 会让多数查询出不了图；④ 出不了图（主干 <4 实体或
+  边 <3）就整张卡不出现，不画散点充数；⑤ 词典匹配走词边界，避免 meta→metadata 这类假枢纽。
+  换回 Postgres 时只需让 `buildEntityGraph` 改为读库、`neighborhood` 改为递归 CTE，其余不变。
 - 可观测性面板（耗时 / token / 降级率 / 置信度分布）。
 - **验收**：附录 C 四条全过；热点状态标签与阈值表一致。
 

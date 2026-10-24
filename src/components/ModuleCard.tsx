@@ -1,11 +1,11 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useMemo } from "react";
 import type { Dataset, Field } from "@/lib/schemas";
 import { compile } from "@/lib/compile";
 import type { ModuleState } from "@/hooks/useProbe";
 import type { SourceRef } from "@/lib/sse";
+import ChartBox from "./ChartBox";
 
 /** compile() 的原因码，翻成人能读的一句。 */
 const REASON_TEXT: Record<string, string> = {
@@ -19,11 +19,6 @@ const REASON_TEXT: Record<string, string> = {
   funnel_constraint: "漏斗不满足逐级收窄",
   graph_constraint: "共现关系不足以成图",
 };
-
-const Chart = dynamic(() => import("echarts-for-react"), {
-  ssr: false,
-  loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-md" />,
-});
 
 /**
  * 每张卡都挂着一张 ECharts。流式期间摘要每变一个字父组件就重渲染一次，
@@ -154,58 +149,6 @@ function ModuleCard({
         )}
       </div>
     </section>
-  );
-}
-
-/**
- * 图表容器：ECharts 只知道 window 尺寸，不知道"卡片被拖大了"。
- * 原来把卡片从 4×8 拖到 6×11，canvas 还是旧尺寸，图被拉花。
- * 这里用 ResizeObserver 盯容器，按帧去抖后再 resize（拖拽途中不重算，
- * 松手才真正重绘一次），顺手把 devicePixelRatio 上限压到 2 ——
- * 4K/2x 屏上 canvas 一帧要填 4 倍像素，那是白烧的电。
- */
-function ChartBox({ option }: { option: Record<string, unknown> }) {
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const instRef = useRef<{ resize: () => void } | null>(null);
-
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    let raf = 0;
-    let lastW = 0;
-    let lastH = 0;
-    const ro = new ResizeObserver(() => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w === lastW && h === lastH) return;
-      lastW = w;
-      lastH = h;
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        instRef.current?.resize();
-      });
-    });
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  return (
-    <div ref={boxRef} className="min-h-[180px] flex-1">
-      <Chart
-        option={option}
-        style={{ height: "100%", width: "100%" }}
-        notMerge
-        lazyUpdate
-        opts={{ renderer: "canvas" }}
-        onChartReady={(inst: { resize: () => void }) => {
-          instRef.current = inst;
-        }}
-      />
-    </div>
   );
 }
 

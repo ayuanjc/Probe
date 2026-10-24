@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
 import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
+import type { EntityGraph } from "@/lib/entity-graph";
 
 export type ModuleState = {
   id: string;
@@ -32,6 +33,8 @@ export type ProbeState = {
   modules: ModuleState[];
   sources: SourceRef[];
   confidence: Confidence | null;
+  /** 本轮信源的实体共现图；出不了图时是 null（界面上那张卡就不出现）。 */
+  entityGraph: EntityGraph | null;
   degraded: string[];
   elapsedMs: number | null;
   error: string | null;
@@ -45,6 +48,7 @@ const IDLE: ProbeState = {
   modules: [],
   sources: [],
   confidence: null,
+  entityGraph: null,
   degraded: [],
   elapsedMs: null,
   error: null,
@@ -201,6 +205,8 @@ export function useProbe() {
             };
           case "sources":
             return { ...s, sources: event.data.sources, confidence: event.data.confidence };
+          case "entity.graph":
+            return { ...s, entityGraph: event.data };
           case "done":
             return {
               ...s,
