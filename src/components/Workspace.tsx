@@ -176,6 +176,43 @@ export default function Workspace({
     }
   }, [reset]);
 
+  const logoRef = useRef<HTMLDivElement | null>(null);
+  const logoBtnRef = useRef<HTMLButtonElement | null>(null);
+  const logoPopTimer = useRef<number | null>(null);
+
+  /**
+   * 点一下锁标，把「画线 → 节点依次落位」重播一遍。
+   * 类名没变 CSS 动画就不会重来，所以必须摘掉 → 强制回流 → 挂回。
+   * 三步放在同一个任务里：浏览器来不及画中间态，看不到闪烁。
+   * 回弹挂在 button 上而不是外层 motion.div —— 那条 div 的 transform
+   * 归 framer-motion 的 layout 动画管，两套动画抢同一个属性会互相打断。
+   */
+  const replayLogo = useCallback(() => {
+    const host = logoRef.current;
+    if (!host) return;
+    host.classList.remove("logo-anim");
+    void host.offsetWidth;
+    host.classList.add("logo-anim");
+
+    const btn = logoBtnRef.current;
+    if (!btn) return;
+    btn.classList.remove("logo-pop");
+    void btn.offsetWidth;
+    btn.classList.add("logo-pop");
+    if (logoPopTimer.current !== null) window.clearTimeout(logoPopTimer.current);
+    logoPopTimer.current = window.setTimeout(() => {
+      btn.classList.remove("logo-pop");
+      logoPopTimer.current = null;
+    }, 340);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (logoPopTimer.current !== null) window.clearTimeout(logoPopTimer.current);
+    },
+    [],
+  );
+
   // 从首页进入结果页时把视口拉回顶部，否则「锁标上推」这段动画有一半在屏幕外。
   useEffect(() => {
     if (searched && typeof window !== "undefined") window.scrollTo({ top: 0 });
@@ -273,13 +310,18 @@ export default function Workspace({
         <motion.div
           layout
           transition={SPRING}
-          className={searched ? "shrink-0" : "logo-in flex justify-center"}
+          ref={logoRef}
+          className={searched ? "logo-anim shrink-0" : "logo-anim flex justify-center"}
         >
           <button
+            ref={logoBtnRef}
             type="button"
-            onClick={newSearch}
-            aria-label="回到首页"
-            title="回到首页"
+            onClick={() => {
+              replayLogo();
+              if (searched) newSearch();
+            }}
+            aria-label={searched ? "回到首页" : "重播 Logo 动画"}
+            title={searched ? "回到首页（会重播一次 Logo）" : "点一下，重播 Logo 动画"}
             className="flex cursor-pointer items-center"
           >
             <ProbeLogo

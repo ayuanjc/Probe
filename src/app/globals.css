@@ -246,38 +246,61 @@ kbd {
 
 /* ——— 锁标入场 ———
    先把轴线画出来，三个节点再依次落位：把「沿一条线持续采样」这件事演一遍，
-   比整块图形淡入更像这个产品在干的事。只在首页封面用（.logo-in），
-   Header 里的小锁标不动 —— 每次导航都重演一遍就是骚扰。 */
-.logo-in svg line {
+   比整块图形淡入更像这个产品在干的事。
+   首页封面与结果页顶栏共用同一个类；进页面播一次，点一下锁标重播一次
+   （重播靠 JS 摘掉再挂回这个类，CSS 动画不会因为类没变而自己重来）。
+   注意：动画的初始态写在这个类里 —— 类被摘掉的那一帧，svg 会瞬间回到终态。
+   所以重播必须在同一个任务里摘掉 → 强制回流 → 挂回，不能跨帧，否则会闪一下。 */
+.logo-anim svg line {
   /* 轴长 √(32² + 32²) = 45.25：虚线长度必须等于线长，才能从"全空"画到"全满"。 */
   stroke-dasharray: 45.3;
   stroke-dashoffset: 45.3;
   animation: logo-draw 880ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.logo-in svg circle {
+.logo-anim svg circle {
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
   animation: logo-node 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.logo-in svg circle:nth-of-type(1) {
+.logo-anim svg circle:nth-of-type(1) {
   animation-delay: 240ms;
 }
-.logo-in svg circle:nth-of-type(2) {
+.logo-anim svg circle:nth-of-type(2) {
   animation-delay: 380ms;
 }
-.logo-in svg circle:nth-of-type(3) {
+.logo-anim svg circle:nth-of-type(3) {
   animation-delay: 500ms;
 }
 
 /* 中间那颗原本靠 Tailwind 的 animate-pulse 呼吸，入场动画会顶掉它；
    这里把「落位」和「呼吸」两段叠在一起，落位之后接着呼吸。 */
-.logo-in svg circle.animate-pulse {
+.logo-anim svg circle.animate-pulse {
   animation:
     logo-node 380ms cubic-bezier(0.16, 1, 0.3, 1) 380ms forwards,
     logo-breathe 3.4s ease-in-out 900ms infinite;
+}
+
+/* 点击锁标的回弹：只动 scale，不动位置。挂在 button 上而不是外层
+   motion.div 上 —— 那条 div 的 transform 由 framer-motion 的 layout 动画写内联样式，
+   两套动画抢同一个属性会互相打断。 */
+.logo-pop {
+  animation: logo-pop 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: center;
+}
+
+@keyframes logo-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(0.94);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 @keyframes logo-draw {
@@ -310,14 +333,27 @@ kbd {
 /* 系统里关了动效：直接给终态。否则动画被撤销后，元素会停在
    stroke-dashoffset: 45.3 / opacity: 0 的初始样式上 —— 画面里什么都没有。 */
 @media (prefers-reduced-motion: reduce) {
-  .logo-in svg line {
+  .logo-anim svg line {
     stroke-dasharray: none;
     stroke-dashoffset: 0;
     animation: none;
   }
 
-  .logo-in svg circle {
+  .logo-anim svg circle {
     opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  /* 中间那颗的呼吸是「两段动画写成一条简写」的规则，选择器多一个 .animate-pulse，
+     特异度高于上面那条 —— 不单独关掉，系统关了动效它还在慢慢明暗。 */
+  .logo-anim svg circle.animate-pulse {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .logo-pop {
     transform: none;
     animation: none;
   }
