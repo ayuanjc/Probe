@@ -102,10 +102,16 @@ BASE=http://127.0.0.1:3215/probe PROBE_USER=admin PROBE_PASS='...' node scripts/
 
 1. `GET https://api.github.com/repos/ayuanjc/Probe/commits/main` → `sha`；与 `deployed-sha` 相同就直接退出（安静）。
 2. `GET https://codeload.github.com/ayuanjc/Probe/tar.gz/<sha>` → 解压到 `/opt/probe/stage/new`。
-3. `tar` 管道覆盖源码（排除 `node_modules` / `.next`），`package-lock.json` 变了才 `npm ci`。
-4. `PROBE_DIST_DIR=.next-staging npx next build`；**构建失败就删掉 staging，线上继续跑旧版本**。
-5. `mv .next .next-old && mv .next-staging .next` → `systemctl restart probe-web`。
-6. `curl /probe/api/version` 自检：通了写 `deployed-sha`、删 `.next-old`；不通就换回 `.next-old` 再重启。
+3. **先整棵删掉 `src/` `scripts/` `tests/` `docs/` `public/`**，再用 `tar` 管道覆盖源码
+   （排除 `node_modules` / `.next`；`.data` `.cache` 不在这些目录里，动不到）。
+   为什么必须先删：tar 只覆盖同名文件，**不会删掉「上一版有、这一版没有」的文件** ——
+   删了一个路由，线上它却还在。2026-10 就踩过一次（`/admin` 已从仓库删除，服务器上照样能访问）。
+   顺手 `rm -rf .next/types`：tsconfig 的 `include` 指向这份**上次构建生成的**类型，
+   路由删了它仍指着 `src/app/admin/page.js`，`next build` 会在 typecheck 阶段报 TS2307 整单失败。
+4. `package-lock.json` 变了才 `npm ci`。
+5. `PROBE_DIST_DIR=.next-staging npx next build`；**构建失败就删掉 staging，线上继续跑旧版本**。
+6. `mv .next .next-old && mv .next-staging .next` → `systemctl restart probe-web`。
+7. `curl /probe/api/version` 自检：通了写 `deployed-sha`、删 `.next-old`；不通就换回 `.next-old` 再重启。
 
 为什么不用 `git pull`：这台机器到 `github.com` 的 TLS 会被打断（`GnuTLS recv error (-110)`），
 `git clone` / `git fetch` 从没成功过；`api.github.com` 与 `codeload.github.com` 正常。
