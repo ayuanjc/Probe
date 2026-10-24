@@ -91,6 +91,15 @@ export type TrendingSnapshot = {
   fetchedAt: string;
   windowHours: number;
   /** 抓到的 story 总数 */
+  /**
+   * 上游返回的原始条数（标题长度、points 过滤之前）。
+   *
+   * 页面上写的是「considered / raw 条进入统计」—— 分母必须是原始命中数。
+   * 原来把过滤后的 fetchedStories 当分母，于是「3/3 条进入统计」看起来很健康，
+   * 其实上游给了 300 条、297 条被悄悄丢掉。
+   */
+  rawStories: number;
+  /** 通过了标题长度与 URL 检查、进入聚合的条数 */
   fetchedStories: number;
   /** 达到 MIN_POINTS、真正参与聚合的条数 */
   consideredStories: number;
@@ -239,10 +248,12 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
    * 两次都失败才记 hn:failed —— 那才是真的拿不到。
    */
   let stories: TrendingStory[] = [];
+  let rawStories = 0;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 2 && stories.length === 0; attempt++) {
     try {
       const { hits } = await fetchStories(since);
+      rawStories = hits.length;
       stories = hits.map(toStory).filter((s): s is TrendingStory => s !== null);
     } catch (err) {
       lastErr = err;
@@ -258,6 +269,8 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
   // 所以降级说明只写事实：单源。不要说成"出口被限流"——那是编的原因。
   degraded.push("gdelt:not_configured");
   if (stories.length === 0) degraded.push("stories:empty");
+  // 标题太短被丢掉是事实，就该说出来（「GPT-5」这种真的会被丢）。
+  if (rawStories > stories.length) degraded.push("stories:short_title");
 
   const fetchedStories = stories.length;
   const considered = stories.filter((s) => s.points >= MIN_POINTS);
@@ -283,6 +296,7 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
   const snapshot: TrendingSnapshot = {
     fetchedAt: new Date(now).toISOString(),
     windowHours: WINDOW_HOURS,
+    rawStories,
     fetchedStories,
     consideredStories: considered.length,
     topics,

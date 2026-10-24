@@ -188,6 +188,8 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
   // 没有译文时逐段标色只会骗人：绿色看起来像"质检通过"，其实什么都没翻。
   // 两种"没有译文"要分开：引擎挂了（要报警）vs 原文本来就是中文（无需翻译）。
   const noEngine = data.engine === "none" && data.needsTranslation;
+  /** 语言没认出来：既不是"引擎挂了"，也不是"本来就是中文"，要单独说。 */
+  const unknownLang = data.degraded.includes("lang:unknown");
   const singleColumn = noEngine || !data.needsTranslation;
   return (
     <div
@@ -236,9 +238,16 @@ function CompareBody({ data, onRetry }: { data: TranslateResult; onRetry: () => 
         </p>
       )}
 
-      {!data.needsTranslation && (
+      {!data.needsTranslation && !unknownLang && (
         <p className="mt-3 text-[11px] leading-relaxed text-neutral-500">
           原文本来就是中文：只做分段，不产生翻译，也就没有可标的歧义。
+        </p>
+      )}
+
+      {unknownLang && (
+        <p className="mt-3 text-[11px] leading-relaxed text-neutral-500">
+          没认出原文语言（很短的标题或中英混排会这样）：只做分段，不翻译、不上色 ——
+          认不出语言就判断"译得准不准"是没有依据的。
         </p>
       )}
 

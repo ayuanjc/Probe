@@ -155,3 +155,45 @@
 - `Workspace` 的 `popstate` 现在真的能回到上一次结果：所有界面发起的检索统一走 `startSearch()`
   （先 `run` 再 `pushState`），「新建搜索」用 `replaceState` 清 `?q=`。
   实测 Rust → OpenAI → 后退回到 `?q=Rust` 且 7 张卡都在，前进回到 OpenAI 同样 7 张。
+
+## 修复记录（第四轮：P1 剩余清单）
+
+### 网络与抓取
+- **正文按 charset 解码**（`http.ts`）：请求头显式 `accept-encoding: identity`；新增 `decodeBody()`，
+  按 `content-encoding` 用 `gunzip/inflate/brotliDecompress`（解不开就按原样），再按 `content-type` 的
+  `charset=` 用 `TextDecoder` 解码。原来一律 `toString("utf8")`，GBK/Big5 站点整篇乱码，
+  而下游还在乱码上切句、比数字、比专名 —— 那比直接失败更糟。
+- **重定向坏 Location 不再 500**（第三轮已修）：`new URL(location, parsed)` 包了 try，非法跳转回 `invalid_redirect`。
+
+### 限流
+- `api/search` 的 `PROBE_RATE_LIMIT_PER_MIN` 走 `readLimit()`：空/非数字/≤0 时打一行 warn 并回落默认值。
+  原来 `Number("abc")` 是 NaN，而 `recent.length >= NaN` 恒 false —— 一个笔误的环境变量会**静默关掉限流**。
+- `hitRateLimit` 在表大于 512 条时清掉全部过期 key（原来每个 IP 一条永久记录）。
+
+### 指标与文案的口径
+- **`trending` 的分母**：新增 `rawStories`（上游原始命中数），页面改「considered / raw 条进入统计」；
+  标题太短被丢时记 `degraded: stories:short_title`。原来分母是过滤后的条数，「3/3 条进入统计」看着健康，
+  其实上游给了 300 条、297 条被悄悄丢掉。
+- **`TrendingBoard.fmtTime` 固定 `Asia/Shanghai`**：时间戳由服务端渲染，不指定时区时部署机（UTC）与
+  浏览器（+08:00）会算出两个字符串 —— 水合警告，以及「更新于 11:30」其实是 19:30。
+- **`translate` 的平均歧义**：`overall` 回到 `overallRisk(scores)`（全部段落作分母）。原来只对「有风险」的段求平均，
+  48 段错 1 段与全部译错同分，而界面写的是「平均歧义」。
+- **认不出语言不再冒充「原文已是中文」**：`from === "unknown"` 时记 `degraded: lang:unknown`、
+  信号 `lang_unknown`，面板文案改「只做分段，不翻译、不上色」。
+- **模型名不再被静默丢弃**：`cleanModel` 放行 `/` 与 `@`，长度 2..80。原来 `openai/gpt-4o`（网关写法）
+  与 `gpt 4o` 都会变成「没填」，用户只看到模型没换、没有任何提示。
+- **funnel 的 `minSize` 24% → 2%**：末级被放大到 24% 宽而 label 写真实数字，图形与真值自相矛盾。
+- **溯源的证据集对齐**：`pipeline` 的 `citeIds` 由 `slice(0,20)` 改成 `slice(0,40)`（与信源列表同上限），
+  浮层顶部写明「本轮证据 N 条 · 面板是聚合结果」。原来卡片只认前 20 条，比下面列出的信源还少。
+
+### 资源与无障碍
+- **模型请求可被 abort**：`streamSummary(prompt, sink, signal)` 把 `AbortSignal` 传给 `streamText`；
+  `pipeline` 用一个 `AbortController`，`gone()` 时 abort、`finally` 里兜底。
+  原来 `gone()` 只是 `return`，上游照样跑到结束 —— 线程与额度都在没人听的时候烧掉。
+- **设置抽屉的焦点陷阱**：Tab 首尾相接、打开时把焦点送进抽屉、关闭时还给原来的元素（`aria-modal` 才算数）。
+
+### 仍未修（明确的取舍）
+- **#32 跨 720px 阈值整批重挂载**（`ModuleGrid` 单列回退与网格是两棵树）：修它要把窄屏也塞进 `GridLayout`
+  并重排高度语义，收益是一次罕见的窗口缩放少一次 ECharts 重建 —— 风险大于收益，留着。
+- **#40 逐条数字 → 单条信源的映射**：面板是聚合结果（按日文章数来自 39 篇），没有可给的逐条映射；
+  本轮把上限与文案改诚实，真正的逐条指认要等 dataset 带上 `sourceIds` 行级归属。

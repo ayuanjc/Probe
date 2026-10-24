@@ -14,6 +14,7 @@
  */
 
 import { lookup } from "node:dns/promises";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { isIP } from "node:net";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -150,6 +151,32 @@ export async function hostAllowed(hostname: string): Promise<boolean> {
   return ok;
 }
 
+/**
+ * 按 charset 解码正文，并兜住「说了 identity 却还是压缩」的情况。
+ *
+ * 一律 utf8 的后果不是"偶尔出现方块"，而是 GBK/Big5 站点整篇乱码：
+ * 下游按句子切段、按数字比对专名，全都在乱码上做 —— 那比直接失败更糟。
+ */
+function decodeBody(buf: Buffer, contentType: string, contentEncoding: string): string {
+  let raw = buf;
+  const enc = contentEncoding.toLowerCase().trim();
+  try {
+    if (enc === "gzip" || enc === "x-gzip") raw = gunzipSync(buf);
+    else if (enc === "deflate") raw = inflateSync(buf);
+    else if (enc === "br") raw = brotliDecompressSync(buf);
+  } catch {
+    // 解不开就按原样继续：宁可乱码，也不要在这里把整次抓取判失败。
+    raw = buf;
+  }
+  const m = /charset="?([w-]+)/i.exec(contentType);
+  const charset = (m?.[1] ?? "utf-8").toLowerCase();
+  try {
+    return new TextDecoder(charset, { fatal: false }).decode(raw);
+  } catch {
+    return raw.toString("utf8");
+  }
+}
+
 export async function getDirect(url: string, opts: Options = {}): Promise<DirectReply> {
   const { timeoutMs = 8000, headers = {}, maxRedirects = 3, maxBytes = 2_000_000 } = opts;
 
@@ -173,7 +200,16 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
       parsed,
       {
         method: "GET",
-        headers: { "user-agent": DEFAULT_UA, ...headers },
+        headers: {
+          "user-agent": DEFAULT_UA,
+          /**
+           * 只要明文。默认不声明时多数站点会给 identity，但也有站点照样压 gzip，
+           * 于是我们拿到的是一坨二进制再按 utf8 解码 —— 正文直接变乱码。
+           * 明确要 identity，拿到什么就是什么。
+           */
+          "accept-encoding": "identity",
+          ...headers,
+        },
       },
       (res) => {
         const status = res.statusCode ?? 0;
@@ -219,7 +255,11 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
             ok: true,
             status,
             contentType: String(res.headers["content-type"] ?? ""),
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: decodeBody(
+              Buffer.concat(chunks),
+              String(res.headers["content-type"] ?? ""),
+              String(res.headers["content-encoding"] ?? ""),
+            ),
             truncated,
           });
         });
@@ -234,7 +274,11 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
               ok: true,
               status,
               contentType: String(res.headers["content-type"] ?? ""),
-              body: Buffer.concat(chunks).toString("utf8"),
+              body: decodeBody(
+              Buffer.concat(chunks),
+              String(res.headers["content-type"] ?? ""),
+              String(res.headers["content-encoding"] ?? ""),
+            ),
               truncated: true,
             });
             return;

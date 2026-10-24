@@ -32,10 +32,16 @@ function cleanKey(v: string | null): string | undefined {
   return t;
 }
 
+/**
+ * 模型名不是标识符。原来只收 [A-Za-z0-9._:-]，于是「openai/gpt-4o」
+ * （网关的写法）、「gpt 4o」（照抄文档里带空格的写法）都**静默变成「没填」**，
+ * 用户看到的是模型没换，却没有任何提示。现在放行 / 和 @，只挡控制字符与冒号外的空白。
+ */
 function cleanModel(v: string | null): string | undefined {
   if (!v) return undefined;
   const t = v.trim();
-  if (!/^[A-Za-z0-9._:-]{2,64}$/.test(t)) return undefined;
+  if (t.length < 2 || t.length > 80) return undefined;
+  if (!/^[A-Za-z0-9._:/@-]+$/.test(t)) return undefined;
   return t;
 }
 

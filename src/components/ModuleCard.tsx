@@ -169,8 +169,9 @@ function ModuleCard({
           <span className="shrink-0 font-mono text-[10px] text-neutral-600">加载中…</span>
         )}
         {module.status !== "plan" && cited.length > 0 && (
-          // PRD 附录 C：模块里的每个数字都要能在两次点击内回到原文。
-          // 这里给出该模块实际引用的条目，不是全量信源 —— 全量等于没指认。
+          // PRD 附录 C：两次点击回到原文。
+          // 面板是聚合结果（按日文章数来自很多篇），所以这里给的是本轮证据集，
+          // 面板顶部会写明这一点 —— 不把"整批证据"说成"这个数字的出处"。
           <button
             ref={provBtnRef}
             type="button"
@@ -255,8 +256,11 @@ function ModuleCard({
                 // 位置要等量完尺寸才知道：首次渲染先隐身，别闪一下
                 visibility: provPos ? "visible" : "hidden",
               }}
-              className="scroll-thin z-[80] overflow-auto rounded-md border border-neutral-800 bg-[#111] p-1"
+              className="scroll-thin z-[80] max-h-[240px] overflow-auto rounded-md border border-neutral-800 bg-[#111] p-1"
             >
+              <div className="px-2 pb-1.5 pt-1 font-mono text-[10px] text-neutral-600">
+                本轮证据 {cited.length} 条 · 面板是聚合结果
+              </div>
               {cited.map((s) => (
                 <a
                   key={s.id}

@@ -40,7 +40,16 @@ const STATUS_ORDER: HeatStatus[] = ["burst", "rising", "stable", "decaying", "lo
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "未知";
-  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  /**
+   * 时区必须写死。这些时间戳是由服务端渲染进 HTML 的，
+   * 不指定 timeZone 时 Node（部署机 UTC）与浏览器（+08:00）会算出两个不同的字符串，
+   * 轻则水合警告，重则读者看到「更新于 11:30」而它其实是 19:30。
+   */
+  return d.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Shanghai",
+  });
 }
 
 /** 基线的日期区间只写月-日：年份在"过去 30 天"这个语境里是噪声。 */
@@ -224,7 +233,7 @@ export default function TrendingBoard({
   snapshot: TrendingSnapshot;
   onPick: (name: string) => void;
 }) {
-  const { topics, fetchedStories, consideredStories, windowHours, fetchedAt, degraded, history } = snapshot;
+  const { topics, rawStories, consideredStories, windowHours, fetchedAt, degraded, history } = snapshot;
   const missingGdelt = degraded.includes("gdelt:not_configured");
   const noBaseline = history.days === 0 || history.pending;
   const empty = topics.length === 0;
@@ -248,7 +257,7 @@ export default function TrendingBoard({
           )}
         </div>
         <span className="font-mono text-[10px] text-neutral-600">
-          {consideredStories}/{fetchedStories} 条进入统计 · 更新于 {fmtTime(fetchedAt)}
+          {consideredStories}/{rawStories} 条进入统计 · 更新于 {fmtTime(fetchedAt)}
           {" · "}
           {noBaseline ? (
             "基线构建中"
@@ -278,7 +287,7 @@ export default function TrendingBoard({
 
       {empty ? (
         <div className="mt-4 rounded-md bg-[#0c0c0c] p-8 text-center text-xs text-neutral-500">
-          {fetchedStories === 0
+          {rawStories === 0
             ? "Hacker News 本轮没有取到数据，热点榜暂不可用。"
             : "过去 " + windowHours + " 小时里没有话题被两条以上报道同时提到，榜单为空。"}
         </div>

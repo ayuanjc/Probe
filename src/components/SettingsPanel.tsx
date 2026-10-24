@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, isCustomized, resetLocalData, type Settings } from "@/lib/settings";
 import ConfigDocs from "./ConfigDocs";
@@ -132,17 +132,57 @@ export default function SettingsPanel({
 }) {
   const [armed, setArmed] = useState(false);
   const [unsaved, setUnsaved] = useState(false);
+  const panelRef = useRef<HTMLElement | null>(null);
+  /** 打开前焦点在哪：关掉之后要还回去，否则焦点掉到 body 上，键盘用户等于被扔在原地。 */
+  const returnFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) {
       setArmed(false);
       return;
     }
+    returnFocus.current = document.activeElement as HTMLElement | null;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      /**
+       * 焦点陷阱：抽屉是 aria-modal，视觉上盖住了页面，但 Tab 仍然能走到
+       * 背后的地图、卡片、按钮上 —— 对键盘用户来说"看不见却能操作"比不能用更糟。
+       * 这里把焦点圈在抽屉里，首尾相接。
+       */
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const focusables = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && (active === first || !panelRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // 打开后先把焦点送进抽屉（用 rAF 等 DOM 挂上）。
+    const raf = window.requestAnimationFrame(() => {
+      const firstInput = panelRef.current?.querySelector<HTMLElement>("input, button");
+      firstInput?.focus();
+    });
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.cancelAnimationFrame(raf);
+      const back = returnFocus.current;
+      returnFocus.current = null;
+      if (back && document.contains(back)) back.focus();
+    };
   }, [open, onClose]);
 
   // 确认态会自己过期：晾在那里十分钟再点，等于没有二次确认。
@@ -175,6 +215,7 @@ export default function SettingsPanel({
         className="absolute inset-0 bg-black/70"
       />
       <aside
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="设置"

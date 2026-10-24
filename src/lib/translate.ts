@@ -348,18 +348,34 @@ export async function translateDocument(input: TranslateInput): Promise<Translat
   };
 
   if (!translatedNeeded) {
+    /**
+     * 「不需要翻译」有两种，不能共用一句话：
+     * - 原文就是中文 → 确实无需翻译；
+     * - 语言没认出来（短标题、中英混排）→ 是没识别出来，不是不需要。
+     * 旧文案把后者也说成「原文已是目标语言」，等于替用户下了个错结论。
+     */
+    const unknownLang = from === "unknown";
+    if (unknownLang) degraded.push("lang:unknown");
     const segs: TranslatedSegment[] = segments.map((src, i) => ({
       i,
       src,
       dst: "",
       risk: 0,
       band: "low" as const,
-      signals: [{ code: "noop", label: "原文已是目标语言，未翻译", weight: 0 }],
+      signals: [
+        {
+          code: unknownLang ? "lang_unknown" : "noop",
+          label: unknownLang ? "没认出原文语言，未翻译" : "原文已是目标语言，未翻译",
+          weight: 0,
+        },
+      ],
     }));
     return {
       ...base,
       engine: "none",
-      engineNote: "原文即目标语言，未调用翻译引擎。",
+      engineNote: unknownLang
+        ? "没认出原文语言（可能是短标题或中英混排），只做分段。"
+        : "原文即目标语言，未调用翻译引擎。",
       segments: segs,
       overall: { risk: 0, band: "low", signals: [] },
     };
@@ -418,6 +434,11 @@ export async function translateDocument(input: TranslateInput): Promise<Translat
     engine,
     engineNote,
     segments: segs,
-    overall: overallRisk(scores.filter((s) => s.risk > 0)),
+    /**
+     * 分母是**全部分段**，不是「出问题的那些段」。
+     * 拿问题段求平均时，48 段里错 1 段与 48 段全错会出同一个数，
+     * 而界面上写的是「平均歧义」 —— 那是把最坏情况说成普遍情况。
+     */
+    overall: overallRisk(scores),
   };
 }

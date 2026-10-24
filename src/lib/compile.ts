@@ -459,7 +459,8 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
               right: "14%",
               top: 12,
               bottom: 12,
-              minSize: "24%",
+              // 2% 而不是 24%:末级只有个位数时也得按真实比例缩，否则图形宽度与 label 上的数字互相打脸
+              minSize: "2%",
               sort: "none",
               gap: 3,
               label: { color: "#e5e5e5", fontSize: 11, formatter: "{b} {c}" },

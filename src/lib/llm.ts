@@ -103,7 +103,11 @@ export async function generateStructured<T>(
 }
 
 /** 摘要流式输出。无 key 时用可读的降级文本，保证 UI 永远有东西可流。 */
-export async function* streamSummary(prompt: string, sink?: UsageSink): AsyncGenerator<string> {
+export async function* streamSummary(
+  prompt: string,
+  sink?: UsageSink,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
   const p = client();
   if (!p) {
     yield* fixtureSummary();
@@ -117,6 +121,12 @@ export async function* streamSummary(prompt: string, sink?: UsageSink): AsyncGen
       model: p(resolvedModelId()),
       prompt,
       temperature: 0.2,
+      /**
+       * 带上 signal：调用方（SSE 生成器）发现客户端走了就 abort。
+       * 不给的话，用户关掉页面后上游还会一直吐到结束 —— 线程和额度都白烧，
+       * 而这一路上没有任何人再看那串字了。
+       */
+      ...(signal ? { abortSignal: signal } : {}),
     });
     // 用 fullStream 而不是 textStream：textStream 只吐文本，把 provider 的错误
     // （403 unsupported_country_region、401 key 无效…）吞成一条空流，
@@ -140,6 +150,8 @@ export async function* streamSummary(prompt: string, sink?: UsageSink): AsyncGen
       }
     }
   } catch (err) {
+    // 主动 abort 不是故障：别在日志里把它写成"模型调用失败"。
+    if (signal?.aborted) return;
     failed = true;
     console.warn("[llm] stream failed:", err instanceof Error ? err.message : err);
   }

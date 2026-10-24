@@ -163,7 +163,13 @@ async function* runStages(
     yield { event: "module.plan", data: plan };
   }
 
-  const citeIds = analysis.sources.slice(0, 20).map((s) => s.id);
+  /**
+   * 面板是聚合结果，没有"某个数字 → 某一条"的映射可给：按日文章数来自 39 篇，
+   * 信源分布来自全部 owner。所以这里给的是**本轮证据集**（与信源列表同一个上限），
+   * 而不是假装逐条指认。原来切 20 条更糟 —— 信源列了 40 条，卡片只认前 20 条，
+   * 读者点开看到的"证据"比下面的列表还少。
+   */
+  const citeIds = analysis.sources.slice(0, 40).map((s) => s.id);
 
   for (const spec of specs) {
     if (gone()) return;
@@ -228,11 +234,24 @@ async function* runStages(
     // 没有这句话，用户会看到一叠面板配一片空白摘要，然后以为是数据不全。
     let wrote = false;
     stageAt = Date.now();
-    const summary = streamSummary(buildPrompt(intent, analysis), sink);
-    for await (const delta of summary) {
-      if (gone()) return;
-      wrote = true;
-      yield { event: "text.delta", data: { delta } };
+    /**
+     * 客户端走了要真的停：gone() 只是让我们不再往下 yield，
+     * 上游那次模型请求还在跑。用 AbortController 把信号传下去，
+     * 让它在没人听的时候停下来（否则每条被关掉的页面都在白烧额度）。
+     */
+    const summaryAbort = new AbortController();
+    try {
+      const summary = streamSummary(buildPrompt(intent, analysis), sink, summaryAbort.signal);
+      for await (const delta of summary) {
+        if (gone()) {
+          summaryAbort.abort();
+          return;
+        }
+        wrote = true;
+        yield { event: "text.delta", data: { delta } };
+      }
+    } finally {
+      summaryAbort.abort();
     }
     run.stages.summary = Date.now() - stageAt;
     if (!wrote) {

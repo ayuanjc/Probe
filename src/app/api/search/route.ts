@@ -11,7 +11,24 @@ export const dynamic = "force-dynamic";
  * GDELT 是每 IP 5 秒 1 次的硬限流，这样做只会把自己锁死。
  */
 const RL_WINDOW_MS = 60_000;
-const RL_MAX = Number(process.env.PROBE_RATE_LIMIT_PER_MIN ?? 3);
+
+/**
+ * 环境变量读坏了要当「没设」，不能当 0、更不能当 NaN：
+ * Number("abc") 是 NaN，而 recent.length >= NaN 恒为 false ——
+ * 也就是说一个笔误的环境变量会**静默把限流关掉**，日志里一个字都没有。
+ */
+function readLimit(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn("[rate-limit] " + name + "=" + raw + " 不是正数，按默认 " + fallback + " 处理");
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+const RL_MAX = readLimit("PROBE_RATE_LIMIT_PER_MIN", 3);
 const rlHits = new Map<string, number[]>();
 
 function hitRateLimit(key: string): { ok: boolean; retryAfterMs: number } {
@@ -23,6 +40,17 @@ function hitRateLimit(key: string): { ok: boolean; retryAfterMs: number } {
   }
   recent.push(now);
   rlHits.set(key, recent);
+
+  /**
+   * 表要自己收：旧实现只在同一个 key 再次命中时才裁自己那条，
+   * 于是每个不同 IP 都留一条永不删除的记录。预览站挂在公网 80 端口上，
+   * 被扫一轮就是一个只增不减的 Map（进程活多久它长多久）。
+   */
+  if (rlHits.size > 512) {
+    for (const [k, list] of rlHits) {
+      if (list.every((t) => now - t >= RL_WINDOW_MS)) rlHits.delete(k);
+    }
+  }
   return { ok: true, retryAfterMs: 0 };
 }
 
