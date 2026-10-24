@@ -358,8 +358,10 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
       if (s.value.length === 0 && name !== "tavily") degraded.push(name + ":empty");
       out.push(...s.value);
     } else {
+      // 失败也带上原因码：裸的 "gdelt" 和 "gdelt:empty" 在界面上都是「降级」，
+      // 但一个是请求挂了、一个是本轮真的没命中，指标面板按码分组时要能分开。
       stats[name] = 0;
-      degraded.push(name);
+      degraded.push(name + ":failed");
     }
   });
 

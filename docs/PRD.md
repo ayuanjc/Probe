@@ -172,8 +172,13 @@ r7 = 近 7 日均值 / 前 30 日均值
 - 序列不足 14 天不出任何标签（`seriesStats` 返回 null）：两周不到算不出「平时是什么样」。
 - 争议态（GDELT GKG tone）**未实现**：GDELT 尚未接入，`degraded` 如实写 `gdelt:not_configured`，
   UI 不再声称「GDELT 出口被限流」。
-- 后台 Cron 暂由「首页访问触发 + 10 分钟内存快照 + `.cache/hn-history.json` 落盘」替代；
-  serverless 部署需要外部定时器调用 `ensureHistory()`，否则基线只在有人访问时才更新。
+- ~~后台 Cron 暂由「首页访问触发」替代~~ → **已接入 `GET/POST /api/cron/heat`**
+  （见 2.3 下方 Phase 3 第 3 项实现备注）：由外部定时器带着 `PROBE_CRON_SECRET` 调用，
+  首页访问只负责读快照。
+- GDELT 实测结论：`api.gdeltproject.org` 的 DOC API 从本机**恒 429**
+  （直连、加 UA、间隔 6~7 秒重试都一样，出口 IP 被限流），而 `data.gdeltproject.org`
+  可达（`gdeltv2/lastupdate.txt` 200）。要做争议态只能靠定时下 GKG 15 分钟包
+  （约 3.4 MB/次）解析 V2Tone，不在本轮范围。**没有真情感数据就不上这一档。**
 🔧 **V1.1 争议态与情感数据源**
 
 “正负面新闻数量对比”必须先回答 sentiment 从哪来——否则这一格就是全产品唯一“自己编数据却叫数据”的地方。
@@ -373,7 +378,7 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 | **成本** | 单次搜索 LLM 调用 ≤ 6 次；单次搜索 token 预算 ≤ 40k（含抽取与 Compose）；日预算可配置，超限走缓存或排队 |
 | **缓存** | 同一 `query + intent` 的面板结果缓存 TTL = 6h；命中直接回放，不打外部 API；缓存键含 `layoutVersion` |
 | **限流** | 单用户 3 次检索 / 分钟；外部源配额：GDELT DOC API ≤ 1 req/5s（实测超额返回 429），Tavily 按套餐并发上限的 70% 使用 |
-| **可观测性** | 每一步记录：耗时、token、失败原因、降级次数、独立源数、置信度分布。**没有这些指标，Phase 2 调优只能靠猜** |
+| **可观测性** | 每一步记录：耗时、token、失败原因、降级次数、独立源数、置信度分布。**没有这些指标，Phase 2 调优只能靠猜**。🔧 已落地：`/metrics` + `GET /api/metrics` + `src/lib/metrics.ts`（进程内 200 轮环形缓冲，查询词默认脱敏，token 拿不到就不显示估算值） |
 | **数据合规** | 只存 metadata + 摘要 + 原文链接，不落库新闻正文；GDELT 结果需署名 |
 | **空态** | 冷门词零结果时展示：已尝试的源清单 + 关键词改写建议 + 邻近热词（来自热点榜） |
 | **可访问性** | 暗黑界面正文对比度 ≥ 4.5:1；图表必须有 `aria-label` 与表格降级视图 |
@@ -412,8 +417,12 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
 
 ### Phase 3（热度算法、状态机与实体图 — 3 个月）
 
-- 后台 Cron 热点计算任务：热度公式 + 状态阈值表 **已实现**（见 2.3 实现备注），名次改按 score 排；
-  后台 Cron 与争议态（GDELT tone）待接入 —— 现由首页访问触发，争议态缺数据源。
+- 后台 Cron 热点计算任务：热度公式 + 状态阈值表 **已实现**（见 2.3 实现备注），名次改按 score 排。
+  🔧 **实现备注（Phase 3 第 3 项，Cron 端点已落地）**：`src/app/api/cron/heat/route.ts`（GET/POST），
+  带 `PROBE_CRON_SECRET` 才工作，未配置回 503 `cron_disabled`、密钥不符回 401，
+  通过后先 `ensureHistory()` 再 `getTrending(true)`，返回基线区间与快照计数（实测基线新鲜时 2.8 秒、
+  重建约 19 秒）。鉴权不是形式：这个端点一次能触发 60 次外部请求，无鉴权被扫到就是免费放大器。
+  争议态（GDELT tone）仍缺数据源，见 2.3 的 GDELT 429 结论。
 - 实体关系图：**先用 Postgres 邻接表 + pgvector 做 2 跳查询出树状图**，Neo4j 仅在明确触到性能上限后再评估。
   🔧 **实现备注（Phase 3 第 2 项，本轮快照版已落地）**：仓库没有 Postgres、也没有 embedding，
   所以落地的是「本轮信源的共现快照」——`src/lib/entity-graph.ts` 从这一轮 RawSource 抽实体、
@@ -424,6 +433,14 @@ event: done           data: { "confidence":0.72, "independent_sources":6, "degra
   边 <3）就整张卡不出现，不画散点充数；⑤ 词典匹配走词边界，避免 meta→metadata 这类假枢纽。
   换回 Postgres 时只需让 `buildEntityGraph` 改为读库、`neighborhood` 改为递归 CTE，其余不变。
 - 可观测性面板（耗时 / token / 降级率 / 置信度分布）。
+  🔧 **实现备注（Phase 3 第 4 项，`/metrics` 已落地）**：`src/lib/metrics.ts` 是**进程内**环形缓冲
+  （200 轮，重启即清空、不落盘），`src/agents/pipeline.ts` 在 `finally` 里落一条记录（中断也记），
+  `GET /api/metrics` 出快照，`/metrics` 页渲染。三条取舍：① 查询词默认脱敏成「«已脱敏 · N 字»」，
+  配 `PROBE_METRICS_KEY` 并带 `x-probe-metrics-key` 头才显示原文 —— 这一版没有账号体系，
+  落盘或明文展示都等于凭空造一份用户搜索历史；② token 只认 SDK 真给的字段，拿不到就写明
+  「不显示估算值冒充测量值」；③ 不跨进程、不跨重启，它是排障镜不是监控系统。
+  降级码统一成 `<源>:<原因>`（`:empty` / `:failed` / `:off` / `:not_configured`），
+  指标按码分组才有意义。
 - **验收**：附录 C 四条全过；热点状态标签与阈值表一致。
 
 > 🔧 重排理由：热度榜是**唯一不依赖用户 query 的回访入口**（也是拉新入口）。原计划放到第 6 个月，意味着前 5 个月产品没有任何打开理由。

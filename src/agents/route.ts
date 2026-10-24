@@ -2,6 +2,7 @@
 import { IntentSchema, type Intent } from "@/lib/schemas";
 import { extractEntities } from "@/lib/entities";
 import { generateStructured, llmEnabled } from "@/lib/llm";
+import type { UsageSink } from "@/lib/metrics";
 
 /**
  * 意图路由。规则先行 + 模型精修：
@@ -66,7 +67,10 @@ export function heuristicIntent(query: string): Intent {
   });
 }
 
-export async function routeQuery(query: string): Promise<{ intent: Intent; usedLlm: boolean }> {
+export async function routeQuery(
+  query: string,
+  sink?: UsageSink,
+): Promise<{ intent: Intent; usedLlm: boolean }> {
   const base = heuristicIntent(query);
   if (!llmEnabled()) return { intent: base, usedLlm: false };
 
@@ -81,7 +85,7 @@ export async function routeQuery(query: string): Promise<{ intent: Intent; usedL
       "参考时间窗：" + base.timeRange.from + " ~ " + base.timeRange.to + "\n" +
       "规则初步判断 kind=" + base.kind + "，实体候选=" + JSON.stringify(base.entities) + "。\n" +
       "请给出修正后的意图；若查询过于含糊，把 kind 设为 no-panel 并提高 ambiguity。",
-  });
+  }, sink);
 
   if (!refined) return { intent: base, usedLlm: false };
   // 模型可能丢掉 query 字段或用占位值，这里以用户原文为准。

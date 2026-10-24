@@ -1,7 +1,9 @@
 
 import type { ProbeEvent, SourceRef } from "@/lib/sse";
 import type { Intent } from "@/lib/schemas";
-import { streamSummary } from "@/lib/llm";
+import { llmEnabled, modelId, streamSummary } from "@/lib/llm";
+import { endRun, startRun, usageSink } from "@/lib/metrics";
+import type { RunRecord, UsageSink } from "@/lib/metrics";
 import { isDemoOnly } from "@/lib/confidence";
 import { buildEntityGraph } from "@/lib/entity-graph";
 import { routeQuery } from "./route";
@@ -38,15 +40,44 @@ export async function* runPipeline(
 ): AsyncGenerator<ProbeEvent> {
   const started = Date.now();
   const query = rawQuery.trim().slice(0, MAX_QUERY);
-  /** 客户端断开后，每个阶段之间都收手：后续的模型调用和上游请求没有接收方。 */
-  const gone = () => signal?.aborted === true;
 
   if (!query) {
     yield { event: "error", data: { message: "查询为空" } };
     return;
   }
 
-  const { intent } = await routeQuery(query);
+  /**
+   * 指标收在这里而不是散在各阶段：生成器无论是走完、提前 return 还是客户端断开，
+   * finally 都会被执行。只在"成功"时记录的话，最需要看的那几条（超时、断连、
+   * 模型失败）恰好全都不在里面。
+   */
+  const run = startRun(query);
+  const sink = usageSink(run);
+  run.llm = llmEnabled();
+  run.model = run.llm ? modelId() : null;
+
+  try {
+    yield* runStages(query, signal, started, run, sink);
+  } finally {
+    run.totalMs = Date.now() - started;
+    run.aborted = signal?.aborted === true;
+    endRun(run);
+  }
+}
+
+async function* runStages(
+  query: string,
+  signal: AbortSignal | undefined,
+  started: number,
+  run: RunRecord,
+  sink: UsageSink,
+): AsyncGenerator<ProbeEvent> {
+  /** 客户端断开后，每个阶段之间都收手：后续的模型调用和上游请求没有接收方。 */
+  const gone = () => signal?.aborted === true;
+
+  let stageAt = Date.now();
+  const { intent } = await routeQuery(query, sink);
+  run.stages.route = Date.now() - stageAt;
   if (gone()) return;
   yield { event: "intent", data: intent };
 
@@ -88,15 +119,27 @@ export async function* runPipeline(
     };
   }
 
+  stageAt = Date.now();
   const retrieved = await retrieve(intent, signal);
   if (gone()) return;
-  const analysis = await analyze(intent, retrieved.sources);
+  run.stages.retrieve = Date.now() - stageAt;
+
+  stageAt = Date.now();
+  const analysis = await analyze(intent, retrieved.sources, sink);
   if (gone()) return;
+  run.stages.analyze = Date.now() - stageAt;
+  run.sources = analysis.sources.length;
+  run.owners = analysis.confidence.nOwners;
+  run.confidence = analysis.confidence.score;
+  run.band = analysis.confidence.band;
+  run.notes = analysis.notes.length;
   const degraded = [...retrieved.degraded, ...analysis.degraded];
 
   // 全部源都挂了才会走到这里。此时页面仍然有内容，但那些内容是我们自己写的样本。
   // 只把颜色调灰不够——必须用一句话说清楚"这不是事实"，否则这个界面就在骗人。
   const demoOnly = isDemoOnly(retrieved.sources);
+  run.demoOnly = demoOnly;
+  run.degraded = degraded;
   if (demoOnly) {
     yield {
       event: "text.delta",
@@ -108,7 +151,11 @@ export async function* runPipeline(
     };
   }
 
+  stageAt = Date.now();
   const { plans, specs, errors } = compose(analysis);
+  run.stages.compose = Date.now() - stageAt;
+  run.modules = specs.length;
+  run.moduleErrors = errors.length;
 
   // 先落骨架，再填内容：用户不会盯着一片空白等模型。
   for (const plan of plans) {
@@ -180,12 +227,14 @@ export async function* runPipeline(
     // 一句都没写出来就是失败（key 无效 / 额度用尽 / 网络不通）。
     // 没有这句话，用户会看到一叠面板配一片空白摘要，然后以为是数据不全。
     let wrote = false;
-    const summary = streamSummary(buildPrompt(intent, analysis));
+    stageAt = Date.now();
+    const summary = streamSummary(buildPrompt(intent, analysis), sink);
     for await (const delta of summary) {
       if (gone()) return;
       wrote = true;
       yield { event: "text.delta", data: { delta } };
     }
+    run.stages.summary = Date.now() - stageAt;
     if (!wrote) {
       yield {
         event: "text.delta",

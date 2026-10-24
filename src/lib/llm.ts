@@ -3,6 +3,7 @@ import { generateObject, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { z } from "zod";
 import { resolvedModelId, resolvedOpenaiKey } from "@/lib/runtime-config";
+import type { UsageSink } from "@/lib/metrics";
 
 /**
  * LLM 适配层。所有模型调用都收敛在这一个文件里，理由有二：
@@ -49,20 +50,28 @@ export type StructuredCall<T> = {
  */
 export async function generateStructured<T>(
   args: StructuredCall<T>,
+  sink?: UsageSink,
 ): Promise<T | null> {
   const p = client();
   if (!p) return null;
+  const promptChars = args.system.length + args.prompt.length;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const { object } = await generateObject({
+      const res = await generateObject({
         model: p(resolvedModelId()),
         schema: args.schema,
         system: args.system,
         prompt: args.prompt,
         temperature: 0,
       });
-      return object;
+      sink?.({
+        kind: "structured",
+        promptChars,
+        outputChars: JSON.stringify(res.object ?? null).length,
+        ...tokensOf(res.usage),
+      });
+      return res.object;
     } catch (err) {
       if (attempt === 1) {
         // 只记错误类型与状态码，绝不把 key 或完整响应体打到日志里。
@@ -74,7 +83,7 @@ export async function generateStructured<T>(
 }
 
 /** 摘要流式输出。无 key 时用可读的降级文本，保证 UI 永远有东西可流。 */
-export async function* streamSummary(prompt: string): AsyncGenerator<string> {
+export async function* streamSummary(prompt: string, sink?: UsageSink): AsyncGenerator<string> {
   const p = client();
   if (!p) {
     yield* fixtureSummary();
@@ -82,6 +91,7 @@ export async function* streamSummary(prompt: string): AsyncGenerator<string> {
   }
   let emitted = false;
   let failed = false;
+  let outChars = 0;
   try {
     const result = streamText({
       model: p(resolvedModelId()),
@@ -94,7 +104,16 @@ export async function* streamSummary(prompt: string): AsyncGenerator<string> {
     for await (const part of result.fullStream) {
       if (part.type === "text-delta") {
         if (part.text.length > 0) emitted = true;
+        outChars += part.text.length;
         yield part.text;
+      } else if (part.type === "finish") {
+        // usage 到这里才齐：提前上报只能报字符数，token 永远是 0。
+        sink?.({
+          kind: "summary",
+          promptChars: prompt.length,
+          outputChars: outChars,
+          ...tokensOf(part.totalUsage),
+        });
       } else if (part.type === "error") {
         failed = true;
         console.warn("[llm] stream error part:", part.error instanceof Error ? part.error.message : part.error);
@@ -108,6 +127,26 @@ export async function* streamSummary(prompt: string): AsyncGenerator<string> {
   // key 是有的（否则走不到这里），那句话是假的，而且会把半截真摘要说成模板产物。
   // 一个字都没吐，才补一句中性的失败说明，让读者知道后面为什么是空的。
   if (failed && !emitted) yield* failureNote();
+}
+
+/**
+ * usage 的形状随 SDK 版本漂移（inputTokens / outputTokens / promptTokens …），
+ * 所以只认「确实是数字」的字段：拿不到就是拿不到，不补 0 冒充测量值。
+ */
+function tokensOf(usage: unknown): { tokensIn?: number; tokensOut?: number } {
+  if (!usage || typeof usage !== "object") return {};
+  const u = usage as Record<string, unknown>;
+  const pick = (...keys: string[]): number | undefined => {
+    for (const k of keys) {
+      const v = u[k];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+    return undefined;
+  };
+  return {
+    tokensIn: pick("inputTokens", "promptTokens"),
+    tokensOut: pick("outputTokens", "completionTokens"),
+  };
 }
 
 /** 有 key 但调用失败时的说明：只陈述观察到的事实，不猜配置。 */

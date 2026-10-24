@@ -628,6 +628,62 @@ PRD 里这一项写的是 Postgres 邻接表 + pgvector 的「向量近邻 2 跳
 卡片里之所以没问题，是因为父级是 flex 列；这里父级是普通块，只给 `min-height` 会让
 百分比失效、canvas 退到默认 100px。套一层定高 `flex` 列解决（实测从 100px 变 360px）。
 
+## 运行指标：先量，再谈优化
+
+`/metrics` 是给运维看的一页，不是第二个首页。它读 `GET /api/metrics`，数据全部来自
+**进程内的环形缓冲**（`src/lib/metrics.ts`，容量 200 轮，重启即清空、不落盘）。
+
+为什么不落库：这一版没有数据库也没有鉴权，落盘等于凭空造一份「用户搜索历史」，
+而它对我们调试的价值远低于泄露它的代价。要留存必须等真有账号体系。
+
+每轮记什么：五个阶段的耗时（意图 / 检索 / 分析 / 编排 / 摘要）、端到端耗时、
+条目数与独立稿源数、置信度与档位、模块数与失败模块数、降级码、口径条数、
+是否演示样本、是否被客户端中断、模型用量（调用次数 / 输入输出字数 / token）。
+
+三条刻意的边界：
+
+1. **查询词默认脱敏**：显示成 `«已脱敏 · 14 字»`，保留长度（排查长查询有用），
+   不保留内容。要解除得配 `PROBE_METRICS_KEY`，并且请求时把同一个值放进
+   `x-probe-metrics-key` 头 —— 「谁知道密钥谁才看得到词」，而不是「同网段都能看」。
+2. **token 数拿不到就不显示**：`tokensOf()` 只认 SDK 真给出的有限数字字段。
+   拿不到时面板写「token 数未由 SDK 提供，因此不显示估算值冒充测量值」，
+   不用「字数 ÷ 4」这种编出来的数当指标 —— 指标一旦是估的，优化就会跟着估的走。
+3. **中断也要记**：`runPipeline` 把打点放在 `finally` 里（`run.totalMs`、
+   `run.aborted = signal?.aborted`），客户端断开、超时、异常都会落一条。
+   只在成功时记，就永远看不见「为什么用户觉得慢」。
+
+面板本身也遵守同样的口径：没有数据时写「这一进程还没有跑过检索」，不画 0 值图表；
+阶段样本数不足时那一行就是 1 条，不合并成「其他」。
+
+实测（本机，无模型 key）：三轮检索后 `p50 4823ms / p95 4832ms`，五个阶段的
+`n/p50/p95` = route 3/1/8、retrieve 3/4803/4825、analyze 3/12/40、compose 3/1/2、
+summary 2/0/1 —— 检索占了 99% 的时间，其余全是毫秒级。这一行数字就是它的用处：
+要优化先优化检索，别去动图表。
+
+## 后台 Cron：让热榜在没人访问时也在算
+
+`/api/cron/heat`（GET 与 POST 等价）做一件事：把历史基线补齐，再算一次热榜快照。
+它的存在理由是热度状态机的基线 —— 30 天 × 12 小时窗口 = 60 次外部请求，
+不能挂在用户的第一次访问上（那会让首屏等 20 秒）。
+
+**它默认是关的**：没配 `PROBE_CRON_SECRET` 时直接回 503 `cron_disabled`。
+理由很直白：一个无鉴权、能触发 60 次外部请求的端点被扫到，就是免费的放大器。
+配好之后支持两种带法：`Authorization: Bearer <secret>` 或 `x-probe-cron-secret`，
+不匹配回 401。
+
+返回体只报事实：`history.days / from / to / pending` 与
+`trending.topics / considered / fetched / degraded / withStatus`。基线已经新鲜时
+整趟 2.8 秒（读 `.cache/hn-history.json` + 一次 24 小时抓取）；需要重建时约 19 秒。
+
+调用示例：
+
+```bash
+PROBE_CRON_SECRET=... npx next start -p 3211
+curl -s -H "Authorization: Bearer $PROBE_CRON_SECRET" http://127.0.0.1:3211/api/cron/heat
+```
+
+部署时把它接到平台的 cron（Vercel Cron / systemd timer / crontab 都行），
+一小时一次足够：基线是日粒度的，太勤只是重复抓同一批数据。
 ## 目录
 
 ```
@@ -635,11 +691,12 @@ src/
   agents/     route · retrieve · analyze · compose · pipeline
   lib/        schemas · confidence · heat · heat-history · topic-terms · entity-graph · compile · layout · module-catalog · module-plan · sse · llm
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
-              translate-types · http · settings · runtime-config · config-headers · placement
+              translate-types · http · settings · runtime-config · config-headers · placement · metrics
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
+              api/metrics/route.ts · api/cron/heat/route.ts · metrics/page.tsx
   components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
               Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
-              ChartBox · EntityGraphCard
+              EntityGraphCard · MetricsPanel
   hooks/      useProbe.ts
 ```
 
@@ -670,7 +727,13 @@ ECharts option 由前端编译器按白名单生成。让模型直出 option 的
 - **限流会拦到你**：默认 3 次/分钟。本地反复调试时用 `PROBE_RATE_LIMIT_PER_MIN=50` 启动。
 - **GDELT 冷却只对限流与超时生效**：一条查询语法写错不该让后面所有查询一起停摆 5 分钟。
 - **热榜是单源**：只有 Hacker News，它偏技术圈；GDELT 恢复后「多少家媒体在报」才成立。
-  `heat.ts` 里的完整热度公式（median_30d / MAD_30d / 状态机）依赖历史累积，Phase 3 才接线。
+  热度公式（median_30d / MAD_30d / 五档状态机）已接线，基线靠 `.cache/hn-history.json` 攒，
+  首次访问只等 1 分钟内的快照缓存，不等 20 秒的基线构建。
+- **争议态没做**：PRD 2.3 的「争议态」要 GDELT GKG 的 V2Tone，而 `api.gdeltproject.org`
+  从这台机器恒回 429（`data.gdeltproject.org` 倒是通）。没有真情感数据就不上这一档，
+  宁可少一个标签，也不要一个编出来的标签。
+- **指标不跨进程**：`/metrics` 只统计当前进程（重启清零、多实例各算各的）。
+  它是排障镜，不是监控系统。
 
 ## 验收口径（对应 PRD 附录 C）
 

@@ -9,6 +9,7 @@ import {
   ownerOf,
 } from "@/lib/confidence";
 import { generateStructured, llmEnabled } from "@/lib/llm";
+import type { UsageSink } from "@/lib/metrics";
 import { toneBucket } from "@/lib/heat";
 import { titleSimilarity } from "@/lib/text";
 import { titleTerms } from "@/lib/entity-graph";
@@ -73,6 +74,7 @@ function dedupe(sources: RawSource[]): DedupeResult {
 async function extractClaims(
   intent: Intent,
   sources: RawSource[],
+  sink?: UsageSink,
 ): Promise<{ claims: Claim[]; source: "llm" | "fixture" | "none" }> {
   if (sources.length === 0) return { claims: [], source: "none" };
 
@@ -101,7 +103,7 @@ async function extractClaims(
       "不要推理、不要补充材料里没有的信息。",
     prompt:
       "查询：" + intent.query + "\n材料：\n" + JSON.stringify(bundle, null, 1),
-  });
+  }, sink);
 
   if (!parsed) return { claims: [], source: "none" };
 
@@ -159,7 +161,11 @@ function hourParts(iso: string): { wd: number; hour: number } | null {
   return { wd, hour: ((h % 24) + 24) % 24 };
 }
 
-export async function analyze(intent: Intent, raw: RawSource[]): Promise<AnalysisResult> {
+export async function analyze(
+  intent: Intent,
+  raw: RawSource[],
+  sink?: UsageSink,
+): Promise<AnalysisResult> {
   const notes: string[] = [];
   const degraded: string[] = [];
 
@@ -172,7 +178,7 @@ export async function analyze(intent: Intent, raw: RawSource[]): Promise<Analysi
    * 单独把合并条数记下来，让"命中 39"和"原始 40"之间的差有出处。
    */
   const syndicatedIds = [...findSyndicatedIds(sources)];
-  const { claims, source: claimSource } = await extractClaims(intent, sources);
+  const { claims, source: claimSource } = await extractClaims(intent, sources, sink);
   if (claimSource === "none") degraded.push("claims:off");
 
   const confidence = computeConfidence(sources, claims);

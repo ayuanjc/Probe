@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowDown, RotateCcw, Settings as SettingsIcon } from "lucide-react";
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
@@ -88,6 +89,8 @@ function degradeText(item: string): string {
   const name = PROVIDER_TEXT[base] ?? base;
   if (suffix === "empty") return name + "（本轮无命中）";
   if (suffix === "off") return name + "（未启用：缺少模型或密钥）";
+  if (suffix === "failed") return name + "（请求失败）";
+  if (suffix === "not_configured") return name + "（未接入）";
   if (suffix === "dropped") return name + "（已丢弃）";
   if (suffix === "fixture") return name + "（已启用）";
   return name;
@@ -509,6 +512,16 @@ export default function Workspace({
           )}
         </section>
       )}
+
+      {/* 指标页是查看端，不是主流程：留一个不抢注意力的入口就够。 */}
+      <nav className="flex justify-end px-1 pt-2 pb-4">
+        <Link
+          href="/metrics"
+          className="font-mono text-[10px] text-neutral-700 transition-colors hover:text-neutral-300"
+        >
+          运行指标 →
+        </Link>
+      </nav>
 
       <SettingsPanel
         open={settingsOpen}
