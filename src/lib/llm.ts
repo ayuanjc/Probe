@@ -38,6 +38,21 @@ export function modelId(): string {
   return resolvedModelId();
 }
 
+/**
+ * 只有"再来一次可能就好了"的错误才重试。
+ *
+ * 401 / 403 / 400 / 模型名写错这几种，第二次请求必然同样失败 —— 白白多等一个往返，
+ * 还会把限速配额翻倍消耗。之前是无差别重试两次。
+ */
+function isTransient(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (/\b(401|403|400|404)\b/.test(msg)) return false;
+  if (/invalid[_ ]?api[_ ]?key|model[_ ]?not[_ ]?found|unsupported/.test(msg)) return false;
+  return /\b(408|409|425|429|5\d\d)\b|timeout|timed out|econnreset|econnrefused|fetch failed|network|socket hang up/.test(
+    msg,
+  );
+}
+
 export type StructuredCall<T> = {
   schema: z.ZodType<T>;
   system: string;
@@ -73,9 +88,14 @@ export async function generateStructured<T>(
       });
       return res.object;
     } catch (err) {
-      if (attempt === 1) {
+      const retryable = isTransient(err);
+      if (attempt === 1 || !retryable) {
         // 只记错误类型与状态码，绝不把 key 或完整响应体打到日志里。
-        console.warn("[llm] structured call failed:", err instanceof Error ? err.message : err);
+        console.warn(
+          "[llm] structured call failed" + (retryable ? "" : " (not retried)") + ":",
+          err instanceof Error ? err.message : err,
+        );
+        break;
       }
     }
   }

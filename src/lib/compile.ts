@@ -277,7 +277,11 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
       const ys = [...new Set(dataset.rows.map((r) => String(r[yField.name] ?? "—")))].sort(
         (a, b) => Number(a) - Number(b) || a.localeCompare(b),
       );
-      const heatMax = Math.max(1, ...dataset.rows.map((r) => Number(r[vField.name] ?? 0)));
+      // 缺数据的那条行里值是 null / 空串（不是 0），Math.max 吃到 NaN 会把整根轴写成 NaN。
+      const heatMax = Math.max(
+        1,
+        ...dataset.rows.map((r) => Number(r[vField.name])).filter(Number.isFinite),
+      );
       return {
         ok: true,
         option: {
@@ -335,7 +339,10 @@ export function compile(spec: ModuleSpec, dataset: Dataset | undefined): Compile
       if (radarRows.length < 3) {
         return { ok: false, reason: "radar_constraint", detail: "need >=3 dimensions" };
       }
-      const radarMax = Math.max(1, ...radarRows.map((r) => Number(r[vField.name] ?? 0)));
+      const radarMax = Math.max(
+        1,
+        ...radarRows.map((r) => Number(r[vField.name])).filter(Number.isFinite),
+      );
       return {
         ok: true,
         option: {

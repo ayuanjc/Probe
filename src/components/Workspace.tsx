@@ -143,6 +143,10 @@ export default function Workspace({
 
   const runWithSettings = (q: string) => run(q, settingsHeaders(settingsRef.current));
 
+  /** 最新的 run：popstate 之类的监听器不能闭包住第一次渲染时的函数。 */
+  const runRef = useRef(runWithSettings);
+  runRef.current = runWithSettings;
+
   // 先读设置再自动查询：两个 effect 按声明顺序执行，boot 时 ref 已就绪。
   useEffect(() => {
     const s = readSettings();
@@ -168,17 +172,27 @@ export default function Workspace({
    * 顶部锁标 / 「新建搜索」共用：清空输入、中止流、回到首页态。
    * 不刷新页面 —— 这正是这次改造的重点：状态归零靠 React，不靠一次整页重载。
    */
+  /**
+   * 地址栏跟查询走：检索是 pushState（所以后退能回到上一个结果），
+   * 回首页是 replaceState（不想要一串空查询的历史记录）。
+   * 自己 push 不会触发 popstate —— 事件只在前进/后退时来，因此不会自我重跑。
+   */
+  const syncUrl = useCallback((q: string | null, mode: "push" | "replace") => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (q) url.searchParams.set("q", q);
+    else url.searchParams.delete("q");
+    if (mode === "push") window.history.pushState(null, "", url.toString());
+    else window.history.replaceState(null, "", url.toString());
+  }, []);
+
   const newSearch = useCallback(() => {
     setInput("");
     reset();
     setGraphCollapsed(false);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("q");
-      window.history.replaceState(null, "", url.toString());
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }, [reset]);
+    syncUrl(null, "replace");
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [reset, syncUrl]);
 
   const logoRef = useRef<HTMLDivElement | null>(null);
   const logoBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -224,15 +238,39 @@ export default function Workspace({
 
   // 热榜点话题：填词、跑查询、同步 URL 要一起做，
   // 否则刷新后回不到刚才那个结果。
-  const pickTopic = (name: string) => {
-    setInput(name);
-    runWithSettings(name);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("q", name);
-      window.history.replaceState(null, "", url.toString());
-    }
-  };
+  /**
+   * 从界面发起的检索只有这一条路：跑查询 + 把这一次写进历史。
+   * 输入框回车与点热榜话题都要 push —— 否则后退键回到的是「上一个页面」，
+   * 而不是上一个结果（replaceState 不产生历史项，这是它的定义）。
+   */
+  const startSearch = useCallback(
+    (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) return;
+      setInput(trimmed);
+      runRef.current(trimmed);
+      syncUrl(trimmed, "push");
+    },
+    [syncUrl],
+  );
+
+  const pickTopic = (name: string) => startSearch(name);
+
+  /** 浏览器后退 / 前进时按地址栏那一次查询重跑。 */
+  useEffect(() => {
+    const onPop = () => {
+      const q = new URL(window.location.href).searchParams.get("q");
+      if (!q) {
+        setInput("");
+        reset();
+        return;
+      }
+      setInput(q);
+      runRef.current(q);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [reset]);
 
   const scrollToTrending = () => {
     document.getElementById("trending")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -356,7 +394,7 @@ export default function Workspace({
             running={running}
             value={input}
             onChange={setInput}
-            onRun={runWithSettings}
+            onRun={startSearch}
             size={searched ? "sm" : "lg"}
           />
         </motion.div>

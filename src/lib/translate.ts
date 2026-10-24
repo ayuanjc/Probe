@@ -179,7 +179,15 @@ function cacheGet(key: string): string | null {
 }
 
 function cacheSet(key: string, dst: string): void {
-  if (memCache.size > MEM_MAX) memCache.clear();
+  // 满了扔最老的一半，而不是清空整张表：清空等于让正在读的那篇文档
+  // 在下一段又把翻过的句子全再翻一遍（MyMemory 有每日配额）。
+  if (memCache.size >= MEM_MAX) {
+    let drop = Math.ceil(MEM_MAX / 2);
+    for (const k of memCache.keys()) {
+      memCache.delete(k);
+      if (--drop <= 0) break;
+    }
+  }
   memCache.set(key, { dst, at: Date.now() });
 }
 

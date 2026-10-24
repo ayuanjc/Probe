@@ -37,10 +37,23 @@ export function magnitude(articles24h: number): number {
   return Math.log1p(Math.max(0, articles24h));
 }
 
-/** Dev = (x - median_30d) / (MAD_30d + eps)：稳健 z-score。 */
+/**
+ * Dev = (x - median_30d) / (MAD_30d + eps)：稳健 z-score。
+ *
+ * eps 只用来挡住「MAD 正好是 0」这一种情况（半个月每天条数一模一样）。
+ * 它会把那种情况下的偏离放大成一个很大但有限的值，交给后面的分位排名处理 ——
+ * 分母为 0 得到 Infinity 会让整条百分位链变成 NaN。
+ */
 export function deviance(articles24h: number, median30d: number, mad30d: number): number {
   return (articles24h - median30d) / (mad30d + 1e-6);
 }
+
+/**
+ * r7 的上限。基线为 0（30 天里这个话题几乎没被提过）时比值没有意义，
+ * 早期版本返回 99 当哨兵，结果这个数字直接显示在卡片上、也写进 tooltip。
+ * 现在截到 9.99：仍然稳稳落在「爆发」区间，但不会有人看到 99 以为是条数。
+ */
+export const RATIO_CAP = 9.99;
 
 export function decayFactor(ageHours: number, tau = DECAY_TAU_HOURS): number {
   return Math.exp(-Math.max(0, ageHours) / tau);
@@ -79,8 +92,8 @@ export type StatusContext = {
 };
 
 export function ratio7d(articles24h: number, median30d: number): number {
-  if (median30d <= 0) return articles24h > 0 ? 99 : 0;
-  return articles24h / median30d;
+  if (median30d <= 0) return articles24h > 0 ? RATIO_CAP : 0;
+  return Math.min(RATIO_CAP, articles24h / median30d);
 }
 
 export function statusLabel(ctx: StatusContext): HeatStatus {
@@ -179,7 +192,8 @@ export function seriesStats(series: number[]): SeriesStats | null {
   const mad30 = mad(last30);
   const p95 = quantile(last30, 0.95);
   const mean30 = mean(last30);
-  const r7 = mean30 <= 0 ? (mean(last7) > 0 ? 99 : 0) : mean(last7) / mean30;
+  const r7 =
+    mean30 <= 0 ? (mean(last7) > 0 ? RATIO_CAP : 0) : Math.min(RATIO_CAP, mean(last7) / mean30);
 
   // 「日量是平时的 1~2 倍」连续多少天：从序列末尾往前数，遇到不满足就停。
   let hotDays = 0;

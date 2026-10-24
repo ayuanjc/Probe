@@ -233,13 +233,25 @@ export async function getTrending(force = false): Promise<TrendingSnapshot> {
   const degraded: string[] = [];
   const since = Math.floor(now / 1000) - WINDOW_HOURS * 3600;
 
+  /**
+   * 抓一次失败就判「源挂了」太脆：实测同一分钟里前一次成功、后一次
+   * 「The operation was aborted due to timeout」。给它一次机会，
+   * 两次都失败才记 hn:failed —— 那才是真的拿不到。
+   */
   let stories: TrendingStory[] = [];
-  try {
-    const { hits } = await fetchStories(since);
-    stories = hits.map(toStory).filter((s): s is TrendingStory => s !== null);
-  } catch (err) {
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2 && stories.length === 0; attempt++) {
+    try {
+      const { hits } = await fetchStories(since);
+      stories = hits.map(toStory).filter((s): s is TrendingStory => s !== null);
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  if (stories.length === 0 && lastErr) {
     degraded.push("hn:failed");
-    console.warn("[trending] hn failed:", err instanceof Error ? err.message : err);
+    console.warn("[trending] hn failed:", lastErr instanceof Error ? lastErr.message : lastErr);
   }
 
   // GDELT 是"多少家媒体在报"的唯一来源。这里从未请求过它（未接入），

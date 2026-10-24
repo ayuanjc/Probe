@@ -11,7 +11,7 @@ import {
 import { generateStructured, llmEnabled } from "@/lib/llm";
 import type { UsageSink } from "@/lib/metrics";
 import { toneBucket } from "@/lib/heat";
-import { titleSimilarity } from "@/lib/text";
+import { jaccard, tokenize } from "@/lib/text";
 import { titleTerms } from "@/lib/entity-graph";
 
 /**
@@ -39,9 +39,24 @@ type DedupeResult = {
   dropped: number;
 };
 
+/** 标题近似判重阈值：高于它就是同一稿件的转载。 */
+const TITLE_DUP = 0.92;
+
+/**
+ * 标题按「token 数的对数」分桶。
+ *
+ * 每对标题都重新切词是 O(n²·tokens)，而 Jaccard > 0.92 要求两边 token 数几乎相等
+ * （交集不可能大于较短的那一边，所以 min/max 至少 0.92）。于是只需要与自己这一桶
+ * 以及左右相邻的一桶比 —— 桶宽是 1.41 倍，正好覆盖这个容差，结果与全量两两比较一致，
+ * 比较次数从 n² 降到 n×每桶条数。
+ */
+function bucketOf(tokenCount: number): number {
+  return Math.floor(Math.log2(Math.max(1, tokenCount)) * 2);
+}
+
 function dedupe(sources: RawSource[]): DedupeResult {
   const seenUrl = new Set<string>();
-  const seenTitle: string[] = [];
+  const buckets = new Map<number, Set<string>[]>();
   const out: RawSource[] = [];
   let merged = 0;
   let dropped = 0;
@@ -58,14 +73,28 @@ function dedupe(sources: RawSource[]): DedupeResult {
     }
 
     // 跨源标题几乎一致 → 视为同一稿件的转载，只保留第一条。
-    const dup = seenTitle.some((t) => titleSimilarity(t, s.title) > 0.92);
-    if (dup) {
-      merged++;
-      continue;
+    const tokens = tokenize(s.title);
+    if (tokens.size > 0) {
+      const b = bucketOf(tokens.size);
+      let dup = false;
+      for (const bb of [b - 1, b, b + 1]) {
+        const list = buckets.get(bb);
+        if (!list) continue;
+        if (list.some((t) => jaccard(t, tokens) > TITLE_DUP)) {
+          dup = true;
+          break;
+        }
+      }
+      if (dup) {
+        merged++;
+        continue;
+      }
+      const list = buckets.get(b);
+      if (list) list.push(tokens);
+      else buckets.set(b, [tokens]);
     }
 
     seenUrl.add(key);
-    seenTitle.push(s.title);
     out.push(s);
   }
   return { kept: out, merged, dropped };

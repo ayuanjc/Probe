@@ -55,6 +55,8 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                   <button
                     type="button"
                     onClick={() => setExpanded(expanded === s.id ? null : s.id)}
+                    aria-expanded={expanded === s.id}
+                    aria-label={"原文片段：" + s.title}
                     className="rounded border border-neutral-800 px-2 py-0.5 text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
                   >
                     原文片段
@@ -69,6 +71,8 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
                       ? "border border-neutral-600 bg-neutral-800 text-white"
                       : "border border-neutral-800 text-neutral-400 hover:border-neutral-600 hover:text-white")
                   }
+                  aria-expanded={comparing === s.id}
+                  aria-label={"对照原文：" + s.title}
                   title="抓取原文正文，逐段给出译文与可核对差异"
                 >
                   对照原文
