@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import SessionBar from "@/components/SessionBar";
 import UpdateBanner from "@/components/UpdateBanner";
 import { BASE_PATH } from "@/lib/base-path";
 
@@ -57,6 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="zh-CN">
       <body>
         {children}
+        <SessionBar />
         <UpdateBanner />
       </body>
     </html>

@@ -75,7 +75,9 @@ export function hostOf(url: string): string {
 }
 
 /** 数量级后缀：不折算的话「3.2 billion」与「3.2」都压成 3.2，三个数量级被当成同一个数。 */
-function magnitudeOf(s: string): number {
+// 故意导出：核验层比较「数字是否一致」时必须用同一份数量级口径，
+// 复刻一份的结果是两套口径某天分行，而那种 bug 表现为「一致/冲突」整体反相。
+export function magnitudeOf(s: string): number {
   // 中文刻度与英文刻度不是一一对应：亿 = 1e8，而 billion = 1e9；千万 = 1e7，million = 1e6。
   if (/万亿|trillion/.test(s)) return 1e12;
   if (/千万/.test(s)) return 1e7;

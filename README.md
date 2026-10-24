@@ -98,6 +98,25 @@ npm run dev                  # http://localhost:3210
 | `TAVILY_API_KEY` | 补一路通用搜索，显著提升信源多样性 |
 | `PROBE_RATE_LIMIT_PER_MIN` | 单用户每分钟检索上限，默认 3（PRD 附录 B） |
 
+### 本地开发怎么进去
+
+这个实例现在是**邀请制**的（[docs/AUTH.md](docs/AUTH.md)）：不登录会被重定向到 `/login`，
+API 也一律 401，所以 `npm run dev` 之后第一件事是给自己开个账号 —— 三选一：
+
+```bash
+# 1) 直接在 .env.local 里种一个管理员（只在库为空时生效），然后 npm run dev，登录 admin
+PROBE_ADMIN_USER=admin
+PROBE_ADMIN_PASSWORD='dev horse battery'
+
+# 2) 命令行建（然后去 /login）
+npm run auth -- create-admin admin
+
+# 3) 只想调界面、不想要登录
+PROBE_AUTH_MODE=off
+```
+
+登录后在右下角身份条进 `/admin` 发邀请码或直接建用户。数据在 `.data/auth/store.json`
+（已在 `.gitignore` 里，别提交）。
 ## 四个阶段
 
 ```
@@ -256,7 +275,7 @@ score = (0.6·pct(log1p(今日条数)) + 0.4·pct(z-score)) × exp(-最近一条
 ## 拖拽布局：快照为什么先落在本机
 
 Phase 2 的验收是「拖拽保存刷新仍在」。PRD 写的是 Supabase，但那个 key 至今空着——
-没有鉴权、没有表结构，写进去只能先造一张谁都能读的表。所以这一版把快照存在
+（当时）没有鉴权、没有表结构，写进去只能先造一张谁都能读的表。所以这一版把快照存在
 `localStorage`，键是 `probe:layout:<layoutVersion>:<query>`，**结构仍按 PRD**：
 
 ```
@@ -752,8 +771,9 @@ PRD 里这一项写的是 Postgres 邻接表 + pgvector 的「向量近邻 2 跳
 `/metrics` 是给运维看的一页，不是第二个首页。它读 `GET /api/metrics`，数据全部来自
 **进程内的环形缓冲**（`src/lib/metrics.ts`，容量 200 轮，重启即清空、不落盘）。
 
-为什么不落库：这一版没有数据库也没有鉴权，落盘等于凭空造一份「用户搜索历史」，
-而它对我们调试的价值远低于泄露它的代价。要留存必须等真有账号体系。
+为什么不落库：**现在虽然有账号体系了（[docs/AUTH.md](docs/AUTH.md)），这一条仍然不变** ——
+落盘等于凭空造一份「谁在搜什么」的历史，它对我们调试的价值远低于泄露它的代价。
+`/metrics` 页本身要登录，但环形缓冲只活在进程内存里，重启即清空。
 
 每轮记什么：五个阶段的耗时（意图 / 检索 / 分析 / 编排 / 摘要）、端到端耗时、
 条目数与独立稿源数、置信度与档位、模块数与失败模块数、降级码、口径条数、
@@ -807,7 +827,8 @@ summary 2/0/1 —— 检索占了 99% 的时间，其余全是毫秒级。这一
 不能挂在用户的第一次访问上（那会让首屏等 20 秒）。
 
 **它默认是关的**：没配 `PROBE_CRON_SECRET` 时直接回 503 `cron_disabled`。
-理由很直白：一个无鉴权、能触发 60 次外部请求的端点被扫到，就是免费的放大器。
+理由很直白：一个能触发 60 次外部请求的端点被扫到，就是免费的放大器。它走 secret 而不是
+用户会话 —— 定时任务没有浏览器，也不该依赖某个人的账号还在不在。
 配好之后支持两种带法：`Authorization: Bearer <secret>` 或 `x-probe-cron-secret`，
 不匹配回 401。
 

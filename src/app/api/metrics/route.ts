@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { snapshotMetrics } from "@/lib/metrics";
+import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
+import { clientKey, constantTimeEqual } from "@/lib/request-guard";
+import { requireUser } from "@/lib/auth/guard";
 
 /**
  * 运行指标。默认脱敏：查询词是用户输入，这个端点又没有鉴权，
@@ -11,10 +14,30 @@ import { snapshotMetrics } from "@/lib/metrics";
  */
 export const dynamic = "force-dynamic";
 
+const perClient = createLimiter({
+  name: "metrics",
+  limit: readPositiveInt("PROBE_METRICS_RATE_LIMIT_PER_MIN", 60),
+});
+
 export async function GET(request: Request) {
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
+
+  const rl = perClient.check(clientKey(request));
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, error: "rate_limited" },
+      { status: 429, headers: { "cache-control": "no-store", "retry-after": String(rl.retryAfterSeconds) } },
+    );
+  }
+
   const key = process.env.PROBE_METRICS_KEY;
   const given = request.headers.get("x-probe-metrics-key");
-  const revealQueries = Boolean(key) && given === key;
+  /**
+   * 必须常量时间比较：`given === key` 会按第一个不同字节提前返回，
+   * 攻击者能靠响应时间一个字节一个字节地把 key 试出来。
+   */
+  const revealQueries = Boolean(key) && constantTimeEqual(given, key);
 
   const snapshot = snapshotMetrics({ revealQueries });
   return NextResponse.json(

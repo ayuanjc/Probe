@@ -1,10 +1,13 @@
 import Link from "next/link";
 import MetricsPanel from "@/components/MetricsPanel";
 import ProbeLogo from "@/components/ProbeLogo";
+import { requirePageUser } from "@/lib/auth/guard";
 
+export const dynamic = "force-dynamic";
 export const metadata = { title: "运行指标 · 探针" };
 
-export default function MetricsPage() {
+export default async function MetricsPage() {
+  await requirePageUser();
   return (
     <main className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-5 py-8 sm:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 pb-5">

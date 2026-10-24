@@ -30,6 +30,7 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/var/log/probe-update.log` | 更新日志（含构建输出） |
 | `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
 | `/opt/probe/app/.cache/feedback.jsonl` | 页脚反馈，一行一条（`.cache` 不在自动更新的覆盖范围内） |
+| `/opt/probe/app/.data/auth/store.json` | **授权数据**：用户 / 会话 / 邀请码的哈希 + 审计（0600，同理不在更新覆盖范围内 —— 更新不会删它） |
 
 ## 环境变量（`/opt/probe/probe.env`）
 
@@ -42,10 +43,58 @@ PROBE_MODULE_RATE_LIMIT_PER_MIN=20
 PROBE_CRON_SECRET=<32 位 hex>       # 热榜定时任务的钥匙；不配 /api/cron/heat 直接 503
 PROBE_SITE_URL=http://106.52.116.164 # 分享卡 og:url / og:image 的绝对前缀（不带 NEXT_PUBLIC_，部署时读）
 # OPENAI_API_KEY=               # 接上就换成模型摘要，字段名见 .env.example
+
+# 邀请制授权（docs/AUTH.md）。只在库为空时种管理员，之后改这里没有效果。
+PROBE_ADMIN_USER=admin
+PROBE_ADMIN_PASSWORD=<至少 10 位、且不包含 admin 的密码>
+# PROBE_SESSION_TTL_HOURS=168   # 登录有效期，默认 7 天
+# PROBE_DATA_DIR=.data          # 授权数据目录（相对 app 目录）
+# PROBE_LOGIN_RATE_PER_MIN=5    # 登录 / 注册 / 改密的限流，默认值一般就够
 ```
 
 `NEXT_PUBLIC_*` 会被编译进前端 bundle：**改了必须重新构建**，只 restart 不生效。
 其余变量在 `next start` 时读取，改完 `systemctl restart probe-web` 就够。
+
+## 邀请制授权（发号 / 救人 / 备份）
+
+上线后第一次启动前**必须在 `probe.env` 里写好** `PROBE_ADMIN_USER` + `PROBE_ADMIN_PASSWORD`，
+否则库是空的、没人能登录、也发不出邀请码。种出来的管理员首次登录会被强制去 `/account` 改密码。
+
+平时都在网页后台 `/admin`（右下角身份条 → 后台）做：发邀请码、建用户、停用、重置密码、看审计。
+
+**服务起不来或后台进不去时**，用命令行（走同一份 `store.json`，不受 HTTP 影响）：
+
+```bash
+cd /opt/probe/app
+npm run auth -- list                    # 用户 / 邀请码 / 会话一览
+npm run auth -- create-admin rescue     # 新开一个管理员（密码只打印一次）
+npm run auth -- invite --uses 3 --hours 72 --note "测试组"
+npm run auth -- add-user test-01        # 随机初始密码，打印一次
+npm run auth -- passwd test-01          # 重置密码 + 踢掉该用户所有会话
+npm run auth -- disable test-01
+npm run auth -- rm-user test-01
+```
+
+**备份**（只有这一个文件；按敏感数据对待，别丢公开网盘）：
+
+```bash
+cp -a /opt/probe/app/.data/auth/store.json /root/backup-store-$(date +%F).json
+```
+
+`store.json` 解析失败时服务返回 503 `auth_unavailable`，日志里写 `store_corrupt`。
+处置顺序：**先备份坏文件 → 定位 JSON 语法错 → 修好或换回上一份备份 → `npm run auth -- list` 确认 → 再重启**。
+不要「删掉让它重建」—— 重建出来的是空库，所有人账号都没了。细节见 [AUTH.md](./AUTH.md) 第 8 节。
+
+⚠️ 自动更新（`update.sh`）用 tar 覆盖源码，**不会动 `.data/` 与 `.cache/`**。
+但也别把它们放进 `stage/new` 之外的清理脚本里。
+
+⚠️ `npm run verify:api` 现在需要登录态（否则 `/api/verify` 直接 401）：
+
+```bash
+BASE=http://127.0.0.1:3215/probe PROBE_USER=admin PROBE_PASS='...' node scripts/verify-api.mjs
+```
+
+---
 
 ## 更新一次会发生什么
 
@@ -115,8 +164,25 @@ location /probe {
     proxy_cache off;
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
+
+    # 安全加固（详见 docs/SECURITY.md）：应用层已按分钟限流，这里再兜一层
+    limit_req zone=probe_rl burst=20 nodelay;
+    limit_req_status 429;
+    client_max_body_size 1m;
 }
 ```
+
+`limit_req_zone` 要写在 `http {}` 里（`nginx.conf` 或 `conf.d` 的顶层）：
+
+```nginx
+limit_req_zone $binary_remote_addr zone=probe_rl:10m rate=5r/s;
+```
+
+**上面那两行 `proxy_set_header X-Real-IP / X-Forwarded-For` 不能删**：
+应用层按「XFF 右起第 1 跳」还原客户端 IP 来分桶。缺了它们所有请求都落进共享桶，
+一个人刷爆就是全员 429。反过来，如果哪天把本项目**不经 nginx 直接暴露**，
+必须设 `PROBE_TRUSTED_PROXY_HOPS=0`，否则客户端伪造 XFF 就能每请求换一份额度
+（这条已在 `docs/SECURITY.md` 里实测记录）。
 
 `proxy_pass` 后面**不要**带 URI（不要写 `proxy_pass http://127.0.0.1:3215/;`）：
 带了会把 `/probe` 前缀剥掉，而 Next 的 basePath 正等着这个前缀。

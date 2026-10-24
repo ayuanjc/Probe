@@ -1,5 +1,7 @@
 import { translateDocument } from "@/lib/translate";
 import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
+import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,26 +11,22 @@ export const dynamic = "force-dynamic";
  * 每条信源点一次「对照原文」就是一个外部请求，不设限等于把本机 IP 借给别人刷。
  * 限额比检索松（20/分钟），因为读报告时连续点开多条是正常行为。
  */
-const RL_WINDOW_MS = 60_000;
-const RL_MAX = Number(process.env.PROBE_TRANSLATE_RATE_LIMIT_PER_MIN ?? 20);
-const hits = new Map<string, number[]>();
+const perClient = createLimiter({
+  name: "translate",
+  limit: readPositiveInt("PROBE_TRANSLATE_RATE_LIMIT_PER_MIN", 20),
+});
 
-function hit(key: string): { ok: boolean; retryAfterMs: number } {
-  const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter((t) => now - t < RL_WINDOW_MS);
-  if (recent.length >= RL_MAX) {
-    hits.set(key, recent);
-    return { ok: false, retryAfterMs: recent[0] + RL_WINDOW_MS - now };
-  }
-  recent.push(now);
-  hits.set(key, recent);
-  return { ok: true, retryAfterMs: 0 };
-}
+/** 每次对照翻译都要去抓原文/打模型，换 IP 就能绕开 per-IP 额度。 */
+const globalLimiter = createLimiter({
+  name: "translate-global",
+  limit: readPositiveInt("PROBE_GLOBAL_TRANSLATE_PER_MIN", 120),
+});
 
-function clientKey(request: Request): string {
-  const fwd = request.headers.get("x-forwarded-for");
-  return (fwd ? fwd.split(",")[0].trim() : "") || "local";
-}
+/** 对照翻译是用户主动点开的单条动作，并发给足但必须有上限。 */
+const gate = createGate(readPositiveInt("PROBE_TRANSLATE_CONCURRENCY", 4));
+
+/** 20_000 字正文上限（中文约 60KB），留到 96KB。 */
+const MAX_BODY_BYTES = 96_000;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -38,19 +36,35 @@ function json(data: unknown, status = 200): Response {
 }
 
 export async function POST(request: Request) {
-  const rl = hit(clientKey(request));
-  if (!rl.ok) {
-    const wait = Math.max(1, Math.ceil(rl.retryAfterMs / 1000));
+  if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
+
+  const per = perClient.check(clientKey(request));
+  if (!per.ok) {
     return new Response(
-      JSON.stringify({ ok: false, error: "rate_limited", message: "对照翻译请求过于频繁，请 " + wait + " 秒后重试。" }),
-      { status: 429, headers: { "content-type": "application/json; charset=utf-8", "retry-after": String(wait) } },
+      JSON.stringify({
+        ok: false,
+        error: "rate_limited",
+        message: `对照翻译请求过于频繁，请 ${per.retryAfterSeconds} 秒后重试。`,
+      }),
+      {
+        status: 429,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "retry-after": String(per.retryAfterSeconds),
+        },
+      },
     );
   }
+  const all = globalLimiter.check("all");
+  if (!all.ok) return json({ ok: false, error: "busy", message: "服务当前请求量过大，请稍后再试。" }, 503);
 
-  const body = (await request.json().catch(() => null)) as
-    | { url?: unknown; title?: unknown; text?: unknown }
-    | null;
-  if (!body) return json({ ok: false, error: "bad_json", message: "请求体不是合法 JSON。" }, 400);
+  const limited = await readJsonBody(request, MAX_BODY_BYTES);
+  if (!limited.ok) return json({ ok: false, error: limited.code, message: limited.message }, limited.status);
+  const body = limited.value as { url?: unknown; title?: unknown; text?: unknown } | null;
+  if (!body || typeof body !== "object") {
+    return json({ ok: false, error: "bad_json", message: "请求体不是合法 JSON。" }, 400);
+  }
 
   const url = typeof body.url === "string" ? body.url.slice(0, 2048) : undefined;
   const title = typeof body.title === "string" ? body.title.slice(0, 400) : undefined;
@@ -60,9 +74,18 @@ export async function POST(request: Request) {
     return json({ ok: false, error: "no_input", message: "需要 url / title / text 至少一项。" }, 400);
   }
 
-  // 带上用户自带的 key：有 key 时翻译走模型，没 key 才落到 MyMemory。
-  const result = await withRuntimeConfig(configFromRequest(request), () =>
-    translateDocument({ url, title, text }),
-  );
-  return json(result, result.ok ? 200 : 422);
+  const release = gate.acquire();
+  if (!release) return json({ ok: false, error: "busy", message: "服务正忙，请稍后再试。" }, 503);
+
+  try {
+    // 带上用户自带的 key：有 key 时翻译走模型，没 key 才落到 MyMemory。
+    const result = await withRuntimeConfig(configFromRequest(request), () =>
+      translateDocument({ url, title, text }),
+    );
+    return json(result, result.ok ? 200 : 422);
+  } catch (err) {
+    return json({ ok: false, error: "internal", message: publicMessage(err, "对照翻译失败，请稍后重试。") }, 500);
+  } finally {
+    release();
+  }
 }

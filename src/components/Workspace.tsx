@@ -24,6 +24,8 @@ import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
+import ResultRail, { ResultJumpBar, railSections } from "./ResultRail";
+import { pushHistory, readHistory } from "@/lib/history";
 import type { Dataset } from "@/lib/schemas";
 import {
   DEFAULT_SETTINGS,
@@ -126,6 +128,39 @@ export default function Workspace({
 
   /** 图表「收起全部」：网格内的卡由 ModuleGrid 自己管，实体关系图在网格外，靠这个开关同步。 */
   const [graphCollapsed, setGraphCollapsed] = useState(false);
+
+  /**
+   * 最近查询：侧栏的「最近」用它。
+   * 只在真正发起检索时写（热榜话题、输入框回车、后退、首屏 ?q=），
+   * 不跟着输入框走 —— 打到一半的词不值得占一个位置。
+   */
+  const [history, setHistory] = useState<string[]>([]);
+
+  /**
+   * 列表的真源是「存储 ∪ 本会话已记的」，不是 React 的上一份 state。
+   * 理由是实测出来的：初访带 ?q= 时，首轮由 effect 里自动发起，
+   * 而读存储的那个 effect 与它同批执行 —— 用 setState(prev => ...) 时
+   * prev 有可能是空的，第二次检索就会拿空列表去 overwrite，把首条吃掉。
+   * 改成从存储重建再合并，执行顺序怎么变都不会丢。
+   */
+  const historyRef = useRef<string[]>([]);
+
+  const remember = useCallback((q: string) => {
+    // 并集按「存储在前、本会话补后」拼：存储一定是最新的写入，反过来 fold 会把顺序倒置。
+    const union = readHistory();
+    for (const item of historyRef.current) {
+      if (union.indexOf(item) < 0) union.push(item);
+    }
+    const next = pushHistory(q, undefined, union);
+    historyRef.current = next;
+    setHistory(next);
+  }, []);
+
+  useEffect(() => {
+    const stored = readHistory();
+    historyRef.current = stored;
+    setHistory(stored);
+  }, []);
 
   /**
    * isSearched = 用户已经问过一次。
@@ -252,8 +287,9 @@ export default function Workspace({
       setInput(trimmed);
       runRef.current(trimmed);
       syncUrl(trimmed, "push");
+      remember(trimmed);
     },
-    [syncUrl],
+    [syncUrl, remember],
   );
 
   const pickTopic = (name: string) => startSearch(name);
@@ -273,6 +309,19 @@ export default function Workspace({
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [reset]);
+
+  /**
+   * 重跑本轮：查询词不变，数据全部换新。
+   * 走 pushState 而不是 replaceState —— 重跑也是一次「新的阅读位置」，
+   * 否则后退会跳过它，用户会以为按钮没生效。
+   */
+  const reRun = useCallback(() => {
+    const q = state.query;
+    if (!q || running) return;
+    runRef.current(q);
+    syncUrl(q, "push");
+    remember(q);
+  }, [state.query, running, syncUrl, remember]);
 
   const scrollToTrending = () => {
     document.getElementById("trending")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -299,6 +348,7 @@ export default function Workspace({
     if (booted.current || !initialQuery.trim()) return;
     booted.current = true;
     runWithSettings(initialQuery);
+    remember(initialQuery.trim());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
@@ -451,10 +501,58 @@ export default function Workspace({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.28, delay: 0.06 }}
-          className="flex flex-col gap-6 pt-6"
+          className="pt-6"
         >
-          {state.intent && (
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-2.5 font-mono text-[10px] text-neutral-500">
+          {/*
+            两列：左导航（lg 起常驻），右内容。
+            一轮检索跑完，页面上依次是摘要、N 张面板、共现图、几十条信源、口径与统计，
+            全在一条滚动的单列里 —— 没有目录就只能靠滚，想回到上一次那个问题得重打一遍。
+            窄屏不给侧栏（它要么占半屏，要么藏进抽屉没人开），只留一条吸顶的区块跳转条。
+          */}
+          <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start lg:gap-7">
+            <aside className="hidden lg:sticky lg:top-4 lg:block lg:self-start">
+              <ResultRail
+                query={state.query}
+                running={running}
+                kindLabel=
+                  {state.intent ? (KIND_TEXT[state.intent.kind] ?? state.intent.kind) : null}
+                entities={state.intent ? state.intent.entities.map((e) => e.name) : []}
+                windowLabel=
+                  {state.intent
+                    ? fmtDay(state.intent.timeRange.from) +
+                      " → " +
+                      fmtDay(state.intent.timeRange.to)
+                    : null}
+                ambiguity={state.intent ? state.intent.ambiguity : null}
+                modules={state.modules.map((m) => ({
+                  id: m.id,
+                  title: m.title,
+                  status: m.status,
+                }))}
+                sourceCount={state.sources.length}
+                hasSummary={state.text.length > 0}
+                hasGraph={state.entityGraph !== null}
+                hasMeta={state.status === "done"}
+                elapsedMs={state.elapsedMs}
+                history={history}
+                onPickQuery={pickTopic}
+                onReRun={reRun}
+                onNewSearch={newSearch}
+                onReveal={revealModule}
+              />
+            </aside>
+            <div className="flex min-w-0 flex-col gap-6">
+              <ResultJumpBar
+                sections={railSections({
+                  hasSummary: state.text.length > 0,
+                  modules: state.modules.length,
+                  hasGraph: state.entityGraph !== null,
+                  sources: state.sources.length,
+                  hasMeta: state.status === "done",
+                })}
+              />
+              {state.intent && (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-2.5 font-mono text-[10px] text-neutral-500 lg:hidden">
               <span className="text-blue-500">
                 意图 · {KIND_TEXT[state.intent.kind] ?? state.intent.kind}
               </span>
@@ -506,7 +604,8 @@ export default function Workspace({
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.32, ease: "easeOut" }}
-                  className="panel p-6"
+                  id="sec-summary"
+                  className="panel scroll-mt-16 p-6"
                 >
                   <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-300">
                     {state.text}
@@ -522,7 +621,9 @@ export default function Workspace({
                 </div>
               )}
 
+              {/* 锚点：侧栏的「面板 N」跳到这里（scroll-mt 给顶部留一点气）。 */}
               {state.modules.length > 0 && (
+                <div id="sec-modules" className="scroll-mt-16">
                 <ModuleGrid
                   modules={state.modules}
                   sources={state.sources}
@@ -532,6 +633,7 @@ export default function Workspace({
                   gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
                   onCollapseAll={setGraphCollapsed}
                 />
+                </div>
               )}
 
               {/*
@@ -539,16 +641,18 @@ export default function Workspace({
                 又需要下方的信源来当证据，所以在阅读顺序上正好夹在中间。
               */}
               {state.entityGraph && (
+                <div id="sec-graph" className="scroll-mt-16">
                 <EntityGraphCard
                   graph={state.entityGraph}
                   sources={state.sources}
                   collapsed={graphCollapsed}
                   onToggle={() => setGraphCollapsed((v) => !v)}
                 />
+                </div>
               )}
 
               {state.sources.length > 0 && (
-                <section className="panel overflow-hidden">
+                <section id="sec-sources" className="panel scroll-mt-16 overflow-hidden">
                   <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pb-1 pt-4">
                     <span className="text-sm font-semibold text-white">
                       原始信源
@@ -571,8 +675,12 @@ export default function Workspace({
                 "文章数"到底指什么），但以前只写进服务端 notes，用户一句也看不到。
                 用中性色而不是警示色 —— 它们是解释，不是故障。
               */}
+              {/* sec-meta 挂在本轮第一个出现的「口径/降级/统计」块上：三段都可能缺，锚点不能缺。 */}
               {state.status === "done" && state.notes.length > 0 && (
-                <div className="rounded-md border border-neutral-800 px-4 py-3 text-[10px] leading-relaxed text-neutral-500">
+                <div
+                  id="sec-meta"
+                  className="scroll-mt-16 rounded-md border border-neutral-800 px-4 py-3 text-[10px] leading-relaxed text-neutral-500"
+                >
                   <span className="text-neutral-400">口径</span>
                   <ul className="mt-1 flex flex-col gap-1">
                     {state.notes.map((n) => (
@@ -583,7 +691,10 @@ export default function Workspace({
               )}
 
               {state.status === "done" && state.degraded.length > 0 && (
-                <div className="rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[10px] leading-relaxed text-yellow-500/90">
+                <div
+                  id={state.notes.length === 0 ? "sec-meta" : undefined}
+                  className="scroll-mt-16 rounded-md border border-yellow-500/25 bg-yellow-500/[0.05] px-4 py-3 text-[10px] leading-relaxed text-yellow-500/90"
+                >
                   <Term k="degraded">降级项</Term>：
                   {state.degraded.map(degradeText).join(" · ")}
                   （这些来源本轮不可用或已退回本地样本，结论已相应收缩）
@@ -592,7 +703,10 @@ export default function Workspace({
 
               {/* 本轮统计行。用 div 不用 footer：页面上只留一个 footer 地标（在页面最底下）。 */}
               {state.status === "done" && state.elapsedMs !== null && (
-                <div className="flex flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600">
+                <div
+                  id={state.notes.length === 0 && state.degraded.length === 0 ? "sec-meta" : undefined}
+                  className="flex scroll-mt-16 flex-wrap gap-x-6 gap-y-1.5 px-1 pt-2 font-mono text-[10px] tabular-nums text-neutral-600"
+                >
                   <span>耗时 {state.elapsedMs} ms</span>
                   <span>模块 {state.modules.length} 个</span>
                   <span>信源 {state.sources.length} 条</span>
@@ -630,6 +744,8 @@ export default function Workspace({
                 />
               </aside>
             )}
+          </div>
+            </div>
           </div>
         </motion.div>
       )}

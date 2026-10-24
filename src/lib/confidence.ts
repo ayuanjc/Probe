@@ -1,4 +1,5 @@
 import type { Confidence, Claim, RawSource } from "./schemas";
+import { effectiveSampleSize, ownerWeights, SYNDICATED_OWNER_WEIGHT } from "./agreement";
 import { hostOf, normalizeValue, titleSimilarity } from "./text";
 
 /**
@@ -14,10 +15,54 @@ export function ownerOf(s: RawSource): string {
   return (s.owner || hostOf(s.url)).toLowerCase();
 }
 
-/** I = 1 - e^(-n/3)：1 个 owner 得 0.28，3 个得 0.63，6 个得 0.86，之后饱和。 */
+/**
+ * I = 1 - e^(-n/3)：1 个 owner 得 0.28，3 个得 0.63，6 个得 0.86，之后饱和。
+ *
+ * 这里的 n 是 owner 个数，不是条数 —— 十家改写标题的转载仍然是 10 个 owner，
+ * 曲线只能削平一部分虚高。真正把转载扣掉的是下面的 effectiveOwners()。
+ */
 export function independenceScore(nOwners: number): number {
   if (nOwners <= 0) return 0;
   return 1 - Math.exp(-nOwners / 3);
+}
+
+export type EffectiveOwners = {
+  /** owner 个数（旧口径，界面上的「独立信源」）。 */
+  nOwners: number;
+  /** 有效独立源数：(Σw)²/Σw²。全一手时等于 nOwners，否则严格更小。 */
+  nEff: number;
+  weights: number[];
+  /** 只有转载、没有一手条目的 owner。它们撑起了假共识，值得单独点名。 */
+  distributors: string[];
+};
+
+/**
+ * 有效独立源数。一个 owner 只占一票（取它最强的那条）：
+ * 同一家 5 篇一手报道仍是 1 票 —— 相关性没变；但它不该因为另外 3 篇是转载
+ * 就连降成 0.3。
+ *
+ * syndicated 必须是**去重前**的集合：去重后的集合里重复条目已经被删掉，
+ * 拿它算永远得到 nEff = nOwners（CODE-REVIEW #5 同一处根因）。
+ */
+export function effectiveOwners(
+  sources: RawSource[],
+  syndicated: ReadonlySet<string> | readonly string[] = [],
+): EffectiveOwners {
+  const flagged = new Set<string>(syndicated as Iterable<string>);
+  const byOwner = new Map<string, { firsthand: boolean }[]>();
+  for (const s of sources) {
+    const key = ownerOf(s);
+    const list = byOwner.get(key) ?? [];
+    list.push({ firsthand: !flagged.has(s.id) });
+    byOwner.set(key, list);
+  }
+  const { weights, distributors } = ownerWeights(byOwner);
+  return { nOwners: byOwner.size, nEff: effectiveSampleSize(weights), weights, distributors };
+}
+
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
 /**
@@ -120,9 +165,25 @@ export function bandOf(score: number): Confidence["band"] {
   return "low";
 }
 
+export type ConfidenceContext = {
+  /**
+   * 去重前的原始命中数。
+   *
+   * 一手性的分母必须是它：26 篇合并成 9 篇之后，用 9 做分母算出来的「一手率」
+   * 在问一个不同的问题 —— 「留下来的都是独家的吗」，而不是「这轮检索里有多少是转载」。
+   * 前者永远接近 1，这就是 CODE-REVIEW #5 的核心。
+   */
+  rawCount?: number;
+  /** 在**去重前**集合上识别出的转载 id。给了就不再内部重算。 */
+  syndicatedIds?: Iterable<string>;
+  /** 去重时判为重复而被合并/丢弃的 id：既不算一手，也不该进一致性比对。 */
+  mergedIds?: Iterable<string>;
+};
+
 export function computeConfidence(
   sources: RawSource[],
   claims: Claim[],
+  ctx: ConfidenceContext = {},
 ): Confidence {
   if (sources.length === 0) {
     return {
@@ -139,9 +200,26 @@ export function computeConfidence(
   }
 
   const owners = new Set(sources.map(ownerOf));
-  const syndicated = findSyndicatedIds(sources);
+
+  /**
+   * 转载池。给了 ctx 就用调用方在**原始集合**上算好的结果 ——
+   * findSyndicatedIds 的阈值（0.9 / 0.8）松于 dedupe 的 0.92 标题阈值，
+   * 在去重后的存活集合里它几乎只能返回空集（CODE-REVIEW #5）。
+   * 保留无 ctx 时的旧行为，是为了不打断任何既有调用方与测试。
+   */
+  const syndicated = new Set<string>();
+  if (ctx.syndicatedIds) {
+    for (const id of ctx.syndicatedIds) syndicated.add(id);
+  } else {
+    for (const id of findSyndicatedIds(sources)) syndicated.add(id);
+  }
+  for (const id of ctx.mergedIds ?? []) syndicated.add(id);
+
+  // 分母取「原始条数」与「存活条数」里较大的那个：任何调用方都不会因此得到
+  // firstHand > 1，而传了 rawCount 的调用方能拿到真实的一手比例。
+  const denom = Math.max(ctx.rawCount ?? sources.length, sources.length);
   const independence = independenceScore(owners.size);
-  const firstHand = 1 - syndicated.size / sources.length;
+  const firstHand = clamp01(1 - syndicated.size / denom);
   const consistency = consistencyScore(claims, syndicated);
 
   let score =

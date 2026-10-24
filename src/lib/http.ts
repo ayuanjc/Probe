@@ -15,7 +15,7 @@
 
 import { lookup } from "node:dns/promises";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
@@ -110,7 +110,33 @@ export function isPrivateAddress(ip: string): boolean {
 }
 
 const HOST_TTL_MS = 5 * 60_000;
-const hostCache = new Map<string, { ok: boolean; at: number }>();
+
+type HostVerdict =
+  | { ok: true; address: string; family: number }
+  | { ok: false; reason: string };
+
+const hostCache = new Map<string, { v: HostVerdict; at: number }>();
+
+/**
+ * 允许访问的端口（默认只有 80 / 443）。
+ *
+ * 不限制端口，这个抓取器就等价于「任意内网/全网端口探针」：
+ * `https://target:22`、`:6379`、`:9200` 都能被当成"文章地址"打一发，
+ * 从响应时间和报错就能判断端口开着没有。需要别的端口用
+ * PROBE_FETCH_ALLOWED_PORTS 显式打开。
+ */
+const ALLOWED_PORTS = (() => {
+  const raw = process.env.PROBE_FETCH_ALLOWED_PORTS;
+  const list = (raw && raw.trim() ? raw : "80,443")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0 && n < 65_536);
+  return new Set<number>(list.length > 0 ? list : [80, 443]);
+})();
+
+export function portAllowed(port: number): boolean {
+  return ALLOWED_PORTS.has(port);
+}
 
 /**
  * 这个主机名能不能访问。**每一次请求、每一跳重定向都要过这一关。**
@@ -124,32 +150,71 @@ const hostCache = new Map<string, { ok: boolean; at: number }>();
  * 所以改成「先解析，再判地址」：域名注册成什么无所谓，解析出私网 IP 一律拒绝。
  */
 export async function hostAllowed(hostname: string): Promise<boolean> {
+  return (await resolveAllowed(hostname)).ok;
+}
+
+/**
+ * 解析主机名，并返回「已经判过、可以直接连」的那个地址。
+ *
+ * 为什么要把地址带出来：旧写法是 hostAllowed() 判一次、node:http 内部再解析
+ * 一次。两次 DNS 之间攻击者可以把域名换绑到 127.0.0.1 —— 校验通过、
+ * 连接却落到内网（DNS rebinding 的 TOCTOU）。现在把校验时拿到的地址通过
+ * `lookup` 选项钉给底层 socket，只连判过的地址，不再有第二次解析。
+ */
+async function resolveAllowed(hostname: string): Promise<HostVerdict> {
   const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  if (host.length === 0) return false;
+  if (host.length === 0) return { ok: false, reason: "host_blocked" };
 
   const hit = hostCache.get(host);
-  if (hit && Date.now() - hit.at < HOST_TTL_MS) return hit.ok;
+  if (hit && Date.now() - hit.at < HOST_TTL_MS) return hit.v;
 
-  let ok = true;
-  if (isIP(host) !== 0) {
-    ok = !isPrivateAddress(host);
+  let verdict: HostVerdict;
+  const literal = isIP(host);
+  if (literal !== 0) {
+    verdict = isPrivateAddress(host)
+      ? { ok: false, reason: "host_blocked" }
+      : { ok: true, address: host, family: literal };
   } else {
     try {
       const addrs = await lookup(host, { all: true, verbatim: true });
-      if (addrs.length === 0) ok = false;
-      else ok = addrs.every((a) => !isPrivateAddress(a.address));
+      const good = addrs.filter((a) => !isPrivateAddress(a.address));
+      // 只要有一条解析结果落在内网就整域名拒绝：多 A 记录轮询也绕不过去。
+      verdict =
+        good.length > 0 && good.length === addrs.length
+          ? { ok: true, address: good[0].address, family: good[0].family }
+          : { ok: false, reason: "host_blocked" };
     } catch {
       // 解析不出来就别发请求：能连上的可能性不比解析失败更高。
-      ok = false;
+      verdict = { ok: false, reason: "host_blocked" };
     }
   }
 
-  hostCache.set(host, { ok, at: Date.now() });
+  hostCache.set(host, { v: verdict, at: Date.now() });
   if (hostCache.size > 512) {
-    for (const [k, v] of hostCache) if (Date.now() - v.at >= HOST_TTL_MS) hostCache.delete(k);
+    for (const [k, entry] of hostCache) if (Date.now() - entry.at >= HOST_TTL_MS) hostCache.delete(k);
   }
-  return ok;
+  return verdict;
 }
+
+/** 把已校验的地址钉给 socket，杜绝「校验的 IP ≠ 连接的 IP」。 */
+function pinnedLookup(address: string, family: number): LookupFunction {
+  const pin = (
+    _host: string,
+    options: { all?: boolean } | number | undefined,
+    callback: (...args: unknown[]) => void,
+  ): void => {
+    if (typeof options === "object" && options !== null && options.all === true) {
+      (callback as unknown as (e: null, list: { address: string; family: number }[]) => void)(null, [
+        { address, family },
+      ]);
+      return;
+    }
+    (callback as unknown as (e: null, a: string, f: number) => void)(null, address, family);
+  };
+  return pin as unknown as LookupFunction;
+}
+
+const MAX_DECODED_BYTES = 4_000_000;
 
 /**
  * 按 charset 解码正文，并兜住「说了 identity 却还是压缩」的情况。
@@ -161,11 +226,22 @@ function decodeBody(buf: Buffer, contentType: string, contentEncoding: string): 
   let raw = buf;
   const enc = contentEncoding.toLowerCase().trim();
   try {
-    if (enc === "gzip" || enc === "x-gzip") raw = gunzipSync(buf);
-    else if (enc === "deflate") raw = inflateSync(buf);
-    else if (enc === "br") raw = brotliDecompressSync(buf);
-  } catch {
-    // 解不开就按原样继续：宁可乱码，也不要在这里把整次抓取判失败。
+    if (enc === "gzip" || enc === "x-gzip") raw = gunzipSync(buf, { maxOutputLength: MAX_DECODED_BYTES });
+    else if (enc === "deflate") raw = inflateSync(buf, { maxOutputLength: MAX_DECODED_BYTES });
+    else if (enc === "br") raw = brotliDecompressSync(buf, { maxOutputLength: MAX_DECODED_BYTES });
+  } catch (err) {
+    /**
+     * 解不开就按原样继续：宁可乱码，也不要在这里把整次抓取判失败。
+     *
+     * 但压缩炸弹必须单独处理：2MB 的 gzip 可以解出 GB 级内容，
+     * 无上限的 gunzipSync 一次就能把进程内存吃光（我们声明了
+     * accept-encoding: identity，但站点不受这个声明约束）。
+     * 加了 maxOutputLength 之后超限会抛 ERR_BUFFER_TOO_LARGE，
+     * 这种情况返回空正文（下游按"太短/不是 HTML"处理），
+     * 而不是把压缩流当正文继续往下跑。
+     */
+    const code = (err as NodeJS.ErrnoException | undefined)?.code ?? "";
+    if (code === "ERR_BUFFER_TOO_LARGE" || code === "ERR_OUT_OF_RANGE") return "";
     raw = buf;
   }
   const m = /charset="?([w-]+)/i.exec(contentType);
@@ -189,8 +265,13 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, reason: "url_invalid" };
   }
-  if (!(await hostAllowed(parsed.hostname))) {
-    return { ok: false, reason: "host_blocked" };
+  const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+  if (!portAllowed(port)) {
+    return { ok: false, reason: "port_blocked" };
+  }
+  const verdict = await resolveAllowed(parsed.hostname);
+  if (!verdict.ok) {
+    return { ok: false, reason: verdict.reason };
   }
 
   return new Promise<DirectReply>((resolve) => {
@@ -200,6 +281,8 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
       parsed,
       {
         method: "GET",
+        // 只连校验过的那个地址（防 DNS rebinding 的第二跳解析）
+        lookup: pinnedLookup(verdict.address, verdict.family),
         headers: {
           "user-agent": DEFAULT_UA,
           /**

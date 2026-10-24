@@ -2,7 +2,8 @@
 import { generateObject, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { z } from "zod";
-import { resolvedModelId, resolvedOpenaiKey } from "@/lib/runtime-config";
+import { keySource, resolvedModelId, resolvedOpenaiKey } from "@/lib/runtime-config";
+import { readPositiveInt } from "@/lib/rate-limit";
 import type { UsageSink } from "@/lib/metrics";
 
 /**
@@ -29,8 +30,63 @@ function client(): Client | null {
   return made;
 }
 
+/* ------------------------- 每日调用预算 ------------------------- */
+
+/**
+ * 服务端自带 key 时的每日模型调用上限。
+ *
+ * 之前这里完全没有额度概念：.env.example 里的 PROBE_DAILY_TOKEN_BUDGET 从来
+ * 没被读过。把 API 挂到公网后，任何人循环打 /api/search 就能把服务端的 key
+ * 烧到欠费 —— 限流只按 IP 算，换 IP 就绕过去了。所以加一层进程级日预算：
+ * 达到上限后 llmEnabled() 返回 false，整条链路自动降级为本地模板，
+ * 服务继续可用，只是不再花钱。
+ *
+ * 用户自带 key（设置面板填的）不计入预算：花的是他自己的钱，我们没有理由拦。
+ */
+const budgetState = { day: "", used: 0, warned: "" };
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function dailyCallBudget(): number {
+  return readPositiveInt("PROBE_DAILY_LLM_CALLS", 2_000, { max: 1_000_000 });
+}
+
+/** 今日额度是否已用尽（仅对服务端 env key 生效）。 */
+export function budgetExhausted(): boolean {
+  if (keySource() !== "env") return false;
+  if (budgetState.day !== today()) return false;
+  return budgetState.used >= dailyCallBudget();
+}
+
+/** 今日已用调用数（运维观测用）。 */
+export function budgetUsed(): number {
+  return budgetState.day === today() ? budgetState.used : 0;
+}
+
+function takeBudget(): boolean {
+  if (keySource() !== "env") return true;
+  const day = today();
+  if (budgetState.day !== day) {
+    budgetState.day = day;
+    budgetState.used = 0;
+    budgetState.warned = "";
+  }
+  const cap = dailyCallBudget();
+  if (budgetState.used >= cap) {
+    if (budgetState.warned !== day) {
+      budgetState.warned = day;
+      console.warn(`[llm] 今日模型调用已达上限 ${cap} 次（PROBE_DAILY_LLM_CALLS），进入本地模板模式。`);
+    }
+    return false;
+  }
+  budgetState.used += 1;
+  return true;
+}
+
 export function llmEnabled(): boolean {
-  return Boolean(resolvedOpenaiKey());
+  return Boolean(resolvedOpenaiKey()) && !budgetExhausted();
 }
 
 /** 当前这一轮实际会用的模型名（请求头 > env > 默认）。 */
@@ -69,6 +125,7 @@ export async function generateStructured<T>(
 ): Promise<T | null> {
   const p = client();
   if (!p) return null;
+  if (!takeBudget()) return null;
   const promptChars = args.system.length + args.prompt.length;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -111,6 +168,10 @@ export async function* streamSummary(
   const p = client();
   if (!p) {
     yield* fixtureSummary();
+    return;
+  }
+  if (!takeBudget()) {
+    yield* budgetNote();
     return;
   }
   let emitted = false;
@@ -186,6 +247,17 @@ function* failureNote(): Generator<string> {
   const text =
     "摘要没有生成：模型调用失败（key 无效、额度用尽或网络中断）。" +
     "下面的面板与信源由本地流水线算出，不依赖模型，照常可读。";
+  for (let i = 0; i < text.length; i += 14) {
+    yield text.slice(i, i + 14);
+  }
+}
+
+/** 额度用完时的说明：说清为什么，而不是假装没有 key。 */
+function* budgetNote(): Generator<string> {
+  const text =
+    "今日模型调用额度已用完，摘要改由本地模板生成。" +
+    "下面的面板与信源由本地流水线算出，不依赖模型，照常可读；" +
+    "在「设置」里填自己的 key 可以立刻恢复模型摘要（自带 key 不计入服务端额度）。";
   for (let i = 0; i < text.length; i += 14) {
     yield text.slice(i, i + 14);
   }

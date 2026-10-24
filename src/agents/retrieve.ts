@@ -135,7 +135,11 @@ const MULTI_PART_TLD = new Set([
   "com.hk", "com.tw", "com.sg", "com.my", "co.id", "co.th", "com.vn",
 ]);
 
-function ownerOfDomain(domain: string): string {
+/**
+ * 域名 → 发布方。留出集检索器（agents/heldout.ts）也要用它：
+ * 只有两边用同一套口径，citedOwners 的比对才不会因为 www 前缀或二级后缀而漏判。
+ */
+export function ownerOfDomain(domain: string): string {
   const d = domain.replace(/^www\./, "").toLowerCase();
   if (OWNER_MAP[d]) return OWNER_MAP[d];
   const parts = d.split(".");

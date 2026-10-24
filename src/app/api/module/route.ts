@@ -2,6 +2,9 @@ import { z } from "zod";
 import { ModuleKind, type Field, type ModuleSpec } from "@/lib/schemas";
 import { generateStructured, llmEnabled, modelId } from "@/lib/llm";
 import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
+import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
+import { requireUser } from "@/lib/auth/guard";
 import {
   describeDatasets,
   rulePlan,
@@ -21,33 +24,29 @@ export const dynamic = "force-dynamic";
  *
  * 它和 /api/search 一样按 IP 限流，但更松（12/分钟）：用户看图时会连着试几次。
  */
-const RL_WINDOW_MS = 60_000;
-const RL_MAX = Number(process.env.PROBE_MODULE_RATE_LIMIT_PER_MIN ?? 12);
-const hits = new Map<string, number[]>();
+const perClient = createLimiter({
+  name: "module",
+  limit: readPositiveInt("PROBE_MODULE_RATE_LIMIT_PER_MIN", 12),
+});
 
-function hit(key: string): { ok: boolean; retryAfterMs: number } {
-  const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter((t) => now - t < RL_WINDOW_MS);
-  if (recent.length >= RL_MAX) {
-    hits.set(key, recent);
-    return { ok: false, retryAfterMs: recent[0] + RL_WINDOW_MS - now };
-  }
-  recent.push(now);
-  hits.set(key, recent);
-  return { ok: true, retryAfterMs: 0 };
-}
+/** 换 IP 就绕开 per-IP 额度，所以要一道进程级总闸。 */
+const globalLimiter = createLimiter({
+  name: "module-global",
+  limit: readPositiveInt("PROBE_GLOBAL_MODULE_PER_MIN", 120),
+});
+
+/** 生成模块会打一次模型，并发卡死，超出直接 503。 */
+const gate = createGate(readPositiveInt("PROBE_MODULE_CONCURRENCY", 3));
+
+/** 请求体上限：16 个数据集 × (12 字段 + 3 行样本)，128KB 已经很宽松。 */
+const MAX_BODY_BYTES = 128_000;
 
 /**
- * 每散一个 IP 就永久留一条记录 —— 这是个只用来看板的本机服务，但表不能只进不出。
- * 超过 512 个 key 时清掉窗口外的整条记录（不是裁，是删）。
+ * 用户提交的行/字段名会被原样当对象键用，`__proto__` / `constructor` 这类键
+ * 一旦写进普通对象，后续 `obj[k]` 读到的就是原型链上的东西（原型污染）。
+ * 这些数据只用来给模型解释字段含义，丢掉这几个键不会有任何损失。
  */
-function sweep(): void {
-  if (hits.size <= 512) return;
-  const now = Date.now();
-  for (const [key, arr] of hits) {
-    if (arr.length === 0 || now - arr[arr.length - 1] > RL_WINDOW_MS) hits.delete(key);
-  }
-}
+const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -84,9 +83,11 @@ function cleanRow(v: unknown): Record<string, string | number | null> | null {
   let n = 0;
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
     if (n++ >= 8) break;
-    if (typeof raw === "number" && Number.isFinite(raw)) out[k.slice(0, 40)] = raw;
-    else if (typeof raw === "string") out[k.slice(0, 40)] = raw.slice(0, 120);
-    else out[k.slice(0, 40)] = null;
+    const key = k.slice(0, 40);
+    if (FORBIDDEN_KEYS.has(key)) continue;
+    if (typeof raw === "number" && Number.isFinite(raw)) out[key] = raw;
+    else if (typeof raw === "string") out[key] = raw.slice(0, 120);
+    else out[key] = null;
   }
   return out;
 }
@@ -103,6 +104,7 @@ function cleanDatasets(v: unknown): DatasetMeta[] {
     if (!raw || typeof raw !== "object") continue;
     const o = raw as { id?: unknown; name?: unknown; unit?: unknown; fields?: unknown; sample?: unknown };
     if (typeof o.id !== "string" || !o.id) continue;
+    if (FORBIDDEN_KEYS.has(o.id)) continue;
     const fields = Array.isArray(o.fields)
       ? o.fields.map(cleanField).filter((f): f is Field => f !== null).slice(0, 12)
       : [];
@@ -122,18 +124,41 @@ function cleanDatasets(v: unknown): DatasetMeta[] {
 }
 
 export async function POST(request: Request) {
-  sweep();
-  const rl = hit(request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local");
-  if (!rl.ok) {
-    const wait = Math.max(1, Math.ceil(rl.retryAfterMs / 1000));
+  if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
+
+  const per = perClient.check(clientKey(request));
+  if (!per.ok) {
     return new Response(
-      JSON.stringify({ ok: false, error: "rate_limited", message: "生成面板的请求过于频繁，请 " + wait + " 秒后重试。" }),
-      { status: 429, headers: { "content-type": "application/json; charset=utf-8", "retry-after": String(wait) } },
+      JSON.stringify({
+        ok: false,
+        error: "rate_limited",
+        message: `生成面板的请求过于频繁，请 ${per.retryAfterSeconds} 秒后重试。`,
+      }),
+      {
+        status: 429,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "retry-after": String(per.retryAfterSeconds),
+        },
+      },
     );
   }
+  const all = globalLimiter.check("all");
+  if (!all.ok) {
+    return json({ ok: false, error: "busy", message: "服务当前请求量过大，请稍后再试。" }, 503);
+  }
 
-  const body = (await request.json().catch(() => null)) as { instruction?: unknown; datasets?: unknown } | null;
-  if (!body) return json({ ok: false, error: "bad_request", message: "请求体不是合法 JSON。" }, 400);
+  const limited = await readJsonBody(request, MAX_BODY_BYTES);
+  if (!limited.ok) {
+    return json({ ok: false, error: limited.code, message: limited.message }, limited.status);
+  }
+  const body = limited.value as { instruction?: unknown; datasets?: unknown } | null;
+  if (!body || typeof body !== "object") {
+    return json({ ok: false, error: "bad_request", message: "请求体不是合法 JSON。" }, 400);
+  }
 
   const instruction = typeof body.instruction === "string" ? body.instruction.trim().slice(0, 200) : "";
   if (!instruction) return json({ ok: false, error: "bad_request", message: "先写一句想看的图表。" }, 400);
@@ -163,9 +188,20 @@ export async function POST(request: Request) {
     instruction +
     "\n\n可选图形（只能填这些值）：bar / line / pie / treemap / map / table / kpi / heatmap / radar / graph / funnel / gauge / scatter。";
 
-  const pick = await withRuntimeConfig(configFromRequest(request), () =>
-    generateStructured({ schema: PickSchema, system: SYSTEM, prompt }),
-  );
+  const release = gate.acquire();
+  if (!release) return json(fallback("服务正忙，先走本地关键词规则"), 200);
+
+  let pick: z.infer<typeof PickSchema> | null = null;
+  try {
+    pick = await withRuntimeConfig(configFromRequest(request), () =>
+      generateStructured({ schema: PickSchema, system: SYSTEM, prompt }),
+    );
+  } catch (err) {
+    // 生成失败不向用户暴露内部原因，回落到规则方案。
+    publicMessage(err, "面板生成失败");
+  } finally {
+    release();
+  }
 
   if (!pick) return json(fallback("模型没有返回可用方案"));
 

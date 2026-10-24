@@ -139,6 +139,14 @@ curl -s http://127.0.0.1:3215/probe/api/version   # buildId 变了就是新版�
 
 ### 10.1 当前明确待做：文档溯源与置信度核查（用户已提需求，架构方案还没交付）
 
+> **状态（2026-10-24）**：架构方案已交付 → [`docs/VERIFY-ARCH.md`](VERIFY-ARCH.md) **v1.0**（§0–§6，含四口径公式、五方分工、两段 System Prompt 全文、八表 DDL、SSE 契约、成本与时延账、12 条铁律、Phase 1–3 与 11 条断言、做不到清单）。
+> 三条口径已拍：①`coverage < 0.25` 或 `nJudged = 0` 不发字母档，只给「未充分核验」徽章；②**「谎言」一词废用**，四态为「已支持 / 存在矛盾 / 未找到证据 / 不可核验」；③存在「≥2 独立 owner 且 authority ≥ 0.7」的矛盾时评级上限 B，而 `contradictionRate ≥ 0.5` 且有该矛盾时直接 F（下限优先）。
+> **Phase 1 后端已落地（2026-10-24 晚）**，走的是「重写编排层、既有 `verify.ts` 退化为被调工具」（当时两个方案里选的 B）：
+> - 新增 `src/lib/grade.ts`（`gradeOf` 十级评级，F 下限优先于 N/A；`judged < 3` 也判 N/A —— 一条证据命中就发 A 比不发档更糟）、`src/lib/verify-events.ts`（八事件联合 + `encodeVerifyEvent`，与 sse.ts 业务不共用）、`src/lib/verify-doc.ts`（40000 字符 / 24 段上限，`docIdOf` = sha1 前 16 位，段落偏移三段式对齐）、`src/lib/verify-cache.ts`（`.cache/verify/<docId>.json`，先写 .tmp 再 rename）、`src/agents/verify-pipeline.ts`（Phase 1 只发 doc.parsed → doc.scored → done）、`src/app/api/verify/route.ts`（限流 `PROBE_VERIFY_RATE_PER_MIN` 默认 2，POST 与 GET ?url= 双入口）。
+> - **段落偏移踩过一个坑**：`splitSegments` 会把合并的短段用单空格连起来，原文那里是 `\n\n`，于是 `indexOf` 必然失败、高亮整段错行。现在 `locate()` 走「逐字 → 空白等价 → 游标兜底」，且**返回的段落 text 一律取原文切片**（否则 S2 的 quote 复核会全军覆没，而这并不是模型的错）；兜底命中会记 `verify:align_failed`。
+> - 断言脚本 `C:/Users/ayuan/Desktop/WORK/.probe-qa/verify-api.mjs`：**35 项全过**（事件序、五种 N/A 理由、agreement 必须是 null 不是 0、内网地址 `verify:url_blocked`、失败时不许发 doc.scored）。`tests/grade.test.ts` 11 条，`npm test` 88/88 全过，`tsc --noEmit` 干净。
+> **还没做**：前端双栏骨架（`useVerify` + 对照视图 + 三色左边框），Phase 2 的模型链路（拆声明 / NLI / 检索）与缓存回放。
+
 用户要求（原话要点）：用户粘贴/上传一篇长文 → 拆成原子事实单元 → 联网检索比对 → 算出**置信度**与**吻合度** → 逐段高亮「事实 / 幻觉 / 谎言」，A+ 到 F 评级；要求多 Agent 链路（声明拆解 / 证据检索 / NLI 比对 / 加权聚合 / 社会传播学加权），**不要用一句 Prompt 让模型打分**；先出架构方案（数据流转图 + Supabase 表 + 两段 System Prompt），确认后再写码。
 
 **接手时我尚未交付方案。已定的设计方向（可直接沿用，也可推翻但要写理由）：**

@@ -1,4 +1,5 @@
 import Workspace from "@/components/Workspace";
+import { requirePageUser } from "@/lib/auth/guard";
 import { getTrending } from "@/lib/trending";
 
 /**
@@ -14,6 +15,8 @@ export default async function Page({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  // 页面级只是体验：真正拦住未授权访问的是 /api/* 里的 requireUser。
+  await requirePageUser();
   const params = await searchParams;
   const query = (params.q ?? "").trim();
   const trending = query ? null : await getTrending();

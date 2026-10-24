@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --require ./tests-resolve.cjs --test \".tmp/test-build/tests/*.test.js\"",
+    "verify:api": "node scripts/verify-api.mjs",
+    "auth": "node scripts/auth-cli.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.101",

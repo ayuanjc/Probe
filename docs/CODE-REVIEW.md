@@ -19,7 +19,7 @@
 
 ### 置信度与数据正确性（项目核心卖点）
 
-5. `src/agents/analyze.ts:169` + `src/lib/confidence.ts:127-129` — **转载检测跑在去重后的集合上**：dedupe 的 0.92 阈值已吃掉全部高相似对，findSyndicatedIds 的有效阈值是 0.9/0.8，只剩 (0.9,0.92] 窄带能命中 → 「疑似转载」恒≈0、`firstHand = 1 - syndicated/sources.length` 恒≈1，权重 0.4 直接把置信度抬进 high。→ 基于 raw 计算，或让 dedupe 回传 merged 数并把分母改成原始条数。
+5. `src/agents/analyze.ts:169` + `src/lib/confidence.ts:127-129` — **转载检测跑在去重后的集合上**：dedupe 的 0.92 阈值已吃掉全部高相似对，findSyndicatedIds 的有效阈值是 0.9/0.8，只剩 (0.9,0.92] 窄带能命中 → 「疑似转载」恒≈0、`firstHand = 1 - syndicated/sources.length` 恒≈1，权重 0.4 直接把置信度抬进 high。→ **已修**（2026-10-24）：`dedupe()` 回传 `mergedIds` / `droppedIds`，`analyze()` 改在 `raw` 上跑 `findSyndicatedIds()` 并把 `mergedIds` 并入转载池，`computeConfidence()` 新增 `ConfidenceContext{rawCount,syndicatedIds,mergedIds}`，分母取 `max(rawCount, sources.length)`。`firstHand` 从恒≈1 回到真实比例，算式写进 notes（`1 − 31/40 = 0.23`）；新增 `effectiveOwners()` 给界面一个「有效独立源数」。回归用例：`tests/confidence.test.ts`「不给 ctx 时一手性虚高到 1」与「给了 rawCount + 转载池，一手性回到真实比例」。
 6. `src/lib/text.ts:34` — jaccard 对两个空集返回 1：缺 title / 纯标点条目 tokenize 出空集后互判 1.0 > 0.92，analyze.ts:43 只留第一条、其余全被吃掉，再被记成转载。→ 任一为空即返回 0。
 7. `src/lib/text.ts:45-51` — hostOf 只剥 `www.`：`amp.` / `m.` / `mobile.` 算成不同 owner（independence 虚高）；解析失败全落字符串 `unknown`（把无关源并成一个 owner，反向失真）。→ 按 eTLD+1 归并，未知域名保留原串。
 8. `src/lib/confidence.ts:126` — independence 只数域名：同一通稿被 10 个域名改写标题转载即 0.9643，配 firstHand 0.1 得 0.5025 仍落 medium 并展示聚合数字。→ owner 归一到首发主体，或 firstHand < 0.5 时压 low。

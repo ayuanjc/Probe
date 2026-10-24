@@ -37,6 +37,10 @@ type DedupeResult = {
   merged: number;
   /** 连 URL 都没有、根本进不了去重流程的条数。它们不算"被合并"。 */
   dropped: number;
+  /** 被合并掉的条目 id：置信度层要用它把一手性的分母还原成原始条数。 */
+  mergedIds: string[];
+  /** 被丢弃的条目 id（同样不算一手）。 */
+  droppedIds: string[];
 };
 
 /** 标题近似判重阈值：高于它就是同一稿件的转载。 */
@@ -60,15 +64,19 @@ function dedupe(sources: RawSource[]): DedupeResult {
   const out: RawSource[] = [];
   let merged = 0;
   let dropped = 0;
+  const mergedIds: string[] = [];
+  const droppedIds: string[] = [];
 
   for (const s of sources) {
     const key = (s.canonical ?? s.url).replace(/[?#].*$/, "").replace(/\/$/, "");
     if (!key) {
       dropped++;
+      droppedIds.push(s.id);
       continue;
     }
     if (seenUrl.has(key)) {
       merged++;
+      mergedIds.push(s.id);
       continue;
     }
 
@@ -87,6 +95,7 @@ function dedupe(sources: RawSource[]): DedupeResult {
       }
       if (dup) {
         merged++;
+        mergedIds.push(s.id);
         continue;
       }
       const list = buckets.get(b);
@@ -97,7 +106,7 @@ function dedupe(sources: RawSource[]): DedupeResult {
     seenUrl.add(key);
     out.push(s);
   }
-  return { kept: out, merged, dropped };
+  return { kept: out, merged, dropped, mergedIds, droppedIds };
 }
 
 async function extractClaims(
@@ -129,7 +138,14 @@ async function extractClaims(
       "从给定材料中抽取可核验的事实断言。规则：" +
       "每个 claim 必须带 quote（原文逐字片段）与 sourceIds（只能是输入里出现过的 id）；" +
       "数字类断言必须带 unit；找不到原文支撑就不要输出该 claim；" +
-      "不要推理、不要补充材料里没有的信息。",
+      "不要推理、不要补充材料里没有的信息。" +
+      "\n每条 claim 必须带 kind，按优先序取第一个命中的：" +
+      "prediction > causal > opinion > quantitative > temporal > attribution > existence。" +
+      "prediction=未来指向（将/预计/有望/计划/目标）；causal=因果（导致/因为/推动/带动/使得）；" +
+      "opinion=评价或模糊程度（显著/看好/糟糕/值得/优于同行）；" +
+      "quantitative=数值带单位或比率/金额/份额/排名/增幅；temporal=日期/时点/期限/持续时长；" +
+      "attribution=谁说了/谁做的/谁拥有/谁任命；existence=存在/上线/下架/具备某功能（无数字无时点）。" +
+      "带数字但含未来指向或因果的，分别记 prediction / causal，不要记 quantitative。",
     prompt:
       "查询：" + intent.query + "\n材料：\n" + JSON.stringify(bundle, null, 1),
   }, sink);
@@ -201,16 +217,25 @@ export async function analyze(
   const deduped = dedupe(raw);
   const sources = deduped.kept;
   /**
-   * 注意：syndicatedIds 是在去重之后的集合上算的，所以"疑似转载"这一栏
-   * 统计的只是"活下来的条目里看起来像转载的"。被标题相似度吃掉的条目
-   * 一条都不计入 —— 结果是这一栏长期恒为 0，等于没在报告转载。
-   * 单独把合并条数记下来，让"命中 39"和"原始 40"之间的差有出处。
+   * 转载判定必须在**原始集合**上跑（CODE-REVIEW #5）。
+   *
+   * 这一步原本写在 dedupe 之后：dedupe 用 0.92 的标题阈值先吃掉了全部高相似对，
+   * 而 findSyndicatedIds 的阈值是 0.9 / 0.8 —— 存活集合里只剩一条窄带能命中，
+   * 于是「疑似转载」长期恒为 0、firstHand 恒约等于 1，0.4 的权重白送。
+   * 现在两头都补：池子取自原始集合（并入被合并掉的条目），分母取原始条数。
+   * 这样 「原始 40 / 存活 9 / 转载 31」 才是一个能被界面对上的三元组。
    */
-  const syndicatedIds = [...findSyndicatedIds(sources)];
+  const syndicatedSet = findSyndicatedIds(raw);
+  for (const id of deduped.mergedIds) syndicatedSet.add(id);
+  const syndicatedIds = [...syndicatedSet];
   const { claims, source: claimSource } = await extractClaims(intent, sources, sink);
   if (claimSource === "none") degraded.push("claims:off");
 
-  const confidence = computeConfidence(sources, claims);
+  const confidence = computeConfidence(sources, claims, {
+    rawCount: raw.length,
+    syndicatedIds,
+    mergedIds: deduped.mergedIds,
+  });
   const allowNumbers = allowsAggregateNumbers(confidence);
   const datasets: Dataset[] = [];
 
@@ -514,6 +539,18 @@ export async function analyze(
   if (deduped.merged > 0) {
     notes.push(
       "去掉了 " + deduped.merged + " 条重复或疑似转载条目（同 URL 或标题相似度 > 0.92），保留的是各来源里最完整的那一条。",
+    );
+  }
+  if (syndicatedIds.length > 0) {
+    // 把算式写出来，而不是只说「一手性 0.23」：看到分子分母才能判断这个数可信不可信。
+    notes.push(
+      "一手性 = 1 − 疑似转载 / 原始命中 = 1 − " +
+        syndicatedIds.length +
+        " / " +
+        raw.length +
+        " = " +
+        confidence.firstHand.toFixed(2) +
+        "；转载判定在去重之前做，否则被标题相似度合并掉的条目会整批漏计。",
     );
   }
 
