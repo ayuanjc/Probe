@@ -2,6 +2,7 @@
 import { IntentSchema, type Intent } from "@/lib/schemas";
 import { extractEntities } from "@/lib/entities";
 import { generateStructured, llmEnabled } from "@/lib/llm";
+import { ambiguityOf } from "@/lib/polysemy";
 import type { UsageSink } from "@/lib/metrics";
 
 /**
@@ -53,8 +54,9 @@ function kindOf(query: string): Intent["kind"] {
 export function heuristicIntent(query: string): Intent {
   const kind = kindOf(query);
   const entities = extractEntities(query);
-  const ambiguity =
-    kind === "no-panel" ? 0.6 : entities.length === 0 ? 0.4 : entities.length > 3 ? 0.4 : 0.12;
+  // 歧义度不再是「按实体个数猜」：多义词命中才算真歧义（见 src/lib/polysemy.ts），
+  // 否则「苹果 财报」和「英伟达 财报」会拿到同一个分数，澄清卡就成了噪声。
+  const ambiguity = ambiguityOf(query, entities, kind);
 
   return IntentSchema.parse({
     query,

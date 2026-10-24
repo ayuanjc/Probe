@@ -8,6 +8,7 @@ import { isDemoOnly } from "@/lib/confidence";
 import { buildEntityGraph } from "@/lib/entity-graph";
 import { routeQuery } from "./route";
 import { retrieve } from "./retrieve";
+import { buildClarify } from "@/lib/polysemy";
 import { analyze } from "./analyze";
 import { compose } from "./compose";
 
@@ -109,15 +110,14 @@ async function* runStages(
     return;
   }
 
-  if (intent.ambiguity > 0.35) {
-    yield {
-      event: "text.delta",
-      data: {
-        delta:
-          "这条查询存在多种解读，下面按最宽口径先给一版面板；你可以补充主体或时间范围再收窄。\n\n",
-      },
-    };
-  }
+  /**
+   * 澄清卡（PRD 2.1）。以前这里只在摘要里塞一句「存在多种解读」，
+   * 用户既看不见到底有哪几种读法，也没有一键改的入口 —— 等于说了句免责声明。
+   * 现在把候选读法连同「选了会检索到什么」一起发出去，且不阻塞流水线：
+   * 卡片是旁路信息，用户不看，下面的面板照常出。
+   */
+  const clarify = buildClarify(query, intent);
+  if (clarify) yield { event: "intent.clarify", data: clarify };
 
   stageAt = Date.now();
   const retrieved = await retrieve(intent, signal);

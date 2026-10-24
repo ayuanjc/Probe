@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
 import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 import type { EntityGraph } from "@/lib/entity-graph";
+import type { ClarifyPayload } from "@/lib/polysemy";
 import { MODULE_SIZE } from "@/lib/module-catalog";
 
 export type ModuleState = {
@@ -36,6 +37,8 @@ export type ProbeState = {
   confidence: Confidence | null;
   /** 本轮信源的实体共现图；出不了图时是 null（界面上那张卡就不出现）。 */
   entityGraph: EntityGraph | null;
+  /** 歧义澄清：这条查询有哪几种读法。无歧义时为 null，卡片不出现。 */
+  clarify: ClarifyPayload | null;
   degraded: string[];
   /** 后端对口径的补充说明（例如「低置信：聚合数字已抑制」）。 */
   notes: string[];
@@ -52,6 +55,7 @@ const IDLE: ProbeState = {
   sources: [],
   confidence: null,
   entityGraph: null,
+  clarify: null,
   degraded: [],
   notes: [],
   elapsedMs: null,
@@ -275,6 +279,8 @@ export function useProbe() {
             };
           case "sources":
             return { ...s, sources: event.data.sources, confidence: event.data.confidence };
+          case "intent.clarify":
+            return { ...s, clarify: event.data };
           case "entity.graph":
             return { ...s, entityGraph: event.data };
           case "done":

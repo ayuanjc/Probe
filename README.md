@@ -43,6 +43,13 @@
 
 ![结果页下半：图表网格、实体关系图、信源与口径说明](docs/images/result-bottom.png)
 
+### 歧义澄清：先说清有几种读法
+
+「苹果」这句话有两种常见读法，两种会检索到完全不同的信源。卡上只写「有哪几种读法、每种会
+检索到什么」，不写「你大概想问 X」；关掉只藏这一轮，检索从来不等它。
+
+![歧义澄清卡：两种读法 + 各自的检索方向](docs/images/clarify.png)
+
 ### 设置：自己的 key 只留在本机
 
 key 存 `localStorage`，随请求以 `x-probe-*` 头发给服务端，服务端不落盘。
@@ -470,6 +477,43 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
    换回原值，否则一次拖动就会把 80px 写进快照。实体关系图不在网格里，靠 `onCollapseAll`
    这个信号同步收起 —— 一排标题栏中间留一张还亮着的图，像没听指令。
 
+## 歧义澄清：只报读法，不猜意图
+
+PRD 2.1 要求 `ambiguity > 0.35` 时先出一张澄清卡。之前这一条只是摘要里的一句免责声明
+（"这条查询存在多种解读…"）—— 说了等于没说，用户既不知道有几种读法，也没法选。现在换成
+一张能点的卡：`src/lib/polysemy.ts` 出判据，`src/components/ClarifyCard.tsx` 出交互。
+
+四条决定：
+
+1. **判据是词典，不是模型自评**。`ambiguity` 由规则算出：命中多义词表且还剩 ≥2 种读法 →
+   `min(0.9, 0.55 + 0.1×(命中数−1))`；认不出任何主体 → 0.4；其余 0.12。模型对 `ambiguity`
+   的判断会为了显得谨慎而全线偏高（实测对「英伟达 财报」也给 0.4），那样卡就成了噪声。
+2. **只收「两种读法会检索到完全不同信源」的词**，12 条：苹果（Apple Inc. / 水果）、亚马逊（电商 /
+   亚马孙雨林）、小米（集团 / 谷物）、特斯拉（Tesla Inc. / 磁场单位）、Rust（语言 / 锈蚀）、Java（语言 /
+   爪哇）、Python（语言 / 蟒蛇）、Swift（语言 / SWIFT 结算）、Windows（系统 / 窗户）、Meta（公司 / 元分析）、
+   长城（长城汽车 / 文物保护）、银河（产品线 / 银河系）。英伟达不值得问一句 —— 它只有一种读法。
+3. **每条读法带语境锚点**。`anchor` 正则命中就说明用户已经讲清了：`苹果 财报`、`Rust 的所有权`、
+   `Java 虚拟机` 都不出卡。剩下的开放读法不足两种时整条不算命中 —— 一张只有一个选项的卡是噪声。
+   英文按词边界匹配，`pineapple prices` 不会命中 `apple`。
+4. **非模态、不阻塞、只藏本轮**。事件 `intent.clarify` 紧跟 `intent`、在检索开始前发出，流水线
+   从不等它；卡排在意图条下面，用户可以直接无视往下读（面板照常出）。关掉只藏这一轮，换查询
+   重新给机会。整句认不出主体时不出空卡，改写一句「补一个具体主体再问」。
+
+实测（`npx esbuild` 打包 `src/lib/polysemy.ts` 后 node 跑，dev 3210 上 Playwright 复验）：
+
+| 查询 | 歧义 | 出卡 | 说明 |
+| --- | --- | --- | --- |
+| 苹果 | 0.55 | 两种读法 | 只剩「公司 / 水果」两读 |
+| 苹果 2025 Q3 财报 | 0.12 | 不出 | `财报` 锚点已排除水果 |
+| apple earnings | 0.55 | 两种读法 | 英文命中，`earnings` 不在锚点里 |
+| pineapple prices | 0.12 | 不出 | 词边界不命中 |
+| Rust 的所有权 | 0.12 | 不出 | `所有权` 锚点已排除锈蚀 |
+| Windows 补丁 | 0.12 | 不出 | `补丁` 锚点已排除窗户 |
+| 英伟达 财报 | 0.12 | 不出 | 词典里没有，不硬凑 |
+| 固态电池前景 | 0.40 | 建议卡 | 认不出主体，不编候选 |
+
+Playwright 复验：卡出现 → 点「苹果（水果 / 农业）」→ 卡消失且换成新查询重跑；「苹果 财报」不出卡；
+「按现在的理解继续」关掉后同词不再弹、换词重新弹；console 零 error/warning。
 ## 首页：入口一屏，热榜下一屏
 
 没有 query 时不再是「工作台 + 侧边热榜」的同屏布局，而是搜索引擎式的封面：
@@ -705,12 +749,12 @@ src/
   agents/     route · retrieve · analyze · compose · pipeline
   lib/        schemas · confidence · heat · heat-history · topic-terms · entity-graph · compile · layout · module-catalog · module-plan · sse · llm
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
-              translate-types · http · settings · runtime-config · config-headers · placement · metrics
+              translate-types · http · settings · runtime-config · config-headers · placement · metrics · polysemy
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
               api/metrics/route.ts · api/cron/heat/route.ts · metrics/page.tsx
   components/ Workspace（首页与结果页同一棵树） · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard · ChartBox
               Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
-              EntityGraphCard · MetricsPanel
+              EntityGraphCard · MetricsPanel · ClarifyCard
   hooks/      useProbe.ts
 ```
 

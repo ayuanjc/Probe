@@ -1,5 +1,6 @@
 
 import type { EntityGraph } from "./entity-graph";
+import type { ClarifyPayload } from "./polysemy";
 import type { Confidence, Field, Intent, ModuleSpec } from "./schemas";
 
 /**
@@ -24,6 +25,12 @@ export type ModuleErrorReason =
 
 export type ProbeEvent =
   | { event: "intent"; data: Intent }
+  /**
+   * 歧义澄清卡（PRD 2.1）。紧跟在 intent 之后、检索之前发出：
+   * 卡片的成本必须低到不拖慢检索，所以它只带「这个词有哪几种读法」，
+   * 不阻塞流水线 —— 用户不看也不会卡住后面的模块。
+   */
+  | { event: "intent.clarify"; data: ClarifyPayload }
   | { event: "text.delta"; data: { delta: string } }
   | {
       event: "module.plan";

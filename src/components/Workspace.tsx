@@ -14,6 +14,7 @@ import type { TrendingSnapshot } from "@/lib/trending";
 import SearchBar from "./SearchBar";
 import ModuleGrid from "./ModuleGrid";
 import EntityGraphCard from "./EntityGraphCard";
+import ClarifyCard from "./ClarifyCard";
 import SourceList from "./SourceList";
 import ConfidenceBadge from "./ConfidenceBadge";
 import ProbeLogo from "./ProbeLogo";
@@ -117,6 +118,9 @@ export default function Workspace({
   const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
   // 生成器只属于「结果页」：跑完、且真有可出图的数据集，才给它一个位置。
   const diyReady = state.status === "done" && datasets.length > 0;
+
+  /** 歧义卡被手动关掉的那一轮的查询词：只藏这一轮，换查询重新给机会。 */
+  const [clarifyHidden, setClarifyHidden] = useState<string | null>(null);
 
   /** 图表「收起全部」：网格内的卡由 ModuleGrid 自己管，实体关系图在网格外，靠这个开关同步。 */
   const [graphCollapsed, setGraphCollapsed] = useState(false);
@@ -420,6 +424,18 @@ export default function Workspace({
                 <Term k="ambiguity">歧义</Term> {state.intent.ambiguity.toFixed(2)}
               </span>
             </div>
+          )}
+
+          {/*
+            歧义澄清：紧贴意图条，因为它在解释「我刚把这句话理解成了什么」。
+            关掉只藏这一轮 —— 下一次查询是另一句话，可能又有别的读法。
+          */}
+          {state.clarify && clarifyHidden !== state.query && (
+            <ClarifyCard
+              payload={state.clarify}
+              onPick={pickTopic}
+              onDismiss={() => setClarifyHidden(state.query)}
+            />
           )}
 
           {/*
