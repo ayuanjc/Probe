@@ -243,3 +243,82 @@ kbd {
   animation-delay: 0s !important;
   animation-iteration-count: 1 !important;
 }
+
+/* ——— 锁标入场 ———
+   先把轴线画出来，三个节点再依次落位：把「沿一条线持续采样」这件事演一遍，
+   比整块图形淡入更像这个产品在干的事。只在首页封面用（.logo-in），
+   Header 里的小锁标不动 —— 每次导航都重演一遍就是骚扰。 */
+.logo-in svg line {
+  /* 轴长 √(32² + 32²) = 45.25：虚线长度必须等于线长，才能从"全空"画到"全满"。 */
+  stroke-dasharray: 45.3;
+  stroke-dashoffset: 45.3;
+  animation: logo-draw 880ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.logo-in svg circle {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: logo-node 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.logo-in svg circle:nth-of-type(1) {
+  animation-delay: 240ms;
+}
+.logo-in svg circle:nth-of-type(2) {
+  animation-delay: 380ms;
+}
+.logo-in svg circle:nth-of-type(3) {
+  animation-delay: 500ms;
+}
+
+/* 中间那颗原本靠 Tailwind 的 animate-pulse 呼吸，入场动画会顶掉它；
+   这里把「落位」和「呼吸」两段叠在一起，落位之后接着呼吸。 */
+.logo-in svg circle.animate-pulse {
+  animation:
+    logo-node 380ms cubic-bezier(0.16, 1, 0.3, 1) 380ms forwards,
+    logo-breathe 3.4s ease-in-out 900ms infinite;
+}
+
+@keyframes logo-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes logo-node {
+  from {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes logo-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 系统里关了动效：直接给终态。否则动画被撤销后，元素会停在
+   stroke-dashoffset: 45.3 / opacity: 0 的初始样式上 —— 画面里什么都没有。 */
+@media (prefers-reduced-motion: reduce) {
+  .logo-in svg line {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .logo-in svg circle {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}

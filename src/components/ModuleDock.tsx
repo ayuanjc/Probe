@@ -8,7 +8,10 @@ import type { ModuleState } from "@/hooks/useProbe";
 import type { Dataset } from "@/lib/schemas";
 
 /**
- * 侧栏里的「DIY」入口：一句话生成面板收在它后面（PRD 2.5）。
+ * 侧栏里唯一的键：DIY。一句话生成是它的下级内容（PRD 2.5）。
+ *
+ * 侧栏只放一个键、而不是一张说明卡：侧栏是工具区不是引导页，一张常驻的大卡会
+ * 持续和结果抢注意力；一根 40px 高的键点开就是全部内容，收起后什么都不占。
  *
  * 只在这一轮真的跑完、并且有可出图的数据集时才由 Workspace 渲染 —— 检索过程中
  * 侧栏连占位都不出现（渐进披露：主视图先给结果，专业工具按需出现）。
@@ -124,31 +127,20 @@ export default function ModuleDock({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="打开一句话生成面板"
-        className="panel group flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-colors hover:border-neutral-600"
+        aria-label="打开 DIY 面板"
+        className="panel group flex w-full cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors hover:border-neutral-600"
       >
-        <span
-          aria-hidden
-          className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-neutral-800 bg-[#0f0f0f] transition-colors group-hover:border-neutral-600"
-        >
-          <span className="font-mono text-[11px] font-bold tracking-[0.14em] text-white">
-            DIY
-          </span>
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-white">
+          DIY
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-white">一句话生成面板</span>
-          <span className="mt-1 block font-mono text-[10px] leading-relaxed text-neutral-500">
-            说想看什么 · 图表和字段自动挑
-          </span>
-          <span className="mt-1 block font-mono text-[10px] tabular-nums text-blue-500">
-            {datasets.length} 份数据可挑
-          </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] tabular-nums text-neutral-500">
+          {datasets.length} 份数据 · 一句话生成
         </span>
         <span
           aria-hidden
           className="shrink-0 font-mono text-[10px] text-neutral-600 transition-colors group-hover:text-white"
         >
-          {open ? "收起" : "点开 ›"}
+          {open ? "收起 ›" : "点开 ›"}
         </span>
       </button>
 

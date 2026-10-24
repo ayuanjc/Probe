@@ -101,6 +101,9 @@ export default function Workspace({
   const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
   // 生成器只属于「结果页」：跑完、且真有可出图的数据集，才给它一个位置。
   const diyReady = state.status === "done" && datasets.length > 0;
+
+  /** 图表「收起全部」：网格内的卡由 ModuleGrid 自己管，实体关系图在网格外，靠这个开关同步。 */
+  const [graphCollapsed, setGraphCollapsed] = useState(false);
   /** 还没问过 = 首页（搜索入口）；一旦发起检索就进结果页，热榜退到首页的下一屏。 */
   const landing = state.status === "idle";
 
@@ -283,6 +286,7 @@ export default function Workspace({
               running={running}
               animation={settings.animation}
               gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
+              onCollapseAll={setGraphCollapsed}
             />
           )}
 
@@ -290,7 +294,14 @@ export default function Workspace({
             共现图放在面板与信源之间：它既解释「面板里那些词为什么一起出现」，
             又需要下方的信源来当证据，所以在阅读顺序上正好夹在中间。
           */}
-          {state.entityGraph && <EntityGraphCard graph={state.entityGraph} sources={state.sources} />}
+          {state.entityGraph && (
+            <EntityGraphCard
+              graph={state.entityGraph}
+              sources={state.sources}
+              collapsed={graphCollapsed}
+              onToggle={() => setGraphCollapsed((v) => !v)}
+            />
+          )}
 
           {state.sources.length > 0 && (
             <section className="panel overflow-hidden">

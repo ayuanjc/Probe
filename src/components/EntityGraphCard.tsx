@@ -30,9 +30,14 @@ type ViewEdge = { a: string; b: string; weight: number };
 export default function EntityGraphCard({
   graph,
   sources,
+  collapsed = false,
+  onToggle,
 }: {
   graph: EntityGraph;
   sources: SourceRef[];
+  /** 「收起全部」也会收它：一张还亮着的图夹在一排标题栏中间，像没听指令。 */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -170,17 +175,32 @@ export default function EntityGraphCard({
             {graph.edges.length} 条共现 · 来自 {graph.sourceCount} 条信源。
           </p>
         </div>
-        {focus && (
-          <button
-            type="button"
-            onClick={() => setPicked(null)}
-            className="rounded-md border border-neutral-800 px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
-          >
-            返回全图
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {!collapsed && focus && (
+            <button
+              type="button"
+              onClick={() => setPicked(null)}
+              className="rounded-md border border-neutral-800 px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+            >
+              返回全图
+            </button>
+          )}
+          {onToggle && (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={!collapsed}
+              aria-label={(collapsed ? "展开" : "收起") + "「实体关系图」"}
+              className="cursor-pointer rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] leading-none text-neutral-500 transition-colors hover:border-neutral-600 hover:text-white"
+            >
+              <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
+            </button>
+          )}
+        </div>
       </div>
 
+      {!collapsed && (
+        <>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[10px] text-neutral-600">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
@@ -293,6 +313,8 @@ export default function EntityGraphCard({
             ))}
           </ul>
         </div>
+      )}
+        </>
       )}
     </section>
   );

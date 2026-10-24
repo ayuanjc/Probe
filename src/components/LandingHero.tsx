@@ -30,8 +30,9 @@ export default function LandingHero({
 
   return (
     <section className="flex min-h-[calc(100svh-5.5rem)] flex-col items-center justify-center gap-9 pb-16 pt-6">
-      <h1 className="flex justify-center">
-        <ProbeLogo orientation="vertical" size="clamp(40px,6vw,80px)" subtitle={null} />
+      <h1 className="logo-in flex justify-center">
+        {/* 尺寸收小一档：原先 232px 的锁标把搜索框挤到首屏下缘，入口的重心落反了。 */}
+        <ProbeLogo orientation="vertical" size="clamp(30px,4vw,56px)" subtitle={null} />
       </h1>
 
       <p className="font-mono text-[11px] tracking-[0.18em] text-neutral-600">

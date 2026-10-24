@@ -155,13 +155,18 @@ export default function ModulePrompt({
   return (
     <section className="panel p-4">
       <header className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold text-white">一句话生成面板</span>
+        <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-white">
+          DIY
+        </span>
         <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-600">
           {datasets.length} 份数据
         </span>
       </header>
-      <p className="mt-1 font-mono text-[10px] leading-relaxed text-neutral-600">
-        说清想看什么 → 生成 → 新面板插进结果网格
+      {/* DIY 是这一层的主标题，一句话生成是它下面唯一的动作：说清想看什么 → 生成 → 插进网格。 */}
+      <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">
+        <span className="text-neutral-300">一句话生成</span>
+        <span className="font-mono text-neutral-600"> · </span>
+        说清想看什么，新面板插进结果网格
       </p>
 
       <form onSubmit={submit} className="mt-3 flex flex-col gap-2">

@@ -31,6 +31,8 @@ function ModuleCard({
   sources = [],
   draggable = false,
   animation = true,
+  collapsed = false,
+  onToggle,
 }: {
   module: ModuleState;
   sources?: SourceRef[];
@@ -38,6 +40,10 @@ function ModuleCard({
   draggable?: boolean;
   /** 设置里可关掉图表入场动画：关掉就直接出终态，少掉一次 240ms 的逐帧重绘。 */
   animation?: boolean;
+  /** 收起状态：只留标题栏，图表整个不挂载 —— 收起是为了腾地方，不是为了藏起来还占成本。 */
+  collapsed?: boolean;
+  /** 给了才渲染标题栏右侧的折叠按钮。 */
+  onToggle?: () => void;
 }) {
   const cited = useMemo(() => {
     const ids = new Set(module.sourceIds ?? []);
@@ -112,8 +118,21 @@ function ModuleCard({
             降级为表格：{REASON_TEXT[module.errorDetail ?? ""] ?? module.errorDetail}
           </span>
         )}
+        {onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            aria-label={(collapsed ? "展开" : "收起") + "「" + module.title + "」"}
+            className="shrink-0 cursor-pointer rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] leading-none text-neutral-500 transition-colors hover:border-neutral-600 hover:text-white"
+          >
+            <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
+          </button>
+        )}
       </header>
 
+      {/* 收起时不渲染 body：ECharts 实例跟着卸载，收起才真的省下渲染与内存。 */}
+      {!collapsed && (
       <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-2">
         {module.status === "plan" && <div className="skeleton min-h-[160px] w-full flex-1 rounded-md" />}
 
@@ -148,6 +167,7 @@ function ModuleCard({
           <p className="mt-3 text-[10px] leading-relaxed text-neutral-600">{module.spec.note}</p>
         )}
       </div>
+      )}
     </section>
   );
 }
