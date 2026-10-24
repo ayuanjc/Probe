@@ -69,6 +69,11 @@ export type TrendingTopic = {
   r7?: number;
   /** 判据原文，给徽章 tooltip */
   statusNote?: string;
+  /**
+   * 近 14 天的每日提及条数（升序，最后一天是昨天）。
+   * 画火花线用；基线没就绪时缺省 —— 不拿零当数据。
+   */
+  spark?: number[];
   stories: TrendingStory[];
 };
 
@@ -192,6 +197,7 @@ function enrich(topics: TrendingTopic[], history: History | null): void {
     topic.status = status;
     topic.r7 = Number(stats.r7.toFixed(2));
     topic.statusNote = statusReason(status, stats, topic.articles24h);
+    topic.spark = counts.slice(-14);
     topic.heatScore = heatScore({
       articles24h: topic.articles24h,
       median30d: stats.median30,

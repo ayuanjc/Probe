@@ -1,6 +1,6 @@
 "use client";
 
-import type { TrendingSnapshot } from "@/lib/trending";
+import type { TrendingSnapshot, TrendingTopic } from "@/lib/trending";
 import type { HeatStatus } from "@/lib/schemas";
 import Term from "./Glossary";
 
@@ -14,9 +14,9 @@ const TYPE_TEXT: Record<string, string> = {
 };
 
 /**
- * 状态标签的视觉：只有两种"要你看"的状态用蓝，其余用灰。
- * 爆发期填色（今天确实异常）、升温期描边（正在往上）、平稳/回落描边灰（没有异常）、
- * 长尾用虚线（它讲的是"还在被讨论"，不是"正在爆发"，形状上就该和前面几种区分开）。
+ * 状态标签不靠边框表达层级，只靠底色深浅：
+ * 爆发 / 升温是"要你看"的趋势 → 微弱蓝底；平稳 / 回落 / 长尾没有异常 → 中性灰底。
+ * 蓝色只允许出现在有意义的地方（异常、趋势、可点），不能当装饰用。
  */
 const STATUS_TEXT: Record<HeatStatus, string> = {
   burst: "爆发期",
@@ -26,13 +26,16 @@ const STATUS_TEXT: Record<HeatStatus, string> = {
   "long-tail": "长尾期",
 };
 
-const STATUS_BADGE: Record<HeatStatus, string> = {
-  burst: "border-blue-500/60 bg-blue-500/10 text-blue-400",
-  rising: "border-blue-500/40 text-blue-400",
-  stable: "border-neutral-700 text-neutral-400",
-  decaying: "border-neutral-700 text-neutral-500",
-  "long-tail": "border-dashed border-neutral-700 text-neutral-400",
+const STATUS_CHIP: Record<HeatStatus, string> = {
+  burst: "bg-blue-500/10 text-blue-400",
+  rising: "bg-blue-500/10 text-blue-400",
+  stable: "bg-neutral-800 text-neutral-400",
+  decaying: "bg-neutral-800 text-neutral-500",
+  "long-tail": "bg-neutral-800 text-neutral-400",
 };
+
+/** 徽章与图例共用同一份顺序：爆发 → 升温 → 平稳 → 回落 → 长尾。 */
+const STATUS_ORDER: HeatStatus[] = ["burst", "rising", "stable", "decaying", "long-tail"];
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -44,6 +47,168 @@ function fmtTime(iso: string): string {
 function fmtDay(iso: string): string {
   if (!iso) return "—";
   return iso.slice(5).replace("-", "-");
+}
+
+/**
+ * 火花线只用内联 SVG，不上 ECharts。
+ * 首页有 12 张卡，为一条 14 点的折线各起一个 canvas 实例（含 zrender 初始化）
+ * 会把首屏压到几十毫秒一帧；而这里要的只是"最近两周是什么形状"，一条 polyline 就够。
+ * preserveAspectRatio="none" 让线随卡片宽度拉伸，所以描边必须 non-scaling-stroke，
+ * 否则不同宽度下线条一个粗一个细。
+ */
+function Spark({ values }: { values: number[] }) {
+  if (values.length < 3) return null;
+  const W = 100;
+  const H = 32;
+  const max = Math.max(...values, 1);
+  const step = W / (values.length - 1);
+  const pts = values.map((v, i) => [i * step, H - (v / max) * (H - 6) - 3] as const);
+  const line = pts.map((p) => p[0].toFixed(2) + "," + p[1].toFixed(2)).join(" ");
+  return (
+    <svg
+      viewBox={"0 0 " + W + " " + H}
+      preserveAspectRatio="none"
+      className="h-9 w-full"
+      role="img"
+      aria-label={"近 " + values.length + " 天每日提及条数：" + values.join("、")}
+    >
+      <polygon points={"0," + H + " " + line + " " + W + "," + H} fill="rgba(59,130,246,0.08)" />
+      <polyline
+        points={line}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth={1}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+/** 一格指标：标签在上、数字在下。横排逗号串读起来像日志，对齐成一列才像看板。 */
+function Cell({
+  label,
+  value,
+  accent,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  accent?: boolean;
+}) {
+  return (
+    <div className="px-3 py-2">
+      <div className="font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-neutral-600">
+        {label}
+      </div>
+      <div
+        className={
+          "mt-1.5 font-mono text-sm font-medium leading-none tabular-nums " +
+          (accent ? "text-blue-400" : "text-white")
+        }
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function TopicCard({
+  topic,
+  rank,
+  onPick,
+}: {
+  topic: TrendingTopic;
+  rank: number;
+  onPick: (name: string) => void;
+}) {
+  const top = rank <= 3;
+  return (
+    <article className="group flex flex-col rounded-md bg-[#0c0c0c] p-6 transition-colors hover:border-neutral-700 border border-transparent">
+      <div className="flex items-baseline gap-2.5">
+        <span
+          className={
+            "font-mono text-[10px] font-medium tabular-nums " +
+            (top ? "text-blue-500" : "text-neutral-700")
+          }
+        >
+          {String(rank).padStart(2, "0")}
+        </span>
+        {/* 术语气泡不能塞进按钮里：pointer 事件会被按钮吃掉，点它等于直接跑查询。 */}
+        <button
+          type="button"
+          onClick={() => onPick(topic.name)}
+          className="min-w-0 flex-1 truncate text-left text-[15px] font-medium text-white transition-colors hover:text-blue-400"
+        >
+          {topic.name}
+        </button>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-blue-500">
+          {topic.articles24h} 条
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <span className="rounded-sm bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
+          {TYPE_TEXT[topic.type] ?? topic.type}
+        </span>
+        {/* 没有基线就没有状态：不写"平稳期"冒充结论。 */}
+        {topic.status && (
+          <span
+            className={
+              "rounded-sm px-1.5 py-0.5 text-[10px] " + STATUS_CHIP[topic.status]
+            }
+            title={topic.statusNote}
+          >
+            <Term k="heatStatus">{STATUS_TEXT[topic.status]}</Term>
+          </span>
+        )}
+      </div>
+
+      {topic.spark && topic.spark.length >= 3 ? (
+        <div className="mt-4">
+          <Spark values={topic.spark} />
+          <div className="mt-1.5 font-mono text-[9px] text-neutral-700">
+            <Term k="baseline">近 {topic.spark.length} 天提及量</Term>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 指标组：浅底、无边框，靠分隔线对齐。 */}
+      <div className="mt-4 grid grid-cols-3 divide-x divide-neutral-800/70 rounded-sm bg-neutral-900/50">
+        <Cell label={<Term k="heatScore">热度分</Term>} value={
+          typeof topic.heatScore === "number" ? topic.heatScore.toFixed(2) : "—"
+        } />
+        <Cell label={<Term k="heat">热度</Term>} value={topic.heat} accent />
+        <Cell label={<Term k="r7">r7</Term>} value={
+          typeof topic.r7 === "number" ? topic.r7.toFixed(2) : "—"
+        } />
+      </div>
+
+      <ul className="mt-4 flex flex-col gap-3">
+        {topic.stories.map((s, i) => (
+          <li key={s.url + "::" + i} className="flex items-start gap-3">
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className={
+                "line-clamp-2 flex-1 text-sm leading-snug text-neutral-300 transition-colors hover:text-white " +
+                (i === 0 ? "" : "text-neutral-400")
+              }
+              title={s.title + " · " + s.host}
+            >
+              {s.title}
+            </a>
+            <span
+              className="shrink-0 pt-px font-mono text-[10px] tabular-nums text-neutral-600"
+              title={s.points + " 分 · " + s.comments + " 条评论 · " + s.host}
+            >
+              {s.points}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
 }
 
 /**
@@ -63,6 +228,10 @@ export default function TrendingBoard({
   const missingGdelt = degraded.includes("gdelt:not_configured");
   const noBaseline = history.days === 0 || history.pending;
   const empty = topics.length === 0;
+  const legend = STATUS_ORDER.map((s) => ({
+    s,
+    n: topics.filter((t) => t.status === s).length,
+  })).filter((x) => x.n > 0);
 
   return (
     <section>
@@ -72,6 +241,11 @@ export default function TrendingBoard({
           <span className="font-mono text-[10px] text-neutral-600">
             <Term k="window">过去 {windowHours}h</Term>
           </span>
+          {!empty && (
+            <span className="font-mono text-[10px] tabular-nums text-neutral-700">
+              {topics.length} 个话题
+            </span>
+          )}
         </div>
         <span className="font-mono text-[10px] text-neutral-600">
           {consideredStories}/{fetchedStories} 条进入统计 · 更新于 {fmtTime(fetchedAt)}
@@ -86,84 +260,32 @@ export default function TrendingBoard({
         </span>
       </header>
 
+      {legend.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-y border-neutral-800/70 py-2">
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-neutral-700">
+            状态分布
+          </span>
+          {legend.map(({ s, n }) => (
+            <span key={s} className="flex items-baseline gap-1.5">
+              <span className={"rounded-sm px-1.5 py-0.5 text-[10px] " + STATUS_CHIP[s]}>
+                {STATUS_TEXT[s]}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums text-neutral-500">{n}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {empty ? (
-        <div className="panel mt-4 p-8 text-center text-xs text-neutral-500">
+        <div className="mt-4 rounded-md bg-[#0c0c0c] p-8 text-center text-xs text-neutral-500">
           {fetchedStories === 0
             ? "Hacker News 本轮没有取到数据，热点榜暂不可用。"
             : "过去 " + windowHours + " 小时里没有话题被两条以上报道同时提到，榜单为空。"}
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {topics.map((t) => (
-            <article key={t.key} className="panel flex flex-col p-5">
-              {/* 术语气泡不能塞进按钮里：pointer 事件会被按钮吃掉，点它等于直接跑查询。 */}
-              <div className="flex items-start justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => onPick(t.name)}
-                  className="truncate text-left text-base font-semibold text-white transition-colors hover:text-blue-500"
-                >
-                  {t.name}
-                </button>
-                <span className="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums text-blue-500">
-                  {t.articles24h} 条
-                </span>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400">
-                  {TYPE_TEXT[t.type] ?? t.type}
-                </span>
-                {/* 没有基线就没有状态：不写"平稳期"冒充结论。 */}
-                {t.status && (
-                  <span
-                    className={
-                      "rounded border px-1.5 py-0.5 text-[10px] " + STATUS_BADGE[t.status]
-                    }
-                  >
-                    <Term k="heatStatus">{STATUS_TEXT[t.status]}</Term>
-                  </span>
-                )}
-                {typeof t.heatScore === "number" && (
-                  <span className="font-mono text-[10px] text-neutral-600">
-                    <Term k="heatScore">热度分</Term>{" "}
-                    <span className="font-bold tabular-nums text-white">
-                      {t.heatScore.toFixed(2)}
-                    </span>
-                  </span>
-                )}
-                <span className="font-mono text-[10px] text-neutral-600">
-                  <Term k="heat">热度</Term>{" "}
-                  <span className="font-bold tabular-nums text-blue-500">{t.heat}</span>
-                </span>
-                {typeof t.r7 === "number" && (
-                  <span className="font-mono text-[10px] text-neutral-600">
-                    <Term k="r7">r7</Term>{" "}
-                    <span className="tabular-nums text-neutral-300">{t.r7.toFixed(2)}</span>
-                  </span>
-                )}
-              </div>
-
-              {/* 纯文字排列 + 细线分隔：不加左侧装饰，行距换行距。 */}
-              <ul className="mt-4 flex flex-col">
-                {t.stories.map((s, i) => (
-                  <li
-                    key={s.url + "::" + i}
-                    className="border-b border-neutral-800 py-2.5 last:border-b-0 last:pb-0"
-                  >
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="line-clamp-2 text-[13px] leading-relaxed text-neutral-400 transition-colors hover:text-neutral-200"
-                      title={s.title + " · " + s.host}
-                    >
-                      {s.title}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </article>
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {topics.map((t, i) => (
+            <TopicCard key={t.key} topic={t} rank={i + 1} onPick={onPick} />
           ))}
         </div>
       )}
