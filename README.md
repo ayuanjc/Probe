@@ -386,6 +386,24 @@ key 走请求头而不是查询串：查询串会进服务端访问日志，也�
    （贴边夹回视口、下方放不下翻上方、贴底兜底），`anchorVisible()` 负责"锚点滚走就收起"。
 7. **`prefers-reduced-motion` 与设置里的「动画」开关**同时作用于新增的 `.rise` 与 `.card-flash`。
 
+## 首页：入口一屏，热榜下一屏
+
+没有 query 时不再是「工作台 + 侧边热榜」的同屏布局，而是搜索引擎式的封面：
+
+- **一屏只放一件事**：竖排锁标（`size` 用 `clamp(40px, 6vw, 80px)`）居中，正下方是 720px 宽的
+  搜索框，再往下才是「不看提问，先看今天的 24 小时热点 ↓」。热榜放进同一页的 `#trending`
+  区块（`min-h-[calc(100svh-5.5rem)]` 把 hero 撑满首屏），一屏之下，不是另一个路由 ——
+  另开路由会让「点进去看看」多一次跳转和一次返回，而这里的热榜本来就是同一份数据。
+- **为什么不把热榜并排放**：同屏时眼睛先落在榜首，用户会先读榜再决定问什么。产品的第一句
+  话应该是「你说问题，我给证据」，而不是「看我们抓到了什么」。热榜是留客的入口，不是主页。
+- **发起检索就换布局**：`state.status !== "idle"` 时切回小锁标 header + 搜索行 + 结果。
+  手里有结果的人不需要再看巨大的 Logo；把首页那套排版留在结果页只会挤掉数据。
+- **回得去**：结果页的锁标包了 `<a href="/" aria-label="回到首页">`，点一下回到封面。
+
+实测（prod，1440×1000）：锁标 svg `232×232` 在 `x=604`（画布中线 (1440−232)/2），搜索框
+`720×66` 居中于 `y=630`，`#trending` 顶端 `962.5` 落在首屏之下；390×844 下锁标 `116×116`
+居中、搜索框铺满 `350`、热榜顶端 `806.5` 仍在下一屏。点热榜话题后 7 个模块正常出图，
+`h1 svg` 消失、搜索框回到 `1376×54.5`，console 零 error / 零 warning。
 ## 一句话生成模块：句子只决定「看哪份数据、用哪种图形」
 
 输入「用散点图看情感分布」，网格里多一张卡。这句话里的模型能决定的只有三件事：
@@ -482,7 +500,7 @@ src/
               fixtures · entities · text · trending · glossary · lang · translate · translate-risk
               translate-types · http · settings · runtime-config · config-headers · placement
   app/        layout · page · globals.css · api/search/route.ts · api/translate/route.ts · api/module/route.ts
-  components/ Workspace · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
+  components/ Workspace · LandingHero · ModuleGrid · ModuleCard · SearchBar · ConfidenceBadge · SourceList · TrendingBoard
               Glossary · BilingualCompare · SettingsPanel · ModuleDock · ModulePrompt
               ChartBox · EntityGraphCard
   hooks/      useProbe.ts

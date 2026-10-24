@@ -13,6 +13,7 @@ import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
+import LandingHero from "./LandingHero";
 import type { Dataset } from "@/lib/schemas";
 import {
   DEFAULT_SETTINGS,
@@ -100,6 +101,8 @@ export default function Workspace({
   const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
   // 生成器只属于「结果页」：跑完、且真有可出图的数据集，才给它一个位置。
   const diyReady = state.status === "done" && datasets.length > 0;
+  /** 还没问过 = 首页（搜索入口）；一旦发起检索就进结果页，热榜退到首页的下一屏。 */
+  const landing = state.status === "idle";
 
   /**
    * 设置里的 key 要跟着请求走，而 boot / 点话题这两条路径都写在闭包里，
@@ -161,25 +164,63 @@ export default function Workspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
+  const settingsButton = (
+    <button
+      type="button"
+      onClick={() => setSettingsOpen(true)}
+      className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+      aria-haspopup="dialog"
+    >
+      <span aria-hidden className="text-neutral-600">
+        ⚙
+      </span>
+      设置
+    </button>
+  );
+
+  if (landing) {
+    return (
+      <>
+        <main className="mx-auto flex w-full max-w-[1560px] flex-col px-5 sm:px-8">
+          <div className="flex items-center justify-end pt-5">{settingsButton}</div>
+          <LandingHero
+            running={running}
+            value={input}
+            onChange={setInput}
+            onRun={runWithSettings}
+            hasTrending={Boolean(trending)}
+          />
+          <section id="trending" className="scroll-mt-6 border-t border-neutral-800 pb-16 pt-8">
+            {trending ? (
+              <TrendingBoard snapshot={trending} onPick={pickTopic} />
+            ) : (
+              <p className="text-[11px] text-neutral-600">
+                本轮没有取到热榜数据 —— 在上面输入一个问题就能开始。
+              </p>
+            )}
+          </section>
+        </main>
+        <SettingsPanel
+          open={settingsOpen}
+          settings={settings}
+          onChange={updateSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      </>
+    );
+  }
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[1560px] flex-col gap-6 px-5 py-8 sm:px-8">
       {/* 一条细线切出功能区：上面只有身份与状态，下面是输入与结果。
           锁标钉在左上角，工具靠右；一行放不下时自动折成两行。 */}
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-neutral-800 pb-5">
-        <ProbeLogo size={28} />
+        <a href="/" aria-label="回到首页" className="flex items-center">
+          <ProbeLogo size={28} />
+        </a>
         <div className="flex items-center gap-3">
           {state.confidence && <ConfidenceBadge confidence={state.confidence} />}
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
-            aria-haspopup="dialog"
-          >
-            <span aria-hidden className="text-neutral-600">
-              ⚙
-            </span>
-            设置
-          </button>
+          {settingsButton}
         </div>
       </header>
 
@@ -217,21 +258,6 @@ export default function Workspace({
         }
       >
         <div className="flex min-w-0 flex-col gap-6">
-          {state.status === "idle" && trending && (
-            <TrendingBoard snapshot={trending} onPick={pickTopic} />
-          )}
-
-          {state.status === "idle" && !trending && (
-            <div className="panel p-10 text-center">
-              <p className="text-sm text-neutral-300">
-                输入一个需要证据的问题。系统会先做多源检索，再决定生成哪些面板。
-              </p>
-              <p className="mx-auto mt-3 max-w-2xl text-[11px] leading-relaxed text-neutral-600">
-                未配置 API key 也能跑通全链路：Hacker News 与 Wikipedia 免密钥可用，
-                其余来源视网络情况而定，抽不到证据时展示本地演示样本并明确标注。
-              </p>
-            </div>
-          )}
 
           {state.text && (
             <div className="panel p-6">
