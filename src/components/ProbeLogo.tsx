@@ -127,7 +127,9 @@ export default function ProbeLogo({
       className={[
         "inline-flex select-none",
         vertical
-          ? "flex-col items-center gap-[0.85em] text-center"
+          // 竖排时图形与 PROBE 贴紧一点（0.3em ≈ 56px 字号下 17px）：
+          // 两者间距一旦大于字距，读起来就是「一个图标 + 一行字」而不是一个锁标。
+          ? "flex-col items-center gap-[0.3em] text-center"
           : "items-center gap-[0.7em]",
         className ?? "",
       ]

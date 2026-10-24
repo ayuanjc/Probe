@@ -171,13 +171,24 @@ export default function Workspace({
     <button
       type="button"
       onClick={() => setSettingsOpen(true)}
-      className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-3 py-1.5 font-mono text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white"
+      className="rounded-md p-2 text-neutral-600 transition-colors hover:text-neutral-300"
       aria-haspopup="dialog"
+      aria-label="设置"
+      title="设置"
     >
-      <span aria-hidden className="text-neutral-600">
-        ⚙
-      </span>
-      设置
+      <svg
+        aria-hidden
+        viewBox="0 0 24 24"
+        className="h-[15px] w-[15px]"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.25}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
     </button>
   );
 

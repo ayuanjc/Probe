@@ -53,10 +53,11 @@ export default function LandingHero({
         <button
           type="button"
           onClick={jump}
-          className="group flex flex-col items-center gap-1 font-mono text-[10px] text-neutral-600 transition-colors hover:text-neutral-400"
+          className="group flex flex-col items-center gap-1.5 text-xs text-neutral-600 transition-colors hover:text-neutral-300"
         >
           <span>不看提问，先看今天的 24 小时热点</span>
-          <span aria-hidden className="text-sm leading-none transition-transform group-hover:translate-y-0.5">
+          {/* 轻微上下浮动，提示这一屏还能往下；prefers-reduced-motion 下 Tailwind 自动停。 */}
+          <span aria-hidden className="animate-bounce text-sm leading-none motion-reduce:animate-none">
             ↓
           </span>
         </button>

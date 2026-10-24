@@ -62,20 +62,23 @@ export default function SearchBar({
       <div
         className={[
           "flex items-center border border-neutral-800 bg-[#0f0f0f] transition-colors focus-within:border-neutral-600",
-          lg ? "gap-3.5 rounded-lg px-5 py-4" : "gap-3 rounded-md px-4 py-3",
+          // 首页那一版也压扁一档：py-3 时行高 56px，比原先的 66px 更像「一行输入」而不是一个面板。
+          lg ? "gap-3 rounded-lg px-4 py-3" : "gap-3 rounded-md px-4 py-3",
         ].join(" ")}
       >
+        {/* 常规放大镜：描边 1.25 —— 再细一档在 2x 屏上会发虚，再粗就成了图标块。 */}
         <svg
           aria-hidden
           viewBox="0 0 16 16"
-          className={(lg ? "h-[18px] w-[18px]" : "h-4 w-4") + " shrink-0 text-neutral-600"}
+          className="h-4 w-4 shrink-0 text-neutral-600"
           fill="none"
           stroke="currentColor"
-          strokeWidth={1.5}
+          strokeWidth={1.25}
           strokeLinecap="round"
+          strokeLinejoin="round"
         >
-          <circle cx="7" cy="7" r="4.25" />
-          <path d="m10.4 10.4 3.1 3.1" />
+          <circle cx="7.25" cy="7.25" r="4.75" />
+          <path d="M11.4 11.4 14 14" />
         </svg>
         <input
           ref={inputRef}
@@ -102,16 +105,17 @@ export default function SearchBar({
         <kbd className="hidden shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 sm:block">
           ↵
         </kbd>
+        {/* 幽灵按钮：没有底色，hover 只把字提亮。入口的视觉权重应该落在输入行本身。 */}
         <button
           type="button"
           onClick={submit}
           disabled={running || !value.trim()}
-          className={[
-            "shrink-0 rounded-md bg-blue-600 font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600",
-            lg ? "px-4 py-2 text-xs" : "px-3.5 py-1.5 text-[11px]",
-          ].join(" ")}
+          className={
+            (lg ? "text-xs" : "text-[11px]") +
+            " shrink-0 font-mono text-neutral-500 transition-colors hover:text-white disabled:cursor-not-allowed disabled:text-neutral-700 disabled:hover:text-neutral-700"
+          }
         >
-          {running ? "检索中" : "检索"}
+          {running ? "检索中…" : "检索 →"}
         </button>
       </div>
 
@@ -127,7 +131,7 @@ export default function SearchBar({
               onChange(q);
               if (!running) onRun(q);
             }}
-            className={(lg ? "px-3 py-1.5 text-[11px]" : "px-2.5 py-1 text-[11px]") + " rounded border border-neutral-800 text-neutral-500 transition-colors hover:border-neutral-600 hover:text-neutral-300"}
+            className={(lg ? "px-3 py-1" : "px-2.5 py-0.5") + " rounded-full bg-neutral-900 text-xs text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white"}
           >
             {q}
           </button>
