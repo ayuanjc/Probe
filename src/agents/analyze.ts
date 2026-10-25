@@ -113,7 +113,7 @@ async function extractClaims(
   intent: Intent,
   sources: RawSource[],
   sink?: UsageSink,
-): Promise<{ claims: Claim[]; source: "llm" | "fixture" | "none" }> {
+): Promise<{ claims: Claim[]; source: "llm" | "fixture" | "none" | "failed" }> {
   if (sources.length === 0) return { claims: [], source: "none" };
 
   /**
@@ -150,7 +150,8 @@ async function extractClaims(
       "查询：" + intent.query + "\n材料：\n" + JSON.stringify(bundle, null, 1),
   }, sink);
 
-  if (!parsed) return { claims: [], source: "none" };
+  // 调用失败不是「没配置模型」：两者在界面上该给出的下一步完全不同（一个去填 key，一个去看日志）。
+  if (!parsed) return { claims: [], source: "failed" };
 
   const validIds = new Set(sources.map((s) => s.id));
   /**
@@ -230,6 +231,7 @@ export async function analyze(
   const syndicatedIds = [...syndicatedSet];
   const { claims, source: claimSource } = await extractClaims(intent, sources, sink);
   if (claimSource === "none") degraded.push("claims:off");
+  if (claimSource === "failed") degraded.push("claims:extract_failed");
 
   const confidence = computeConfidence(sources, claims, {
     rawCount: raw.length,
@@ -532,7 +534,11 @@ export async function analyze(
   if (confidence.nChecked === 0) {
     notes.push(
       "本轮没有可交叉核对的断言：置信度不含一致性证据，已封顶 0.64（" +
-        (claimSource === "none" ? "未配置模型 key，抽取未运行。" : "抽到的断言没有两条以上独立来源对得上。") +
+        (claimSource === "none"
+          ? "未配置模型 key，抽取未运行。"
+          : claimSource === "failed"
+            ? "模型调用失败，抽取没有跑出结果（看服务端日志里的 [llm] 行）。"
+            : "抽到的断言没有两条以上独立来源对得上。") +
         "）",
     );
   }

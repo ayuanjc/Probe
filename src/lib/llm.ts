@@ -1,7 +1,7 @@
 
 import { generateObject, generateText, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { z } from "zod";
+import { z } from "zod";
 import {
   keySource,
   resolvedModelId,
@@ -138,9 +138,29 @@ function isTransient(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (/\b(401|403|400|404)\b/.test(msg)) return false;
   if (/invalid[_ ]?api[_ ]?key|model[_ ]?not[_ ]?found|unsupported/.test(msg)) return false;
+  // 状态码优先看字段：APICallError.message 装的是上游原话，常常不含 "429" 这种数字，
+  // 只按文本判断会把限流当成「重试也白搭」，把 5xx 当成「重试没意义」。
+  const status = statusOf(err);
+  if (status === 400 || status === 401 || status === 403 || status === 404) return false;
+  if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+  if (status !== undefined && status >= 500) return true;
   return /\b(408|409|425|429|5\d\d)\b|timeout|timed out|econnreset|econnrefused|fetch failed|network|socket hang up/.test(
     msg,
   );
+}
+
+/**
+ * 取出上游 HTTP 状态码。
+ *
+ * 为什么不能只靠报错文本：AI SDK 的 `APICallError.message` 装的是**上游原话**
+ * （比如 "response_format: 参数不被支持的类型"），状态码在字段里。
+ * 所有判定都去正则里找数字，于是「收到了 400 但报错里没写 400」这种最常见的情况恰好漏掉。
+ */
+function statusOf(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const e = err as Record<string, unknown>;
+  const raw = e.statusCode ?? e.status;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
 export type StructuredCall<T> = {
@@ -158,13 +178,38 @@ export type StructuredCall<T> = {
  *   Invalid parameter: response_format
  *   response_format json_schema is not supported
  * 这种情况重试同一个请求没有意义，得换一条路：普通文本输出 + 自己抠 JSON。
+   *    *
+   *    * DeepSeek 的实际措辞是 "This response_format type is unavailable now" —— 里面既没有
+   *    * invalid 也没有 unsupported，于是这条判定漏掉过：结构化链路直接 return null，
+   *    * 而 analyze 那边把空断言记成「未配置模型 key」，排查时会朝完全错误的方向找。
  */
-function rejectsJsonSchema(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+export function rejectsJsonSchema(err: unknown): boolean {
+  // 报错文本与上游响应体一起看：有的网关 message 只有一句中文，
+  // 真正的字段名躺在 responseBody 里。
+  const body =
+    err && typeof err === "object" && typeof (err as Record<string, unknown>).responseBody === "string"
+      ? ((err as Record<string, unknown>).responseBody as string)
+      : "";
+  const msg = ((err instanceof Error ? err.message : String(err)) + " " + body).toLowerCase();
+
   if (!/response_format|json_schema|json schema|structured output/.test(msg)) return false;
-  return /not support|unsupported|invalid|unknown|unrecognized|not allowed|does not support|isn't supported/.test(
-    msg,
-  );
+  if (
+    /not support|unsupported|unavailable|invalid|unknown|unrecognized|not allowed|not available|does not support|isn't supported|不支持|不可用|暂不可用|不被支持|不接受|不被接受|不被认可|无法识别|不识别/.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  /**
+   * 有的兼容网关（含 DeepSeek 的若干版本）只回一句「response_format: 参数不被支持的类型」，
+   * 既不写 invalid 也不写 unsupported，message 里甚至没有状态码 —— 状态码在 APICallError.statusCode。
+   * 这种报文以前会被判成「不是格式问题」，于是重试一发注定相同的请求，
+   * 然后整条结构化链路 return null：表现是面板全空，日志里只有一行平淡的 failed。
+   * 400/422 说明请求本身被拒：只要报文里点了 response_format 这个名字，就算格式不支持。
+   */
+  const status = statusOf(err);
+  if (status === 400 || status === 422) return true;
+  return /\b(400|422)\b/.test(msg);
 }
 
 /** 从模型输出里抠出 JSON：容忍 ```json 围栏和前后废话，抠不出就返回 undefined。 */
@@ -185,6 +230,75 @@ export function extractJson(text: string): unknown {
   }
 }
 
+/* ------------------- 纯文本模式下的字段骨架 ------------------- */
+
+/**
+ * 把 zod schema 折成一份「JSON 骨架」，用于 text-only 上游的提示词。
+ *
+ * 为什么必须有：json_schema 模式由服务端把字段名塞给模型，而纯文本模式没有这层保障 ——
+ * DeepSeek 这类上游拒掉 response_format 之后，模型会把 ClaimSchema 的 attr/value
+ * 自己猜成 "claim"，于是 zod 复核必然失败、整条抽取静默返回 null。
+ * 界面上看到的是「没有可核验断言」，日志里只有一行兜底失败 —— 极难定位。
+ * 骨架把键名照抄给模型，是这个兜底能真正跑通的前提。
+ */
+function unwrapType(node: any): { inner: any; optional: boolean } {
+  let cur = node;
+  let optional = false;
+  for (let i = 0; i < 8 && cur; i++) {
+    const type = cur.type ?? cur._def?.type;
+    if (type === "optional" || type === "nullable" || type === "default" || type === "prefault") {
+      if (type === "optional") optional = true;
+      cur = typeof cur.unwrap === "function" ? cur.unwrap() : cur._def?.innerType;
+      continue;
+    }
+    break;
+  }
+  return { inner: cur, optional };
+}
+
+export function schemaSkeleton(schema: z.ZodType<unknown>): unknown {
+  const node = schema as any;
+  const type = node?.type ?? node?._def?.type;
+  if (type === "object") {
+    const rawShape = typeof node.shape === "function" ? node.shape() : (node.shape ?? node._def?.shape);
+    const shape = typeof rawShape === "function" ? rawShape() : (rawShape ?? {});
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(shape)) {
+      const { inner, optional } = unwrapType(shape[key]);
+      const value = schemaSkeleton(inner as z.ZodType<unknown>);
+      out[key] = optional ? (typeof value === "string" ? value + "（可省略）" : value) : value;
+    }
+    return out;
+  }
+  if (type === "array") {
+    const element = node.element ?? node._def?.element ?? node._def?.type;
+    const sample = element ? schemaSkeleton(element as z.ZodType<unknown>) : "任意";
+    return [sample];
+  }
+  if (type === "enum") {
+    const options = node.options ?? node._def?.values ?? node._def?.entries;
+    const list = Array.isArray(options) ? options : options ? Object.values(options) : [];
+    return list.length > 0 ? list.join("|") : "字符串";
+  }
+  if (type === "literal") return node.value ?? node._def?.value ?? "字面量";
+  if (type === "union") {
+    const options = node.options ?? node._def?.options ?? [];
+    return options.length > 0 ? schemaSkeleton(options[0]) : "任意";
+  }
+  if (type === "number" || type === "int") return 0;
+  if (type === "boolean") return true;
+  if (type === "string") return "文本";
+  return "任意";
+}
+
+/** 提示词里那段「照抄键名」的话。骨架本身由调用方的 schema 决定，不给模型自由发挥的余地。 */
+export function skeletonHint(schema: z.ZodType<unknown>): string {
+  return (
+    "\n\n字段名与嵌套结构必须与下面这份骨架完全一致（照抄键名，值换成真实内容，" +
+    "不要改名字、不要少字段、不要多加字段）：\n" +
+    JSON.stringify(schemaSkeleton(schema), null, 1)
+  );
+}
 /**
  * 兼容兜底：不用 response_format，让模型把 JSON 写在正文里，自己抠 + zod 校验。
  *
@@ -201,7 +315,9 @@ async function structuredAsText<T>(
     model: chatModel(p),
     system:
       args.system +
-      "\n\n输出要求：只输出一个 JSON 对象，不要 Markdown 代码块，不要任何解释文字，不要前后缀。",
+      "\n\n输出要求：只输出一个 JSON 对象，不要 Markdown 代码块，不要任何解释文字，不要前后缀。" +
+      // 纯文本模式没有 schema 帮你钉字段名，模型会自己编（实测把 attr/value 写成 claim）。
+      skeletonHint(args.schema),
     prompt: args.prompt,
     temperature: 0,
   });
