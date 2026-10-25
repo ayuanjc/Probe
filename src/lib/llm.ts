@@ -1,5 +1,6 @@
 
 import { createHash } from "node:crypto";
+import { currentCallScope } from "./call-scope";
 import { generateObject, generateText, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
@@ -129,6 +130,57 @@ export function budgetUsed(): number {
   return budgetState.day === today() ? budgetState.used : 0;
 }
 
+/* ---------------------- 每人每日调用预算（第二道闸） ---------------------- */
+
+/**
+ * 全局额度是一个人也能烧穿的。
+ *
+ * PROBE_DAILY_LLM_CALLS 是**进程级**计数器：一个登录用户连点十几次「生成面板」
+ * 或者一轮核验（几十次上游）就能把它用光，然后所有人一起降级到本地模板，
+ * 日志里只有一行「今日调用已达上限」，看不出是谁。所以再加一层按人计数：
+ * 谁的额度用完，谁自己降级，别人不受影响。
+ *
+ * 只对服务端 env key 生效 —— 用户自带 key 花的是他自己的钱，没有理由拦。
+ */
+type ScopeBudget = { day: string; used: number; warned: boolean };
+
+const scopeBudgets = new Map<string, ScopeBudget>();
+const SCOPE_BUDGET_MAX_KEYS = 2_048;
+
+export function perUserCallBudget(): number {
+  return readPositiveInt("PROBE_DAILY_LLM_CALLS_PER_USER", 120, { max: 100_000 });
+}
+
+function scopeBudgetFor(key: string, day: string): ScopeBudget {
+  const found = scopeBudgets.get(key);
+  if (found && found.day === day) return found;
+  if (scopeBudgets.size >= SCOPE_BUDGET_MAX_KEYS) {
+    // 先清掉隔天的（正常情况下一天结束就都过期了）；还满就整体清空 ——
+    // 这是一个额度计数器，清空的代价只是「有人今天多拿到一次额度」。
+    for (const [k, v] of scopeBudgets) if (v.day !== day) scopeBudgets.delete(k);
+    if (scopeBudgets.size >= SCOPE_BUDGET_MAX_KEYS) scopeBudgets.clear();
+  }
+  const fresh: ScopeBudget = { day, used: 0, warned: false };
+  scopeBudgets.set(key, fresh);
+  return fresh;
+}
+
+/** 当前请求所属用户的额度是否已用完（没有请求上下文时恒为 false）。 */
+export function scopeBudgetExhausted(): boolean {
+  if (keySource() !== "env") return false;
+  const scope = currentCallScope();
+  if (!scope) return false;
+  const state = scopeBudgets.get(scope.key);
+  if (!state || state.day !== today()) return false;
+  return state.used >= perUserCallBudget();
+}
+
+/** 当前请求所属用户今天用掉的次数（运维观测用）。 */
+export function scopeBudgetUsed(key: string): number {
+  const state = scopeBudgets.get(key);
+  return state && state.day === today() ? state.used : 0;
+}
+
 function takeBudget(): boolean {
   if (keySource() !== "env") return true;
   const day = today();
@@ -145,8 +197,49 @@ function takeBudget(): boolean {
     }
     return false;
   }
+
+  // 先判个人额度，再记全局：个人被拦时不该消耗别人的份。
+  const scope = currentCallScope();
+  if (scope) {
+    const perCap = perUserCallBudget();
+    const state = scopeBudgetFor(scope.key, day);
+    if (state.used >= perCap) {
+      if (!state.warned) {
+        state.warned = true;
+        console.warn(
+          `[llm] ${scope.label} 今日调用已达上限 ${perCap} 次（PROBE_DAILY_LLM_CALLS_PER_USER），本次降级为本地模板。`,
+        );
+      }
+      return false;
+    }
+    state.used += 1;
+  }
+
   budgetState.used += 1;
   return true;
+}
+
+/**
+ * 只给测试用：直接驱动一次额度判定。
+ *
+ * 生产路径里 takeBudget() 只在 generateStructured 内部调，外部碰不到；
+ * 而额度这种东西恰恰是「串行调用三次，第三次该被拒」这种顺序性质，
+ * 不注入真实上游就没法验。导出这一个入口，测试不必伪造 HTTP。
+ */
+export function __testTakeBudget(): boolean {
+  return takeBudget();
+}
+
+/** 只给测试用：把一个 scope 的当日用量归零（用例之间互不污染）。 */
+export function __testResetScopeBudget(key: string): void {
+  scopeBudgets.delete(key);
+}
+
+/** 只给测试用：把进程级日用量归零，并允许重新读 PROBE_DAILY_LLM_CALLS。 */
+export function __testResetGlobalBudget(): void {
+  budgetState.day = "";
+  budgetState.used = 0;
+  budgetState.warned = "";
 }
 
 export function llmEnabled(): boolean {

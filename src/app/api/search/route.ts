@@ -4,6 +4,7 @@ import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
+import { runWithCallScope, type CallScope } from "@/lib/call-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ const MAX_BODY_BYTES = 8_000;
  * 单连接多路 SSE。不能用多个 fetch —— 无法保证事件顺序，
  * 也无法保证模块卡与文本流在时间上对齐（PRD 附录 A）。
  */
-function sseResponse(query: string, request: Request, release: () => void): Response {
+function sseResponse(query: string, request: Request, release: () => void, scope: CallScope): Response {
   const encoder = new TextEncoder();
   const signal = request.signal;
 
@@ -70,12 +71,16 @@ function sseResponse(query: string, request: Request, release: () => void): Resp
       try {
         // key 只活在这段上下文里：不落盘、不写日志、不跨请求共享。
         const cfg = await prepareRuntimeConfig(request);
-        await withRuntimeConfig(cfg, async () => {
-          for await (const event of runPipeline(query, signal)) {
-            // 客户端关掉标签页后继续往下跑没有任何意义：
-            // 事件没人收，上游却还在被调用。enqueue 失败就是最可靠的断开信号。
-            if (!push(encodeEvent(event))) break;
-          }
+        // 流的 start() 可能在路由函数返回之后才跑，请求上下文已经不在了：
+        // 额度计数必须在这里重新绑一次用户，否则这一轮的调用会算到「无主」头上。
+        await runWithCallScope(scope, async () => {
+          await withRuntimeConfig(cfg, async () => {
+            for await (const event of runPipeline(query, signal)) {
+              // 客户端关掉标签页后继续往下跑没有任何意义：
+              // 事件没人收，上游却还在被调用。enqueue 失败就是最可靠的断开信号。
+              if (!push(encodeEvent(event))) break;
+            }
+          });
         });
       } catch (err) {
         // 只回公共文案：上游异常里可能带着内部地址、模型名、响应体片段。
@@ -125,8 +130,10 @@ async function guarded(request: Request, query: string): Promise<Response> {
     return jsonError(503, "busy", "服务正忙，请稍后再试。", { "retry-after": "5" });
   }
 
+  const scope: CallScope = { key: "u:" + auth.user.id, label: "用户 " + auth.user.username };
+
   try {
-    return sseResponse(trimmed, request, release);
+    return sseResponse(trimmed, request, release, scope);
   } catch (err) {
     release();
     return jsonError(500, "internal", publicMessage(err, "分析启动失败，请稍后重试。"));

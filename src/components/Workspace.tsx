@@ -129,6 +129,9 @@ function degradeText(item: string): string {
   if (quoteMiss) return "断言抽取（" + quoteMiss[1] + " 条引文在原文里找不到，已丢弃）";
   // 抽取「没跑起来」和「跑起来但没抽到」是两件事：前者是故障，后者可能是文章确实没有可核断言。
   if (item === "claims:extract_failed") return "断言抽取（模型调用失败，本轮没有跑出结果）";
+  // 额度用完和上游故障看起来都像「没结果」，但下一步完全不同：一个等明天，
+  // 一个去看服务端日志。分开说，用户才不会拿「重试十次」去解决一个明天才好的问题。
+  if (item === "llm:user_budget") return "模型调用（你今天的调用额度已用完，本轮改用本地模板，额度次日重置）";
   const fromUrl = /^dated:from_url_(\d+)$/.exec(item);
   if (fromUrl) return "发布日期推断（" + fromUrl[1] + " 条取自链接里的日期，属推导值）";
   if (/^dataset:invalid_/.test(item)) return "数据集（引用了不存在的数据集，相关卡片已跳过）";

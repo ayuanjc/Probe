@@ -6,6 +6,7 @@ import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { usageAccumulator } from "@/lib/metrics";
+import { runWithCallScope, type CallScope } from "@/lib/call-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,6 +120,7 @@ function sseResponse(
   input: { text?: string; url?: string },
   signal: AbortSignal,
   release: () => void,
+  scope: CallScope,
 ): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -147,10 +149,14 @@ function sseResponse(
       };
 
       try {
-        for await (const event of runVerify(input, signal, meter.sink)) {
-          // 断开即停：核验是长链路，用户关掉页面后继续跑几十次上游调用是纯浪费。
-          if (!push(encodeVerifyEvent(event))) break;
-        }
+        // 与 /api/search 同理：流的 start() 可能在路由返回之后才跑，
+        // 额度要算在这个用户名下，就得在这里重新绑定一次上下文。
+        await runWithCallScope(scope, async () => {
+          for await (const event of runVerify(input, signal, meter.sink)) {
+            // 断开即停：核验是长链路，用户关掉页面后继续跑几十次上游调用是纯浪费。
+            if (!push(encodeVerifyEvent(event))) break;
+          }
+        });
       } catch (err) {
         // 上游异常直接外发会泄露内部地址/模型名/响应片段，只回公共文案。
         const message = publicMessage(err, "核验过程中出错了，请稍后重试。");
@@ -181,6 +187,7 @@ async function guarded(
   request: Request,
   input: { text?: string; url?: string },
   format: "sse" | "json" = "sse",
+  scope: CallScope,
 ): Promise<Response> {
   if (isCrossSite(request)) return jsonError(403, "cross_site", "拒绝跨站调用。");
 
@@ -199,15 +206,17 @@ async function guarded(
   }
 
   try {
-    const cfg = await prepareRuntimeConfig(request);
-    if (format === "json") {
-      try {
-        return await withRuntimeConfig(cfg, () => jsonResponse(input, request.signal));
-      } finally {
-        release();
+    return await runWithCallScope(scope, async () => {
+      const cfg = await prepareRuntimeConfig(request);
+      if (format === "json") {
+        try {
+          return await withRuntimeConfig(cfg, () => jsonResponse(input, request.signal));
+        } finally {
+          release();
+        }
       }
-    }
-    return withRuntimeConfig(cfg, () => sseResponse(input, request.signal, release));
+      return withRuntimeConfig(cfg, () => sseResponse(input, request.signal, release, scope));
+    });
   } catch (err) {
     release();
     return jsonError(500, "internal", publicMessage(err, "核验启动失败，请稍后重试。"));
@@ -237,7 +246,12 @@ export async function POST(request: Request) {
   if (!text && !url) {
     return jsonError(422, "no_input", "要给正文，或给一个文章链接。");
   }
-  return guarded(request, { text, url }, format);
+  return guarded(request, { text, url }, format, scopeOf(auth.user));
+}
+
+/** 额度计数的身份：登录态按账号（同一账号换 IP 也跑不掉）。 */
+function scopeOf(user: { id: string; username: string }): CallScope {
+  return { key: "u:" + user.id, label: "用户 " + user.username };
 }
 
 /** GET ?url=… 只为了 curl 验收方便，行为与 POST 完全一致。 */
@@ -250,5 +264,5 @@ export async function GET(request: Request) {
   }
   // ?format=json 让 curl 直接拿到可断言的对象（GET 本来就是为了验收方便）。
   const format = new URL(request.url).searchParams.get("format") === "json" ? "json" : "sse";
-  return guarded(request, { url }, format);
+  return guarded(request, { url }, format, scopeOf(auth.user));
 }

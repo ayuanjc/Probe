@@ -5,6 +5,7 @@ import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
+import { runWithCallScope } from "@/lib/call-scope";
 import {
   describeDatasets,
   rulePlan,
@@ -127,7 +128,15 @@ export async function POST(request: Request) {
   if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
   const auth = await requireUser(request);
   if (!auth.ok) return auth.response;
+  // 额度按人算：这一句「生成面板」的模型调用要记在这个账号头上，
+  // 而不是记进所有人共用的那个进程级计数器。
+  return runWithCallScope(
+    { key: "u:" + auth.user.id, label: "用户 " + auth.user.username },
+    () => generateFor(request),
+  );
+}
 
+async function generateFor(request: Request): Promise<Response> {
   const per = perClient.check(clientKey(request));
   if (!per.ok) {
     return new Response(

@@ -9,7 +9,7 @@ import {
   ownerOf,
 } from "@/lib/confidence";
 import { locateQuote, MIN_QUOTE_CHARS } from "@/lib/claim-extract";
-import { generateStructured, llmEnabled } from "@/lib/llm";
+import { generateStructured, llmEnabled, scopeBudgetExhausted } from "@/lib/llm";
 import type { UsageSink } from "@/lib/metrics";
 import { toneBucket } from "@/lib/heat";
 import { jaccard, tokenize } from "@/lib/text";
@@ -266,6 +266,9 @@ export async function analyze(
   if (claimSource === "failed") degraded.push("claims:extract_failed");
   // 编造的 quote 被丢掉这件事要让用户看得见：丢了几条、为什么丢。
   if (quoteMisses > 0) degraded.push("claims:quote_miss_" + quoteMisses);
+  // 个人额度用完 ≠ 上游故障：前者等明天（或自带 key），后者去看日志。
+  // 不单独标出来的话，用户只会看到「断言抽取失败」，而真正的解法是等一会儿。
+  if (scopeBudgetExhausted()) degraded.push("llm:user_budget");
 
   const confidence = computeConfidence(sources, claims, {
     rawCount: raw.length,

@@ -3,7 +3,8 @@
 import dynamic from "next/dynamic";
 import { useEffect, useRef } from "react";
 
-const Chart = dynamic(() => import("echarts-for-react"), {
+// 指向按需注册的 EChart，而不是整包 echarts-for-react（见 src/components/EChart.tsx）。
+const Chart = dynamic(() => import("./EChart"), {
   ssr: false,
   loading: () => <div className="skeleton h-full min-h-[160px] w-full rounded-md" />,
 });

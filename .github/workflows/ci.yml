@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: typecheck + build
+  # 单测先跑：它比构建快得多，逻辑错就没必要再花三分钟打包。
+  test:
+    name: typecheck + unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,8 +29,70 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 之前这里没有 npm test：310+ 条用例只在本地跑，
+      # 一次回归就能无声上线（比如坐标错位、额度记账那种「界面看不出来」的错）。
+      - name: Unit tests
+        run: npm test
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  build:
+    name: build + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
       - name: Build
         run: npm run build
         env:
           # 无 key 时流水线回退到确定性 fixture provider，CI 不需要任何凭据
           NEXT_TELEMETRY_DISABLED: "1"
+
+      # 构建能过 ≠ 能启动。缺一个运行时 env、Server Component 里抛错、
+      # 只会在 next start 之后才炸，所以这里真起一次再去敲门。
+      - name: Smoke test
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          PROBE_AUTH_MODE: "on"
+          PROBE_ICP_LICENSE: "粤ICP备00000000号-1"
+          PROBE_POLICE_LICENSE: "粤公网安备00000000000000号"
+        run: |
+          set -euo pipefail
+          npx next start -H 127.0.0.1 -p 3301 > /tmp/next.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+
+          # 启动可能要几秒（冷启动要初始化缓存与运行时配置）
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://127.0.0.1:3301/api/version; then break; fi
+            if [ "$i" = "40" ]; then echo "服务在 20 秒内没有起来"; tail -50 /tmp/next.log; exit 1; fi
+            sleep 0.5
+          done
+
+          fail=0
+          check() {
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3301$1")
+            if [ "$code" != "$2" ]; then echo "✗ $1 期望 $2 实际 $code"; fail=1; else echo "✓ $1 $code"; fi
+          }
+
+          check /login 200
+          check /privacy 200
+          check /terms 200
+          check /api/version 200
+          # 未登录访问管理接口必须是 401，不能是 200（权限闸真的在跑）
+          check /api/admin/users 401
+
+          # 页脚备案号必须真的渲染出来（这是备案验收项，缺了会被驳回）
+          body=$(curl -sS http://127.0.0.1:3301/privacy)
+          echo "$body" | grep -q "粤ICP备00000000号-1" || { echo "✗ 隐私页没有渲染 ICP 备案号"; fail=1; }
+
+          if [ "$fail" != "0" ]; then echo "--- server log ---"; tail -50 /tmp/next.log; exit 1; fi
+          echo "smoke ok"
