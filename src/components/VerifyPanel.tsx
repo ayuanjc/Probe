@@ -5,6 +5,7 @@ import { appPath } from "@/lib/base-path";
 import { coverageGapText, type VerifyScoresEvent } from "@/lib/verify-events";
 import { N_A_LABEL } from "@/lib/grade";
 import { STATUS_LABEL, type ClaimStatus } from "@/lib/dossier";
+import WhatIsThis from "@/components/WhatIsThis";
 
 /**
  * 文档核验面板。
@@ -62,6 +63,20 @@ function pct(x: number): string {
   return (x * 100).toFixed(0) + "%";
 }
 
+const VERIFY_POINTS = [
+  {
+    k: "先找证据，再谈判断",
+    v: "把正文拆成一句句可被外部证实或反驳的断言，逐条去留出集里找原文作证；找不到就如实记「未找到证据」。",
+  },
+  {
+    k: "三态，而且「没找到」不算「假」",
+    v: "每条断言判成支持 / 矛盾 / 无法判定。没有被反驳的，很可能只是没人写过它 —— 我们不会替你说成「查无此事」。",
+  },
+  {
+    k: "给区间，不给一个漂亮数字",
+    v: "独立来源太少时不给吻合度，只给可核验率；样本不够就写 N/A —— 一个来源的吻合度不是吻合度。",
+  },
+];
 export default function VerifyPanel() {
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
@@ -108,6 +123,19 @@ export default function VerifyPanel() {
         给的是「外部吻合度」，不是真假判决：一条断言没有被反驳，也可能只是没人写过它。
       </p>
 
+      <div className="mt-4">
+        <WhatIsThis
+          title="这三个数字是怎么来的？"
+          intro={
+            <p className="text-[12px] leading-relaxed text-neutral-300">
+              下面这一页只做一件事：把一篇文章里的断言拎出来，逐条去外部材料里核对，
+              然后老老实实告诉你「证据站在哪一边、站在几条上」。
+            </p>
+          }
+          points={VERIFY_POINTS}
+          note="核验结果由模型判定，可能出错；结论请以原始信源为准。"
+        />
+      </div>
       <section className="mt-5 rounded-md border border-neutral-800 bg-[#111] p-4">
         <label className="block font-mono text-[11px] text-neutral-500">正文</label>
         <textarea

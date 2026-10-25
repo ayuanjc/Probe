@@ -120,3 +120,16 @@ test("说明里必须写清三件事，且保留 AI 生成标识", () => {
   assert.match(whatIsThis, /由模型生成/);
   assert.match(whatIsThis, /以原始信源为准/);
 });
+
+const verifyPanel = readFileSync("src/components/VerifyPanel.tsx", "utf8");
+
+test("文档核验页也有说明，且说的是「区间」不是「真假判决」", () => {
+  // 这页最容易被人当成「AI 判定真假」来用；说明必须挡住这个误读。
+  assert.match(verifyPanel, /WhatIsThis/);
+  assert.match(verifyPanel, /外部吻合度|外部材料/);
+  assert.match(verifyPanel, /支持 \/ 矛盾 \/ 无法判定/);
+  assert.match(verifyPanel, /不是真假判决/);
+  // 说明组件必须可传参，否则两页只能共用一份检索口径的文案。
+  assert.match(whatIsThis, /points\?: WhatIsThisPoint\[\]/);
+  assert.match(whatIsThis, /points = DEFAULT_POINTS/);
+});

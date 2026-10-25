@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 /**
  * 「这是什么」—— 陌生人第一次落到登录页时，眼前只有一个用户名/密码框和一行
  * 「仅限受邀用户使用」。他不知道自己在申请什么，也不知道进去之后会看到什么。
@@ -11,7 +13,9 @@
  * 这不是免责声明式的叠甲，是这个产品唯一诚实的卖点。
  */
 
-const POINTS: { k: string; v: string }[] = [
+export type WhatIsThisPoint = { k: string; v: string };
+
+const DEFAULT_POINTS: WhatIsThisPoint[] = [
   {
     k: "回去的不是一段总结",
     v: "结论、时间线、关键数字、实体关系、原文引用 —— 每一样都落在面板上，能看、能点、能复核。",
@@ -26,25 +30,45 @@ const POINTS: { k: string; v: string }[] = [
   },
 ];
 
-export default function WhatIsThis() {
+const DEFAULT_NOTE = "面板内容由模型生成，可能出错；判断事情请以原始信源为准。";
+
+/**
+ * @param title  折叠条上的字。默认「这是什么？」
+ * @param intro  展开后的开头一段。不传就用检索场景那段。
+ * @param points 三条要点。文档核验页传的是「区间 / 三态 / 找不到证据不等于查无此事」。
+ * @param note   末行口径话。默认是 AI 生成免责（备案要求显著标识）。
+ */
+export default function WhatIsThis({
+  title = "这是什么？",
+  intro,
+  points = DEFAULT_POINTS,
+  note = DEFAULT_NOTE,
+}: {
+  title?: string;
+  intro?: ReactNode;
+  points?: WhatIsThisPoint[];
+  note?: string;
+}) {
   return (
     <details className="group rounded-md border border-neutral-800 bg-[#0f0f0f] px-4 py-3">
       <summary className="flex cursor-pointer list-none items-center gap-2 font-mono text-[11px] text-neutral-500 transition-colors hover:text-neutral-300 group-open:text-neutral-300">
         <span aria-hidden className="inline-block transition-transform duration-150 group-open:rotate-90">
           ▸
         </span>
-        这是什么？
+        {title}
       </summary>
 
       <div className="mt-3 space-y-3 border-t border-neutral-800 pt-3">
-        <p className="text-[12px] leading-relaxed text-neutral-300">
-          它不替你做判断，只把「这个结论站在哪几条原文上」摆出来，
-          让你自己看完再决定信不信。
-          <span className="text-neutral-500">（上面那句不是标语，是它跟聊天机器人的唯一区别。）</span>
-        </p>
+        {intro ?? (
+          <p className="text-[12px] leading-relaxed text-neutral-300">
+            它不替你做判断，只把「这个结论站在哪几条原文上」摆出来，
+            让你自己看完再决定信不信。
+            <span className="text-neutral-500">（上面那句不是标语，是它跟聊天机器人的唯一区别。）</span>
+          </p>
+        )}
 
         <dl className="space-y-2">
-          {POINTS.map((p) => (
+          {points.map((p) => (
             <div key={p.k} className="flex gap-2">
               <dt className="mt-[3px] shrink-0 font-mono text-[10px] text-blue-500/70">—</dt>
               <dd className="text-[11.5px] leading-relaxed text-neutral-400">
@@ -55,9 +79,7 @@ export default function WhatIsThis() {
           ))}
         </dl>
 
-        <p className="font-mono text-[10px] leading-relaxed text-neutral-600">
-          面板内容由模型生成，可能出错；判断事情请以原始信源为准。
-        </p>
+        <p className="font-mono text-[10px] leading-relaxed text-neutral-600">{note}</p>
       </div>
     </details>
   );
