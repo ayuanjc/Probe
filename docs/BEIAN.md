@@ -27,7 +27,9 @@
 | 2026-10-25 | 任意路径返回 200（单页兜底）→ 全部代理给 Next，未知路径返回真 404 | ✅ 已做 |
 | 2026-10-25 | A 方案落地：探针从 `/probe` 挪到域名根，云影图鉴下线 | ✅ 已做 |
 | 2026-10-25 | **备案申请已提交**（个人主体，网站名「探针」） | ✅ 已提交 |
-| 2026-10-25 | 阶段 A 生效：`sites-enabled` 只挂 `probe-closed`，80 上所有 Host/路径一律 444 | ✅ 已做 |
+| 2026-10-25 | 阶段 A 生效：`sites-enabled` 只挂 `probe-closed`，80 上所有 Host/路径一律 444 | ✅ 已做（后被撤回，见下） |
+| 2026-10-25 | **临时放开**（YG 要求先能访问）：`probe-root` + `probe-temp-open`，裸 IP `http://106.52.116.164/` 直达应用 | ✅ 生效中 |
+| — | 提交/审核前**撤回**临时放开（一条命令，见「零之一」节） | ⏳ 备案开审前必做 |
 | 2026-10-25 | certbot 2.1.0 + `python3-certbot-nginx` 已装（**未签发**，等 80 能开） | ✅ 已就绪 |
 | — | 443 / HTTPS 签发（阶段 C） | ⏳ 备案通过 + 80 开放后一条命令 |
 | — | 页脚注备案号（`PROBE_ICP_LICENSE`） | ⏳ 号下来后 |
@@ -70,7 +72,60 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Host: ayuanjc.onlin
 
 ---
 
-## 一、先修三个必被驳回的问题（1、2 已修，3 待 HTTPS）
+## 零之一、临时对外开放（2026-10-25，应 YG 要求「先放开」）
+
+### 现状：域名打不开，但 IP 能打开
+
+实测结论（2026-10-25 19:55 从外网真实探测）：
+
+| 访问方式 | 结果 | 原因 |
+| --- | --- | --- |
+| `http://ayuanjc.online/` | `302 → dnspod.qcloud.com/static/webblock.html?d=ayuanjc.online` | 腾讯云**按 Host 头**拦截未备案域名，请求到不了这台 nginx |
+| `-H 'Host: ayuanjc.online' http://106.52.116.164/` | 同样 302 到 webblock | 同上，阻断看 Host 不看 IP |
+| `http://106.52.116.164/` | `307 → /login`，`200` | 裸 IP 不在拦截范围，现在走 `probe-temp-open` |
+| `http://106.52.116.164/login` | `200`，页面含新首屏说明 | 同上 |
+
+也就是说：**域名通道不由我们控制**，改 nginx 无效；备案通过（或换一家不做域名阻断的接入商）之前，域名就是打不开。
+想让别人现在就能看，只有 IP 这条通道。
+
+### 三份配置（都已入库 `scripts/server/nginx/`）
+
+| 服务器文件 | 作用 | 何时用 |
+| --- | --- | --- |
+| `/etc/nginx/sites-available/probe-root` | `server_name ayuanjc.online www.ayuanjc.online`，域名根代理应用 + geoip 国家头注入 + `/probe` 301 | 一直保留（备案通过后就是它干活） |
+| `/etc/nginx/sites-available/probe-temp-open` | `listen 80 default_server`，裸 IP / 任意 Host 直接代理应用 | **只有现在**，临时 |
+| `/etc/nginx/sites-available/probe-block` | `listen 80 default_server`，`return 444` | 备案提交/审核期，以及以后正式上线时替换 `probe-temp-open` |
+
+> `probe-temp-open` 与 `probe-block` 都是 80 的 `default_server`，**同时只能开一个**，
+> 否则 `nginx -t` 报 `a duplicate default server for 0.0.0.0:80`。
+> `probe-root` 里原来那段 444 兜底已经拆成 `probe-block`，就是为了这个。
+
+### 备案开审前撤回
+
+```bash
+rm -f /etc/nginx/sites-enabled/probe-temp-open
+ln -sfn /etc/nginx/sites-available/probe-block /etc/nginx/sites-enabled/probe-block
+rm -f /etc/nginx/sites-enabled/probe-root        # 审核期不许对公网提供站点
+nginx -t && systemctl reload nginx
+curl -s -o /dev/null -w 'ip:%{http_code}\n' http://106.52.116.164/   # 期望连不上
+```
+
+恢复临时的反操作：
+
+```bash
+rm -f /etc/nginx/sites-enabled/probe-block
+ln -sfn /etc/nginx/sites-available/probe-temp-open /etc/nginx/sites-enabled/probe-temp-open
+ln -sfn /etc/nginx/sites-available/probe-root /etc/nginx/sites-enabled/probe-root
+nginx -t && systemctl reload nginx
+```
+
+### 代价说清楚
+
+审核员探测时如果从**裸 IP** 也能打开站点，看到的正是「未备案的互联网信息服务已经对外提供」，
+这在首次备案里是明确的驳回理由（本手册第一节第 2 条就是它）。所以：**临时开放可以，开审前必须撤回。**
+---
+
+## 一、先修三个必被驳回的问题（1、2 已改，现为临时放开状态，见上一节）
 
 备案审核会做两件事：查主体材料，以及**探测 80 端口**。以下三点是实测出来的硬伤：
 
