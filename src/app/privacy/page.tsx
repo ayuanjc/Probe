@@ -93,6 +93,10 @@ export default function PrivacyPage() {
               以明文 JSONL 形式保存在服务器本地文件中，供运营者复现问题。
             </>,
             <>
+              <span className="text-neutral-300">账号级历史</span>：为了让「我上次问的是什么」能在别的设备上也找回来，
+              服务器会为每次提问保存一份索引 —— 见第四节，那里逐项列清存了什么、没存什么。
+            </>,
+            <>
               <span className="text-neutral-300">我们不收集</span>：通讯录、短信、精确地理位置、
               设备唯一标识、剪贴板。站内没有第三方统计脚本、没有广告 SDK、没有社交插件。
             </>,
@@ -157,7 +161,40 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection heading="四、保存多久">
+      <LegalSection heading="四、账号级历史（只对你可见）">
+        <p>
+          这一节单独列出来，是因为历史记录最容易变成「说好只存索引，实际上什么都存了」。
+          下面两张清单可以直接对着代码核对：存储在服务器的 SQLite 数据库
+          （<code>.data/probe.db</code>）里，与账号密码的文件分开。
+        </p>
+        <p className="text-neutral-300">会保存的（每条提问一行）：</p>
+        <LegalList
+          items={[
+            <>提问原文。默认保存 —— 历史对你有用的前提是「认得出来那是哪一次」。
+              运营方可以把 <code>PROBE_HISTORY_STORE_QUERY</code> 设为 0，此后只留时间与计数，
+              列表中显示「（已隐去）」。</>,
+            <>时间、当次访问被判定为境内还是境外、用的是哪个模型端点、意图类型。</>,
+            <>断言计数：抽出多少条、判成支持 / 矛盾 / 未核验各多少条，以及降级原因码。</>,
+            <>信源清单：每条的网址、标题、来自哪个检索源；引文只保存一段哈希，不保存原句。</>,
+            <>文档核验只保存文档标题、字数、正文的哈希与三态计数。</>,
+          ]}
+        />
+        <p className="text-neutral-300">不会保存的：</p>
+        <LegalList
+          items={[
+            <>摘要正文、数据面板内容、翻译结果等一切由模型生成的内容。</>,
+            <>信源原文、抓取到的文章正文、核验过程中的证据片段。</>,
+            <>你的来访 IP、User-Agent（历史表里没有这两列）。</>,
+          ]}
+        />
+        <p className="text-neutral-500">
+          只有你自己能读到自己的历史：换一个账号访问同一条记录，服务端返回的是「没有这条」
+          而不是「无权访问」—— 后者等于承认这条记录存在。运营方可以在后台看到记录总量与库体积，
+          但不提供按账号浏览历史原文的界面。
+        </p>
+      </LegalSection>
+
+      <LegalSection heading="五、保存多久">
         <LegalList
           items={[
             <>账号信息：保存到你注销账号，或运营者依约终止服务为止。</>,
@@ -165,6 +202,11 @@ export default function PrivacyPage() {
             <>
               协议确认记录：保存两年（或至协议版本被替换后一年），用于举证；单个文件超过 8MB 时
               只保留最近一轮，不长期归档。
+            </>,
+            <>
+              账号级历史：保留 90 天（运营方可调），每人最多 500 条，超出后最旧的先删；
+              过期记录由定时任务清理。删除即从数据库中消失，不进回收站。
+              出于故障恢复需要，数据库会随全站备份打包，备份最多保留 14 份。
             </>,
             <>检索缓存：到期即失效，不归档、不用于训练。</>,
             <>反馈文件：保存至运营者归档或删除；写满上限后停止接收而不是无限增长。</>,
@@ -176,10 +218,12 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="五、你的权利">
+      <LegalSection heading="六、你的权利">
         <LegalList
           items={[
-            <>查询与复制：可以要求提供我们保存的、与你账号相关的信息副本。</>,
+            <>查询与复制：可以要求提供我们保存的、与你账号相关的信息副本；
+              「账号」页的「我的历史」里可以直接一键导出全部历史（JSON）。</>,
+            <>删除历史：每条记录都能单独删，也可以一次清空 —— 不需要申请，立即生效。</>,
             <>更正：用户名之外的资料如有错误，可要求更正。</>,
             <>删除与注销：可以要求删除账号及关联数据；我们会在 15 个工作日内处理完毕，
               法律法规要求留存的日志除外。</>,
@@ -188,7 +232,7 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="六、未成年人">
+      <LegalSection heading="七、未成年人">
         <p>
           本站面向成年技术用户，不主动面向未成年人推广。不满 14 周岁的未成年人
           应在监护人同意与指导下使用；若我们发现账号属于此类情形且未获同意，
@@ -196,7 +240,7 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection heading="七、我们怎么保护它">
+      <LegalSection heading="八、我们怎么保护它">
         <LegalList
           items={[
             <>密码单向哈希（scrypt）、会话令牌只存哈希、Cookie 不可被脚本读取。</>,
@@ -207,7 +251,7 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="八、政策的变更">
+      <LegalSection heading="九、政策的变更">
         <p>
           本政策如有实质性变更（新增数据用途、更换模型或检索服务商、改变保存期限），
           会在站内公告并更新本页顶部的生效日期；继续使用即视为接受变更后的版本。

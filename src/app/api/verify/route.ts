@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/runtime-config";
 import { encodeVerifyEvent, type VerifyEvent } from "@/lib/verify-events";
 import { runVerify } from "@/agents/verify-pipeline";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
@@ -8,6 +8,13 @@ import { requireUser } from "@/lib/auth/guard";
 import { usageAccumulator } from "@/lib/metrics";
 import { runWithCallScope, type CallScope } from "@/lib/call-scope";
 import { chargeOperation, OP_UNITS } from "@/lib/llm";
+import {
+  newVerifyTrace,
+  observeVerifyEvent,
+  persistQuietly,
+  verifyTraceToQuery,
+  type RecordContext,
+} from "@/lib/history-collect";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,17 +66,26 @@ const Body = z.object({
  * 事件流里同一件事会出现三次（claim.extracted / evidence.retrieved / nli.verdict），
  * 脚本要的是「结论 + 可核对的账」，所以这里按 claim 归并。
  */
-async function jsonResponse(input: { text?: string; url?: string }, signal: AbortSignal): Promise<Response> {
+async function jsonResponse(
+  input: { text?: string; url?: string },
+  signal: AbortSignal,
+  ctx: RecordContext,
+): Promise<Response> {
   const events: VerifyEvent[] = [];
   let failure: string | null = null;
   const meter = usageAccumulator();
+  const trace = newVerifyTrace();
   try {
-    for await (const event of runVerify(input, signal, meter.sink)) events.push(event);
+    for await (const event of runVerify(input, signal, meter.sink)) {
+      events.push(event);
+      observeVerifyEvent(trace, event);
+    }
   } catch (err) {
     failure = publicMessage(err, "核验过程中出错了，请稍后重试。");
   } finally {
     // 核验是几十次上游调用的长链路，账必须在收尾处落一行，否则线上没人知道烧了多少。
     console.info("[verify] usage", meter.read());
+    persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
   }
 
   const doc = events.find((e) => e.event === "doc.parsed");
@@ -122,6 +138,7 @@ function sseResponse(
   signal: AbortSignal,
   release: () => void,
   scope: CallScope,
+  ctx: RecordContext,
 ): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -153,9 +170,16 @@ function sseResponse(
         // 与 /api/search 同理：流的 start() 可能在路由返回之后才跑，
         // 额度要算在这个用户名下，就得在这里重新绑定一次上下文。
         await runWithCallScope(scope, async () => {
-          for await (const event of runVerify(input, signal, meter.sink)) {
-            // 断开即停：核验是长链路，用户关掉页面后继续跑几十次上游调用是纯浪费。
-            if (!push(encodeVerifyEvent(event))) break;
+          const trace = newVerifyTrace();
+          try {
+            for await (const event of runVerify(input, signal, meter.sink)) {
+              // 与搜索同理：历史只抄索引（标题、字数、三态计数），正文与证据原文永不落库。
+              observeVerifyEvent(trace, event);
+              // 断开即停：核验是长链路，用户关掉页面后继续跑几十次上游调用是纯浪费。
+              if (!push(encodeVerifyEvent(event))) break;
+            }
+          } finally {
+            persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
           }
         });
       } catch (err) {
@@ -190,6 +214,7 @@ async function guarded(
   format: "sse" | "json" = "sse",
   scope: CallScope,
 ): Promise<Response> {
+  const ctx: RecordContext = { userId: scope.key.replace(/^u:/, ""), query: "", region: "cn", modelHost: "" };
   if (isCrossSite(request)) return jsonError(403, "cross_site", "拒绝跨站调用。");
 
   const per = perClient.check(clientKey(request));
@@ -215,14 +240,20 @@ async function guarded(
         console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮核验降级为本地判定。");
       }
       const cfg = await prepareRuntimeConfig(request);
+      // 区域在请求上下文里取一次：SSE 的 start() 可能在路由返回之后才跑，
+      // 到那时再问「这次请求来自哪里」已经晚了（ALS 可能已经不在了）。
+      const stamped = (): RecordContext => {
+        const region = regionSummary();
+        return { userId: ctx.userId, query: ctx.query || input.url || "", region: region.region, modelHost: region.modelHost };
+      };
       if (format === "json") {
         try {
-          return await withRuntimeConfig(cfg, () => jsonResponse(input, request.signal));
+          return await withRuntimeConfig(cfg, () => jsonResponse(input, request.signal, stamped()));
         } finally {
           release();
         }
       }
-      return withRuntimeConfig(cfg, () => sseResponse(input, request.signal, release, scope));
+      return withRuntimeConfig(cfg, () => sseResponse(input, request.signal, release, scope, stamped()));
     });
   } catch (err) {
     release();

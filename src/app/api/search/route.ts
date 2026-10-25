@@ -1,6 +1,7 @@
 import { encodeEvent } from "@/lib/sse";
 import { runPipeline } from "@/agents/pipeline";
-import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/runtime-config";
+import { newSearchTrace, observeSearchEvent, persistQuietly, searchTraceToQuery } from "@/lib/history-collect";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
@@ -39,7 +40,7 @@ const MAX_BODY_BYTES = 8_000;
  * 单连接多路 SSE。不能用多个 fetch —— 无法保证事件顺序，
  * 也无法保证模块卡与文本流在时间上对齐（PRD 附录 A）。
  */
-function sseResponse(query: string, request: Request, release: () => void, scope: CallScope): Response {
+function sseResponse(query: string, request: Request, release: () => void, scope: CallScope, userId: string): Response {
   const encoder = new TextEncoder();
   const signal = request.signal;
 
@@ -82,10 +83,29 @@ function sseResponse(query: string, request: Request, release: () => void, scope
             console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮降级为本地模板。");
           }
           await withRuntimeConfig(cfg, async () => {
-            for await (const event of runPipeline(query, signal)) {
-              // 客户端关掉标签页后继续往下跑没有任何意义：
-              // 事件没人收，上游却还在被调用。enqueue 失败就是最可靠的断开信号。
-              if (!push(encodeEvent(event))) break;
+            // 区域必须在这里取：它来自请求头/IP，只在 withRuntimeConfig 的作用域里活着。
+            const region = regionSummary();
+            const trace = newSearchTrace();
+            try {
+              for await (const event of runPipeline(query, signal)) {
+                // 历史只从这条流里抄索引（不抄正文），所以边上屏边攒，
+                // 用户中途关页面也留得下已经发生的部分。
+                observeSearchEvent(trace, event);
+                // 客户端关掉标签页后继续往下跑没有任何意义：
+                // 事件没人收，上游却还在被调用。enqueue 失败就是最可靠的断开信号。
+                if (!push(encodeEvent(event))) break;
+              }
+            } finally {
+              // 写历史失败只 warn：它是附加价值，不能反过来把一次正常的提问搞成错误页。
+              persistQuietly(
+                searchTraceToQuery(trace, {
+                  userId,
+                  query,
+                  region: region.region,
+                  modelHost: region.modelHost,
+                }),
+                "search",
+              );
             }
           });
         });
@@ -140,7 +160,7 @@ async function guarded(request: Request, query: string): Promise<Response> {
   const scope: CallScope = { key: "u:" + auth.user.id, label: "用户 " + auth.user.username };
 
   try {
-    return sseResponse(trimmed, request, release, scope);
+    return sseResponse(trimmed, request, release, scope, auth.user.id);
   } catch (err) {
     release();
     return jsonError(500, "internal", publicMessage(err, "分析启动失败，请稍后重试。"));

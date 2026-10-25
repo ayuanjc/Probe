@@ -38,6 +38,7 @@ const POST_PATHS = [
   "/api/evidence",
   "/api/translate",
   "/api/feedback",
+  "/api/history/import",
   "/api/calibration",
   "/api/consent",
   "/api/auth/login",
@@ -65,7 +66,7 @@ const BODIES = [
 for (const p of POST_PATHS) for (const [name, body] of BODIES) add("POST", p, body);
 
 // —— GET 端点：畸形 query ——
-const GETS = ["/api/search", "/api/verify", "/api/metrics", "/api/dossier", "/api/evidence", "/api/calibration", "/api/version", "/api/region", "/api/consent", "/api/auth/me", "/api/auth/sessions", "/api/admin/invites", "/api/admin/users", "/api/admin/sessions", "/api/admin/audit", "/api/cron/heat"];
+const GETS = ["/api/history", "/api/history/export", "/api/search", "/api/verify", "/api/metrics", "/api/dossier", "/api/evidence", "/api/calibration", "/api/version", "/api/region", "/api/consent", "/api/auth/me", "/api/auth/sessions", "/api/admin/invites", "/api/admin/users", "/api/admin/sessions", "/api/admin/audit", "/api/cron/heat"];
 const QUERIES = [
   "",
   "?q=",

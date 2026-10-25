@@ -201,3 +201,32 @@ test("按人额度按「操作」记点：三处入口都在操作开始时记�
   assert.match(quotaTab, /PROBE_DAILY_LLM_UNITS_PER_USER/);
 });
 
+/* ---------------------- node:sqlite 只能运行时取 ---------------------- */
+
+test("node:sqlite 不用 require/import 字面量取，否则构建能过、一调接口就 500", () => {
+  const dbSrc = readFileSync("src/lib/db/index.ts", "utf8");
+  // 2026-10-25 实测：tsc 绿、npm test 绿、next build 绿，next start 后第一次调 /api/history 直接
+  //   Error: Cannot find module 'node:sqlite': Unsupported external type Url for commonjs reference
+  // 因为打包器把 require("node:") 当外部引用去解析。这条断言是唯一能在 CI 里挡住它的东西
+  // （单元测试跑的是编译产物，不经过打包器，所以永远发现不了）。
+  // 先去掉注释：文件头为了解释这个坑，正文里就写了 require("node:sqlite") 这个词。
+  const dbCode = dbSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(dbCode, /require\(\s*"node:sqlite"\s*\)/);
+  assert.doesNotMatch(dbCode, /from\s+"node:sqlite"/);
+  assert.match(dbSrc, /getBuiltinModule/);
+  // 拿不到时要说清楚缺什么，而不是抛一个 undefined is not a constructor。
+  assert.match(dbSrc, /需要 22\.5\+/);
+});
+
+test("搜索与核验都把记录写在 finally 里，中途断开也留得下", () => {
+  const searchSrc = readFileSync("src/app/api/search/route.ts", "utf8");
+  const verifySrc = readFileSync("src/app/api/verify/route.ts", "utf8");
+  // 写在 for-await 之后、try 之外的写法，会在客户端断开（signal abort 抛错）时整条记录消失 ——
+  // 而断开恰恰是最常见的结束方式（关页面、切标签）。
+  assert.match(searchSrc, /finally \{[\s\S]{0,400}?persistQuietly\(/);
+  assert.match(verifySrc, /persistQuietly\(verifyTraceToQuery/);
+  // 区域要在有请求上下文的时刻取一次：SSE 的 start() 可能在路由返回后才跑，那时 ALS 已经没了。
+  assert.match(verifySrc, /const stamped = \(\): RecordContext =>/);
+  // 历史是最后一步：它失败不能影响已经上屏的内容。
+  assert.match(readFileSync("src/lib/history-collect.ts", "utf8"), /console\.warn\("\[history\]/);
+});

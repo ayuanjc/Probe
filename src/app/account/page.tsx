@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import ProbeLogo from "@/components/ProbeLogo";
 import AccountSessions from "@/components/AccountSessions";
+import AccountHistory from "@/components/AccountHistory";
 import { ChangePasswordPanel } from "@/components/AuthPanels";
 import { requirePageUser } from "@/lib/auth/guard";
 
@@ -47,6 +48,14 @@ export default async function AccountPage() {
           改密码会同步撤销全部设备；换机器、借人用过之后可以单独踢掉。
         </p>
         <AccountSessions />
+      </div>
+
+      <div className="rounded-md border border-neutral-800 bg-[#0f0f0f] p-5">
+        <h2 className="mb-1 text-[15px] font-semibold text-white">我的历史</h2>
+        <p className="mb-4 text-[12px] leading-relaxed text-neutral-500">
+          在别的设备上也能看到自己问过什么。只存索引，不存正文，保留 90 天。
+        </p>
+        <AccountHistory />
       </div>
 
       <nav className="text-center font-mono text-[11px] text-neutral-600">

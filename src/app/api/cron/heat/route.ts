@@ -3,6 +3,7 @@ import { ensureHistory } from "@/lib/heat-history";
 import { getTrending } from "@/lib/trending";
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, constantTimeEqual, publicMessage } from "@/lib/request-guard";
+import { historyEnabled, pruneExpired } from "@/lib/history-store";
 
 /**
  * 后台热点计算（PRD Phase 3 第 1 项）。
@@ -73,6 +74,17 @@ async function run(request: Request) {
     // 先把基线补齐（落后时才真的去抓），再强制重算一次快照。
     const history = await ensureHistory();
     const snapshot = await getTrending(true);
+    // 顺手清理过期的账号级历史：这件事没有任何时效性要求，
+    // 但必须有个东西固定去做 —— 挂在已有的定时任务上比再起一个 timer 省事也省故障面。
+    // 失败只记日志：清不掉旧记录是小事，让热点计算整体失败是大事。
+    let pruned = 0;
+    if (historyEnabled()) {
+      try {
+        pruned = pruneExpired();
+      } catch (err) {
+        console.warn("[history] 过期清理失败：" + (err instanceof Error ? err.message : String(err)));
+      }
+    }
     return NextResponse.json(
       {
         ok: true,
@@ -84,6 +96,7 @@ async function run(request: Request) {
           pending: history.pending,
           reason: history.reason ?? null,
         },
+        historyPruned: pruned,
         trending: {
           topics: snapshot.topics.length,
           considered: snapshot.consideredStories,

@@ -8,6 +8,7 @@
 #
 # 备份什么：
 #   .data/auth/store.json      账号 / 会话 / 审计（最关键）
+#   .data/probe.db             账号级历史（SQLite，WAL）—— 用 sqlite 的在线备份 API 取一致快照
 #   .data/consent/consent.log  协议同意留痕（备案查验项）
 #   .cache/feedback.jsonl      用户反馈
 #   .cache/hn-history.json     热榜基线（丢了只是首屏慢）
@@ -37,12 +38,45 @@ copy() { # 源 相对路径
   fi
 }
 
+
+# SQLite 不能直接 cp：WAL 模式下最新的写入还在 -wal 文件里，只拷 .db 会少掉最近的数据，
+# 而拷 .db + -wal + -shm 三件套又可能在别的连接写入时得到互不自洽的一套。
+# 用 sqlite3 的 backup API（python3 自带）取一份一致快照，落到工作目录后统一打包。
+copy_db() { # 源 相对路径
+  local src="$1" rel="$2"
+  if [ ! -f "$src" ]; then
+    echo "[backup] 缺少 $src（跳过）"
+    missing=$((missing + 1))
+    return 0
+  fi
+  mkdir -p "$WORK/$(dirname "$rel")"
+  if command -v python3 > /dev/null 2>&1; then
+    if python3 - "$src" "$WORK/$rel" <<'PY'
+import sqlite3, sys
+src, dst = sys.argv[1], sys.argv[2]
+con = sqlite3.connect("file:" + src + "?mode=ro", uri=True, timeout=10)
+out = sqlite3.connect(dst)
+try:
+    con.backup(out)
+finally:
+    out.close()
+    con.close()
+PY
+    then
+      return 0
+    fi
+    echo "[backup] 警告：probe.db 快照失败（应用可能正持有锁），改为直接拷贝（可能缺最近几条历史）"
+  fi
+  cp -a "$src" "$WORK/$rel" || return 1
+}
+
 copy "$APP/.data/auth/store.json"        auth/store.json
 copy "$APP/.data/consent/consent.log"    consent/consent.log
 copy "$APP/.cache/feedback.jsonl"        cache/feedback.jsonl
 copy "$APP/.cache/hn-history.json"       cache/hn-history.json
 copy "/opt/probe/probe.env"              probe.env
 copy "/opt/probe/deployed-sha"           deployed-sha
+copy_db "$APP/.data/probe.db"            db/probe.db
 
 # 关键文件必须在：少了 store.json 的备份比没有备份更危险（会让人以为有）。
 if [ ! -f "$WORK/auth/store.json" ]; then
@@ -68,6 +102,22 @@ fi
 if command -v python3 > /dev/null 2>&1; then
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$WORK/auth/store.json" 2>/dev/null; then
     echo "[backup] 警告：store.json 不是合法 JSON（应用可能正在写）。本次照留，但请核对应用状态。"
+  fi
+fi
+
+# 校验 3：历史库能打开且结构完整（截断的 SQLite 只有在查询时才报错）
+if [ -f "$WORK/db/probe.db" ] && command -v python3 > /dev/null 2>&1; then
+  if ! python3 - "$WORK/db/probe.db" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+try:
+    row = con.execute("PRAGMA integrity_check").fetchone()
+finally:
+    con.close()
+sys.exit(0 if row and row[0] == "ok" else 1)
+PY
+  then
+    echo "[backup] 警告：备份里的 probe.db 未通过 integrity_check，请核对应用状态"
   fi
 fi
 

@@ -9,7 +9,7 @@
 
 ### 为什么必须有
 
-探针没有数据库。全部账号、会话、审计、协议同意记录都在这几个文件里：
+探针只有一个数据库（`.data/probe.db`，账号级历史），其余关键数据仍是单文件：
 
 | 文件 | 丢了会怎样 |
 | --- | --- |
@@ -17,10 +17,11 @@
 | `/opt/probe/app/.data/consent/consent.log` | 协议同意留痕没了 —— 这是备案/隐私查验时要给的东西 |
 | `/opt/probe/app/.cache/feedback.jsonl` | 用户反馈没了 |
 | `/opt/probe/app/.cache/hn-history.json` | 热榜基线没了（只是首屏变慢，会自动重建） |
+| `/opt/probe/app/.data/probe.db` | 所有人「我的历史」没了。账号、密码、会话不受影响（那些在 store.json） |
 | `/opt/probe/probe.env` | 运行配置与所有 key（恢复时没有它，光有数据也起不来） |
 | `/opt/probe/deployed-sha` | 不知道这份备份对应哪个提交 |
 
-这些文件都不是数据库，没有任何自带副本。手工 `cp` 靠人记得，靠不住。
+除 probe.db 之外这些文件都不是数据库，没有任何自带副本。手工 `cp` 靠人记得，靠不住。
 
 ### 它做了什么
 
@@ -29,7 +30,9 @@
 - 打包到 `/root/backups/probe/probe-YYYYmmdd-HHMMSS.tar.gz`，目录 `0700`、包 `0600`
 - 只留最近 **14** 份（按修改时间，不按文件名 —— 跨年时按名字排序会留错）
 - **三道校验**：`store.json` 必须在（少了就直接失败，绝不生成一个看起来成功的空备份）；
-  `tar -tzf` 必须能读（截断的包只在解包时才报错，那时已经晚了）；`store.json` 必须是合法 JSON
+  `tar -tzf` 必须能读（截断的包只在解包时才报错，那时已经晚了）；`store.json` 必须是合法 JSON；
+  备份里的 `db/probe.db` 必须通过 `PRAGMA integrity_check`
+- `probe.db` **不直接拷文件**：WAL 模式下最新写入还在 `-wal` 里，只拷 `.db` 会少最近的数据，三件套一起拷又可能在别人写入时得到互不自洽的一套。脚本用 sqlite3 的在线备份 API（python3 自带）取一份一致快照；取不到时打印警告并退回直接 `cp`（可能缺最近几条历史，但至少不中断备份）
 - 每次追加一行到 `/root/backups/probe/index.txt`
 
 定时：`probe-backup.timer` → 每天 `03:20`，`RandomizedDelaySec=600`（避开整点），`Persistent=true`（机器关过一天，开机补跑）。
@@ -44,6 +47,9 @@ tar -xzf probe-<时间戳>.tar.gz -C /root/restore-$(date +%s)
 python3 -c 'import json;print(len(json.load(open("/root/restore-*/auth/store.json"))["users"]),"users")'
 install -o root -g root -m 600 /root/restore-*/auth/store.json     /opt/probe/app/.data/auth/store.json
 install -o root -g root -m 600 /root/restore-*/consent/consent.log /opt/probe/app/.data/consent/consent.log
+# 历史库：**先删掉 -wal / -shm**，否则旧 WAL 会被当成「更新的数据」重放到刚恢复的库上
+install -o root -g root -m 600 /root/restore-*/db/probe.db /opt/probe/app/.data/probe.db
+rm -f /opt/probe/app/.data/probe.db-wal /opt/probe/app/.data/probe.db-shm
 systemctl start probe-web.service
 curl -sS http://127.0.0.1:3215/api/version       # 起来了再看登录
 ```
@@ -376,3 +382,61 @@ BASE=http://127.0.0.1:3215 CONCURRENCY=20 DURATION_MS=12000 /opt/node/bin/node /
   那时页面会降级成本地模板并标 `llm:user_budget`，不是 500。
 
 什么时候该重跑：换机型、改 Next 主版本、加新的首屏 Graph/图表、或日活过百。
+
+---
+
+## 十、账号级历史（probe.db）
+
+设计稿在 `docs/DESIGN-b2.md`，这里只写值班时要用的部分。
+
+### 它是什么
+
+一个 SQLite 文件：`/opt/probe/app/.data/probe.db`（默认目录跟 store.json 同源，`PROBE_DATA_DIR`）。
+**账号、密码、会话、审计一律不在这里**（仍在 `.data/auth/store.json`）—— 历史库坏掉的最坏结果是
+所有人看不到自己的历史，登录与后台不受影响。这一点是有意设计的：一个坏掉的库不该把所有人挡在门外。
+
+| 表 | 存什么 |
+| --- | --- |
+| `queries` | 一行一次查询：提问原文（可关）、区域、模型端点、意图类别、实体、摘要长度、三态计数、降级项、信源数/域名、文档哈希、耗时、时间窗 |
+| `query_sources` | 每次查询对应的信源 URL/标题/来源/引文哈希（引文只存哈希，不存原文） |
+
+**不存正文、不存模型输出全文。** 摘要只存字符数（`summary_len`），所以即使库泄露也拼不出当时说了什么。
+
+### 三个开关（都在 probe.env）
+
+| 变量 | 默认 | 关掉会怎样 |
+| --- | --- | --- |
+| `PROBE_HISTORY_SERVER` | `1` | 整个功能关闭：接口返回 `enabled:false`、/account 不出面板、不再写入也不再清理 |
+| `PROBE_HISTORY_STORE_QUERY` | `1` | 仍然记录（时间/信源/统计都在），只是提问原文落库为空串，界面显示「这件功能当时关着原文保存」 |
+| `PROBE_HISTORY_RETENTION_DAYS` | `90` | 过期行由 `pruneExpired()` 删除；改小之后**不会立刻少**，要等下一次清理（见下） |
+
+清理时机：挂在已有的热榜定时任务里（`/api/cron/heat` 成功时顺手删一批，`historyPruned` 是这一轮删的行数）。
+没有单独起 timer —— 多一个 timer 就多一处会坏的东西。所以`probe-heat.timer` 停了，过期行也不会减少。
+
+### 值班常看的几件事
+
+```bash
+# 库多大、有多少行（WAL 存在时 page_count 会略偏小，属正常）
+ls -l /opt/probe/app/.data/probe.db*
+sqlite3 /opt/probe/app/.data/probe.db 'select count(*) from queries; select count(*) from query_sources;'
+
+# 完整性（备份脚本也会跑这个）
+sqlite3 /opt/probe/app/.data/probe.db 'PRAGMA integrity_check;'
+
+# 谁用得最多（按人看用量，排查「某人把额度烧光」）
+sqlite3 /opt/probe/app/.data/probe.db 'select user_id, count(*) c from queries group by user_id order by c desc limit 10;'
+```
+
+### 出问题怎么退
+
+- **写不进去**：日志里搜 `[history]`。写入失败只 `console.warn`，**不会**影响已经上屏的结果（`persistQuietly` 是最后一步，吞异常）。
+  真修不了就 `PROBE_HISTORY_SERVER=0` 重启，功能整体消失但站点照常。
+- **库坏了**：停服务 → 把 `probe.db*`（含 -wal/-shm）改名挪走 → 起服务。代码会重新建一个空库并跑迁移。
+  **不要只挪 .db**：残留的 WAL 会被当成更新的数据重放，症状是「明明删了又回来了」。
+- **想彻底清除某个人的历史**：后台没有入口（刻意的，避免误删）。手工 `delete from query_sources where query_id in (select id from queries where user_id='...'); delete from queries where user_id='...';`
+
+### 还没做（写在这里免得当成忘了）
+
+- 异地备份：和 store.json 一样，备份包目前只在同机 `/root/backups`（见第一节「还差什么」）。
+- 全站关停时的数据删除流程：现在只有按人删、按时间过期两条路。
+- 账号注销清空历史：auth 侧没有注销入口，所以没有对应清理。

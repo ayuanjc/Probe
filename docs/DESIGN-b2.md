@@ -350,8 +350,8 @@ try {
 | 方法与路径 | 用途 | 限流 | 说明 |
 | --- | --- | --- | --- |
 | `GET /api/history?limit=20&before=<ts>&q=<子串>` | 分页列表 | `PROBE_HISTORY_RATE_PER_MIN` 默认 60 | 只返回 `user_id = 自己`；`limit` 夹到 1–50；`before` 是游标（毫秒，严格小于）；`q` 只在**自己的**历史里 LIKE，长度 ≥2 |
-| `GET /api/history/[id]` | 单条详情（含 sources） | 同上 | 不是自己的 → **404**（不是 403：403 会泄露「这条存在」） |
-| `DELETE /api/history/[id]` | 删一条 | 同上 | 级联删 sources；返回 `{ok:true}`（幂等） |
+| `GET /api/history?id=<id>` | 单条详情（含 sources）。**实现时改成了扁平路径**：仓库此前一条带动态段的 API 路由都没有，为 CRUD 引一个新约定不值 | 同上 | 不是自己的 → **404**（不是 403：403 会泄露「这条存在」） |
+| `DELETE /api/history?id=<id>` | 删一条（同上，扁平；无 id 时要求 body `{"confirm":"DELETE"}` 才清空全部） | 同上 | 级联删 sources；返回 `{ok:true}`（幂等） |
 | `DELETE /api/history` | 清空自己的 | 每分钟 2 次 | 需带 `{ confirm: "DELETE" }`，防 CSRF 误点 |
 | `POST /api/history/import` | 导入 localStorage 历史 | 每分钟 2 次 | body：`{ items: [{query, at}] }`，最多 200 条、每条 ≤400 字；**服务端**重算 region/model，不采信客户端 |
 | `GET /api/history/export` | 导出自己的全部（JSON） | 每分钟 2 次 | 上限 500 条；这是「用户有权导出」的落点（个人信息保护法第 45 条可携带） |
@@ -372,7 +372,7 @@ try {
 | --- | --- | --- |
 | `GET /api/watch` | 我的关注 + 未读命中数 | 返回 `[{ name, kind, hits: n, unread: m, lastSeenAt }]` |
 | `POST /api/watch` | 加关注 | `{ name, kind? }`；名字走 `entities.ts` 的规范化；每人上限 50 个；重复添加返回已有那条（幂等） |
-| `DELETE /api/watch/[id]` | 取关 | 级联删 hits |
+| `DELETE /api/watch?id=<id>` | 取关（P1，尚未实现；实施时同样走扁平路径） | 级联删 hits |
 | `POST /api/watch/read` | 标记已读 | `{ ids: [hitId] }`，最多 200 个 |
 | `GET /api/watch/hits?watch=<id>&limit=20` | 命中列表 | 分页同历史 |
 
@@ -646,7 +646,7 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 新增  src/lib/db/migrate.ts          v1 DDL + user_version
 新增  src/lib/history-store.ts       saveQuery / listQueries / getQuery / deleteQuery / pruneForUser
 新增  src/app/api/history/route.ts            GET 列表 / DELETE 清空
-新增  src/app/api/history/[id]/route.ts       GET / DELETE
+新增  src/app/api/history/route.ts            GET / DELETE（?id= 走详情/单条删除，不建 [id] 目录）
 新增  src/app/api/history/import/route.ts     POST 导入
 新增  src/app/api/history/export/route.ts     GET 导出
 改    src/app/api/search/route.ts     done 之后 saveQuery（try/catch 包住）
@@ -675,7 +675,7 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 新增  src/lib/watch-store.ts            addWatch / removeWatch / listWatches / recordHits / markRead
 新增  src/lib/watch-match.ts            词典匹配（复用 entities.ts）+ 歧义词表
 新增  src/app/api/watch/route.ts        GET / POST
-新增  src/app/api/watch/[id]/route.ts   DELETE
+新增  src/app/api/watch/route.ts        DELETE（?id=；P1）
 新增  src/app/api/watch/hits/route.ts   GET / POST read
 改    src/app/api/cron/heat/route.ts    末尾跑一轮 applyHits()
 改    src/components/*                 实体旁「关注」按钮 + 顶部未读条 + /account/watch
