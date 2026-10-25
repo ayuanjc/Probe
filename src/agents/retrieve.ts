@@ -8,6 +8,7 @@ import { regionPolicy, type RetrievalProvider } from "@/lib/region-policy";
 import { partitionByWindow, toIsoInstant, windowBoundsMs } from "@/lib/time-window";
 import { failureCode } from "@/lib/provider-errors";
 import { dateFromUrl } from "@/lib/date-from-url";
+import { hasExplicitTimeWindow } from "@/lib/time-intent";
 
 /**
  * 检索层。四个 provider 之间完全隔离：任何一个失败只记入 degraded，
@@ -297,10 +298,19 @@ async function fetchWiki(intent: Intent, outer?: AbortSignal): Promise<RawSource
 
 /* ---------------------------------------------------------------- Tavily */
 
-async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSource[]> {
+type TavilyOpts = { topic?: "general" | "news"; maxResults?: number; idPrefix?: string };
+
+async function fetchTavily(
+  intent: Intent,
+  outer?: AbortSignal,
+  opts: TavilyOpts = {},
+): Promise<RawSource[]> {
   // 用户自带的 key 优先（请求头 → AsyncLocalStorage），其次才是服务端 env。
   const key = resolvedTavilyKey();
   if (!key) return [];
+  const topic = opts.topic ?? "general";
+  const maxResults = opts.maxResults ?? 15;
+  const idPrefix = opts.idPrefix ?? "tv-";
 
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST",
@@ -312,8 +322,11 @@ async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSour
     body: JSON.stringify({
       query: intent.query,
       search_depth: "basic",
-      max_results: 15,
+      max_results: maxResults,
       include_raw_content: false,
+      // general 不回发布日期（实测 0/15），news 才回（10/10）—— 与 depth 无关，
+      // advanced 也不会多给一个日期。这条差异决定了「要不要多打一次」。
+      topic,
       start_date: intent.timeRange.from.slice(0, 10),
       end_date: intent.timeRange.to.slice(0, 10),
     }),
@@ -328,7 +341,8 @@ async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSour
   return (json.results ?? []).map((r, i) => {
     const domain = hostOf(r.url);
     return {
-      id: "tv-" + i,
+      // id 前缀必须分开：两次检索都叫 tv-0 会让 sourceIds 指向两篇不同的稿子。
+      id: idPrefix + i,
       url: r.url,
       domain,
       owner: ownerOfDomain(domain),
@@ -450,6 +464,16 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
     admit("tavily", () => fetchTavily(intent, signal)); // admit 自己记 region_blocked
   } else if (resolvedTavilyKey()) {
     admit("tavily", () => fetchTavily(intent, signal));
+    // 用户自己圈了时间范围时才多打一次 news：只有它回 published_date（10/10），
+    // 没有日期的时间窗等于没生效，而多打一次的代价是检索成本翻倍 ——
+    // 所以这笔钱只花在「他明确问了一段时间」的查询上。
+    // 不走 admit()：它不是第五家源，是同一条通道的第二次调用，区域在前面已经判过了。
+    if (hasExplicitTimeWindow(intent.query)) {
+      jobs.push({
+        name: "tavily-news",
+        run: () => fetchTavily(intent, signal, { topic: "news", maxResults: 10, idPrefix: "tvn-" }),
+      });
+    }
   } else {
     // 允许却缺 key：那是配置问题，跑成空结果会伪装成「没命中」。
     degraded.push("tavily:not_configured");
