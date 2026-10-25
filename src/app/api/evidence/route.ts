@@ -6,6 +6,7 @@ import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import {
   clientKey,
   isCrossSite,
+  methodNotAllowed,
   publicMessage,
   rateLimited,
   readJsonBody,
@@ -20,6 +21,10 @@ import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** 只有 POST：同 dossier，GET 敲进地址栏时要说人话，而不是框架的空 405。 */
+export const GET = () =>
+  methodNotAllowed(["POST"], "断言核验要用 POST 提交（需要带 claims）。");
+
 
 /**
  * 搜索结果页的「断言核验」入口：给一批断言，自己去外部找留出集、逐条判三态、

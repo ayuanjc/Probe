@@ -94,5 +94,9 @@ jobs:
           body=$(curl -sS http://127.0.0.1:3301/privacy)
           echo "$body" | grep -q "粤ICP备00000000号-1" || { echo "✗ 隐私页没有渲染 ICP 备案号"; fail=1; }
 
+          # 畸形输入巡检：389 条用例打全部 API，失败口径只有「5xx 裸栈」与「4xx 非 JSON」。
+          # 无 key 时各端点走降级路径，正好覆盖最容易崩的那条 —— 它比任何单测都更接近真实滥用。
+          BASE=http://127.0.0.1:3301 STRICT=1 CONCURRENCY=6 node scripts/probe-fuzz.mjs | tail -40 || fail=1
+
           if [ "$fail" != "0" ]; then echo "--- server log ---"; tail -50 /tmp/next.log; exit 1; fi
           echo "smoke ok"

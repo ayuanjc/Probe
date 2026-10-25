@@ -1,9 +1,17 @@
 import { translateDocument } from "@/lib/translate";
 import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
-import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
+import {
+  clientKey,
+  isCrossSite,
+  methodNotAllowed,
+  publicMessage,
+  readJsonBody,
+} from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 
+/** 只有 POST：GET 敲进地址栏时回结构化 405，而不是框架的空 body。 */
+export const GET = () => methodNotAllowed(["POST"], "只接受 POST：翻译要在请求体里带 segments。");
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

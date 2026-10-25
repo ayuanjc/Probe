@@ -2,7 +2,14 @@ import { NextRequest } from "next/server";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
-import { clientKey, isCrossSite, publicMessage, readJsonBody, stripControlChars } from "@/lib/request-guard";
+import {
+  clientKey,
+  isCrossSite,
+  methodNotAllowed,
+  publicMessage,
+  readJsonBody,
+  stripControlChars,
+} from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { hashAddress } from "@/lib/auth/crypto";
 
@@ -53,6 +60,9 @@ function clean(value: unknown, max: number): string {
   // 一条带 ESC 序列的反馈就能在终端里伪造输出、改写屏幕（ANSI 注入）。
   return stripControlChars(value).trim().slice(0, max);
 }
+
+/** 只有 POST：GET 敲进地址栏时回结构化 405，而不是框架的空 body。 */
+export const GET = () => methodNotAllowed(["POST"], "反馈要用 POST 提交。");
 
 export async function POST(request: NextRequest) {
   if (isCrossSite(request)) {

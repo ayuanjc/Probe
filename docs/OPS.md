@@ -205,8 +205,8 @@ npx next build && node scripts/size-report.mjs
 
 `.github/workflows/ci.yml` 两个 job：
 
-1. `test`：`npm ci` → `npm run typecheck` → `npm test`（318 条）
-2. `build`：`npm ci` → `npm run build` → **smoke**
+1. `test`：`npm ci` → `npm run typecheck` → `npm test`（328 条）
+2. `build`：`npm ci` → `npm run build` → **smoke** → **fuzz**
 
 smoke 为什么必须有：构建能过 ≠ 能启动。缺一个运行时 env、Server Component 里抛错，
 都只会在 `next start` 之后才炸。它真起一次服务，然后：
@@ -216,6 +216,22 @@ smoke 为什么必须有：构建能过 ≠ 能启动。缺一个运行时 env�
 - 隐私页 HTML 里必须能找到 `粤ICP备…`（页脚备案号是备案验收项，缺了会被驳回）
 
 注入的测试备案号是假的（`粤ICP备00000000号-1`），只用来断言「渲染链路通」。
+
+### fuzz 也是门禁，不只是报告
+
+`scripts/probe-fuzz.mjs` 用 389 条畸形请求打全部 API，失败口径只有两条：
+**5xx 裸栈**、**4xx 但返回的不是 JSON**。它在 smoke 起的那台服务上跑（`STRICT=1`），
+所以「坏输入把进程打崩」「错误体退化成 HTML」这两种退化会在 push 时就被拦住。
+
+脚本必须能判 PASS，否则它没用。所以它显式列出「已解释的非 2xx」：
+
+- `framework_405_empty`：路由没导出该方法时 Next 自己回的空体 405。**会被人误发的那些**
+  （`dossier`/`evidence`/`translate`/`module`/`feedback`/`login`/`password`/`logout` 的 GET）
+  自己导出了 `methodNotAllowed()`，回结构化 405 + `Allow` 头；剩下的 DELETE/PUT 纯属畸形请求，
+  交给框架。
+- `cron_disabled`：没配 `PROBE_CRON_SECRET` 时 cron 端点保持关闭，回结构化 503 —— 设计如此。
+
+当前基线：`4xx 238 / 2xx 141 / 5xx 10`（全是上面那 10 条 cron），已解释 13 条，**PASS**。
 
 ---
 

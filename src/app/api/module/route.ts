@@ -3,7 +3,13 @@ import { ModuleKind, type Field, type ModuleSpec } from "@/lib/schemas";
 import { generateStructured, llmEnabled, modelId } from "@/lib/llm";
 import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
-import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
+import {
+  clientKey,
+  isCrossSite,
+  methodNotAllowed,
+  publicMessage,
+  readJsonBody,
+} from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { runWithCallScope } from "@/lib/call-scope";
 import {
@@ -14,6 +20,8 @@ import {
   type ModulePlanReply,
 } from "@/lib/module-plan";
 
+/** 只有 POST：GET 敲进地址栏时回结构化 405，而不是框架的空 body。 */
+export const GET = () => methodNotAllowed(["POST"], "只接受 POST：面板生成要提交具体的数据集与指令。");
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

@@ -1,10 +1,18 @@
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
-import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
+import {
+  clientKey,
+  isCrossSite,
+  methodNotAllowed,
+  publicMessage,
+  readJsonBody,
+} from "@/lib/request-guard";
 import { hashAddress } from "@/lib/auth/crypto";
 import { AccountError, accountError, changeOwnPassword } from "@/lib/auth/account";
 import { issueSession } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth/guard";
 
+/** 只有 POST：GET 敲进地址栏时回结构化 405，而不是框架的空 body。 */
+export const GET = () => methodNotAllowed(["POST"], "只接受 POST：改密码要用 POST 提交。");
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

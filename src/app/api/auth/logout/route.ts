@@ -1,7 +1,10 @@
-import { isCrossSite } from "@/lib/request-guard";
+import { isCrossSite, methodNotAllowed } from "@/lib/request-guard";
 import { audit } from "@/lib/auth/store";
 import { clearCookie, destroySession, readSessionCookie } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth/guard";
+
+/** 只有 POST：GET 敲进地址栏时回结构化 405，而不是框架的空 body。 */
+export const GET = () => methodNotAllowed(["POST"], "退出登录要用 POST。");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -180,6 +180,21 @@ export function rateLimited(retryAfterSeconds: number, message?: string): Respon
 }
 
 /**
+ * 方法不匹配时的标准响应。
+ *
+ * Next 对「路由文件没有导出这个方法」默认回 405 + 空 body：状态码是对的，但它破坏了
+ * 「所有 4xx 都是结构化 JSON」这条契约 —— 前端按 code 分支、巡检脚本按 content-type
+ * 判定，空 body 在这两处都表现为「未解释的异常」。
+ * 所以语义上最容易被误发的那些（读取语义的 POST 接口被直接敲进地址栏）自己导出
+ * 对应的处理函数走这里，把 405 说清楚，并带上 Allow 头。
+ */
+export function methodNotAllowed(allow: readonly string[], message?: string): Response {
+  const head = allow.join(", ");
+  return jsonError(405, "method_not_allowed", message ?? `这个接口只接受 ${head}。`, {
+    allow: head,
+  });
+}
+/**
  * 常量时间字符串比较（用于 secret / key 校验）。
  * 先 sha256 再 timingSafeEqual，长度差异也不泄露。
  */

@@ -5,6 +5,7 @@ import {
   clientKey,
   constantTimeEqual,
   isCrossSite,
+  methodNotAllowed,
   readJsonBody,
   stripControlChars,
 } from "../src/lib/request-guard";
@@ -331,5 +332,24 @@ test("configFromRequest：三个头一起到达时才进运行时配置，脏地
     headers: { "x-probe-openai-key": "sk-test-1234567890", "x-probe-openai-base-url": "ftp://nope" },
   });
   assert.equal(configFromRequest(bad).openaiBaseUrl, undefined);
+});
+
+/* ---------------------------- 405 的形态 ---------------------------- */
+
+test("methodNotAllowed：405 也必须是结构化 JSON，并带 Allow 头", async () => {
+  const res = methodNotAllowed(["POST"], "这里只有 POST。");
+  assert.equal(res.status, 405);
+  assert.match(res.headers.get("content-type") ?? "", /application\/json/);
+  assert.equal(res.headers.get("allow"), "POST");
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  const body = (await res.json()) as { ok: boolean; code: string; message: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "method_not_allowed");
+  assert.equal(body.message, "这里只有 POST。");
+});
+
+test("methodNotAllowed：不给文案时默认文案里写明允许的方法", async () => {
+  const body = (await methodNotAllowed(["GET", "POST"]).json()) as { message: string };
+  assert.match(body.message, /GET, POST/);
 });
 

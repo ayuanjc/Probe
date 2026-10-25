@@ -2,7 +2,12 @@ import { z } from "zod";
 import { ClaimSchema, ClaimVerdictSchema } from "@/lib/schemas";
 import { buildDossier } from "@/lib/dossier";
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
-import { clientKey, isCrossSite, readJsonBody } from "@/lib/request-guard";
+import {
+  clientKey,
+  isCrossSite,
+  methodNotAllowed,
+  readJsonBody,
+} from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
@@ -28,6 +33,14 @@ const globalLimiter = createLimiter({
 
 /** 400 条证据 + 80 条判定的上限，256KB 足够。 */
 const MAX_BODY_BYTES = 256_000;
+/**
+ * 只有 POST：GET 是纯读取语义，最容易被直接敲进地址栏或被脚本 `curl` 一下。
+ * 交给 Next 兜底会得到「405 + 空 body」，那是唯一一种前端没法展示的失败形态，
+ * 所以这里自己回一个说明白了的 405。
+ */
+export const GET = () =>
+  methodNotAllowed(["POST"], "文档核验结果要用 POST 提交（需要带 claims 与 verdicts）。");
+
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

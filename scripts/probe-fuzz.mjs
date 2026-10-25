@@ -9,6 +9,9 @@
  *   BASE=... STRICT=1 node scripts/probe-fuzz.mjs    # 有 500 就退出码 1（CI 用）
  *
  * 它不是功能测试：不判断业务对不对，只判断"坏输入有没有把进程打崩 / 把栈吐给用户"。
+ *
+ * 「已解释的非 2xx」不算失败：框架层 405 空体、未配置时的 cron 503 都是既定行为。
+ * 判 FAIL 必须只包含真违约 —— 一个永远 FAIL(38) 的脚本等于没有脚本。
  */
 
 const BASE = (process.env.BASE || "http://127.0.0.1:3311").replace(/\/+$/, "");
@@ -86,8 +89,24 @@ add("POST", "/api/version", "{}");
 add("GET", "/api/auth/logout");
 add("OPTIONS", "/api/search");
 
-let idx = 0, bad = [], fivexx = [], nonJson = [], slow = [];
+let idx = 0, bad = [], fivexx = [], nonJson = [], slow = [], known = [];
 const stats = new Map();
+
+/**
+ * 已知且可解释的非 2xx：不属于「坏输入打崩了服务」，摘出来不算违约。
+ * 返回原因串；返回 null 表示这就是违约，交给下面正常归类。
+ */
+function explained(status, ctype, text) {
+  // 路由文件没导出这个方法时 Next 自己回 405 + 空 body，我们的 handler 根本没被调用。
+  // 会被人误发的那几个（dossier / evidence 的 GET）已自己导出 405 JSON，剩下的
+  // DELETE / PUT / OPTIONS 纯属畸形请求，属于框架行为。
+  if (status === 405 && !ctype.includes("json") && text.trim() === "") {
+    return "framework_405_empty";
+  }
+  // 没配 PROBE_CRON_SECRET 时 cron 端点保持关闭 —— 这是设计如此，且回的是结构化 JSON。
+  if (status === 503 && text.includes('"cron_disabled"')) return "cron_disabled";
+  return null;
+}
 
 function classify(status, ctype) {
   if (status >= 500) return "5xx";
@@ -124,6 +143,11 @@ async function run(c) {
 
   if (err) {
     bad.push({ ...c, status, err, text });
+    return;
+  }
+  const why = explained(status, ctype, text);
+  if (why) {
+    known.push({ ...c, status, why });
     return;
   }
   if (status >= 500) {
@@ -165,6 +189,17 @@ async function main() {
     x.method + " " + x.path + " → " + x.status + " " + x.ctype + "  " + (x.text || "").replace(/\s+/g, " ").slice(0, 120));
   show("✗ 请求异常 / 超时", bad, (x) => x.method + " " + x.path + " → " + (x.err || "") + " " + (x.text || ""));
   show("△ 慢响应 >5s", slow, (x) => x.method + " " + x.path + " → " + x.status + " " + x.ms + "ms");
+
+  if (known.length) {
+    const byWhy = new Map();
+    for (const it of known) byWhy.set(it.why, (byWhy.get(it.why) || 0) + 1);
+    console.log(
+      "\n○ 已解释的可接受非 2xx (" +
+        known.length +
+        "): " +
+        Array.from(byWhy, ([k, v]) => k + "×" + v).join(", "),
+    );
+  }
 
   const fail = fivexx.length + bad.length + (STRICT ? nonJson.length : 0);
   console.log("\n[fuzz] done: " + (fail === 0 ? "PASS" : "FAIL(" + fail + ")"));
