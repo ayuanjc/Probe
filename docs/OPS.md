@@ -165,10 +165,22 @@ npx next build && node scripts/size-report.mjs
 
 ### 现在的两道闸
 
-| 闸 | 环境变量 | 默认 | 单位 |
-| --- | --- | --- | --- |
-| 全局 | `PROBE_DAILY_LLM_CALLS` | 2000 | 整个进程 / 天 |
-| 按人 | `PROBE_DAILY_LLM_CALLS_PER_USER` | 120 | 每个账号 / 天（未登录按 IP） |
+| 闸 | 环境变量 | 默认 | **生产现值** | 单位 |
+| --- | --- | --- | --- | --- |
+| 全局 | `PROBE_DAILY_LLM_CALLS` | 2000 | **800** | 整个进程 / 天 |
+| 按人 | `PROBE_DAILY_LLM_CALLS_PER_USER` | 120 | **20** | 每个账号 / 天（未登录按 IP） |
+
+> 2026-10-25 起按 YG 要求调成 800 / 20（写在 `/opt/probe/probe.env`，`chmod 600`）。
+> 后台「额度设置」页写出的 `.data/ops/limits.json` **优先于** env —— 在界面上改过之后，
+> 改 env 不再生效，要先删掉那个文件（`rm -rf /opt/probe/app/.data/ops`）并重启。
+
+### 一道核验吃掉一个人的整天额度（要知道的代价）
+
+`/api/verify` 的上限是 12 段抽取 + 12 条判定（`MAX_SEGMENTS_EXTRACT` /
+`MAX_CLAIMS_VERIFIED`，见 `src/agents/verify-pipeline.ts`），也就是**一次核验最多 ~24 次上游调用**。
+按人额度 20 时，**第一轮文档核验就会在中途撞上个人上限**，后半段降级成本地模板，
+界面会标 `llm:user_budget`。所以要放开核验，得把按人额度提到 60 以上，
+或者改成按操作计权（核验记 3、提问记 1）—— 后者需要改 `takeBudget()`，尚未做。
 
 关键在**顺序**：先判全局，再判个人；**个人被拦时不消耗全局额度**（否则一个人狂点
 会让全站提前降级）。两者都通过才各 +1。
