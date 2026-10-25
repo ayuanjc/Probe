@@ -266,3 +266,38 @@ smoke 为什么必须有：构建能过 ≠ 能启动。缺一个运行时 env�
 | 境内检索源（第 1 项，本轮跳过） | 博查 key 欠费 403 `You do not have enough money or package quota` | 充值，或接第二家境内搜索 API |
 | 备份异地 | 需要 COS 密钥 | 上对象存储后把 tar 包同步过去 |
 | 外部拨测 | 控制台操作 | 腾讯云云监控站点拨测 / UptimeRobot，每分钟敲一次 `/api/version` |
+---
+
+## 七、反馈文件与抓取面
+
+### 反馈不再是「满了就拒收」
+
+上一版到 `PROBE_FEEDBACK_MAX_BYTES`（默认 8MB）就回 503 停止接收。守上限本身没错，
+错在后果：**守着上限拒收等于让后面所有人的意见静默消失** —— 提反馈的人只看到一句
+“存储已满”然后走掉，而运维也不一定那天恰好登录。
+
+现在（`src/lib/feedback-store.ts`）：
+
+| 行为 | 说明 |
+| --- | --- |
+| 到阈值就归档 | 当前文件改名进 `.cache/archive/feedback-YYYYMMDD-HHmmss.jsonl`，新文件从零继续收，请求照常成功 |
+| 归档有保留份数 | `PROBE_FEEDBACK_KEEP_ARCHIVES`（默认 10），超出按时间删最旧 → 磁盘占用仍有上界 |
+| 同秒两次归档不覆盖 | 文件名自动加 `-2`/`-3` 后缀，宁可多一个文件也不丢一份数据 |
+| 全程同一临界区 | 「看大小 + 归档 + 追加」在一条 Promise 链里，进程内并发不能各自看到“还没满”再一起写 |
+
+运维读法不变：`tail -n 20 .cache/feedback.jsonl` 看最新的，`ls -lt .cache/archive` 翻旧的；
+真要腾空间就删 archive 里最老的那几份（主文件不要删，正在写）。
+归档发生时服务日志有一行 `[feedback] … 归档为 archive/feedback-…jsonl`，
+`journalctl -u probe-web.service | grep feedback` 就能看出「一天满了几次」。
+
+### robots.txt 与 sitemap.xml
+
+两者都由代码生成（`src/app/robots.ts`、`src/app/sitemap.ts`），不是 `public/` 里的静态文件 ——
+这样地址永远跟着 `PROBE_SITE_URL` 走，换域名只改一处环境变量。
+
+- **允许**抓的：`/`、`/login`、`/signup`、`/privacy`、`/terms`、`/terms/en`。
+- **拒绝**抓的：`/api/`（全是 JSON）、后台（用 `ADMIN_PATH` 常量，不写死路径）、`/account`、`/metrics`、`/verify`。
+- sitemap 只列**陌生人无登录就能看到**的页面。首页与 `/verify` 都是登录墙（会 307 到 `/login`），
+  放进 sitemap 等于让爬虫抓到五个一模一样的登录页、把权重摊薄，所以不列。
+
+改域名/加页面时：域名只改 `PROBE_SITE_URL`；新页面决定「要不要给爬虫看」，要给就加进 `src/app/sitemap.ts`。

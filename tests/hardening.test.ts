@@ -164,3 +164,22 @@ test("部署态那半仍是只读，页面也明说了为什么", () => {
   assert.match(settingsTab, /systemctl restart probe-web/);
   assert.doesNotMatch(settingsTab, /process\.env/);
 });
+test("robots.txt 与 sitemap 由代码生成，规则与站点真实可见面一致", () => {
+  const robotsSrc = readFileSync("src/app/robots.ts", "utf8");
+  const sitemapSrc = readFileSync("src/app/sitemap.ts", "utf8");
+  // 后台与 API 不能被抓：管理台路径只能从 ADMIN_PATH 取（写死路径会被 admin-path.test 拦），
+  // /api 全是 JSON。
+  assert.match(robotsSrc, /ADMIN_PATH/);
+  assert.match(robotsSrc, /"\/api\/"/);
+  // 不写 sitemap 就要等爬虫自己猜。
+  assert.match(robotsSrc, /sitemap:/);
+  // 地址来自部署配置，不读请求头 —— 伪造 Host 不能让 sitemap 写满陌生域名。
+  assert.match(robotsSrc, /siteUrl\(\)/);
+  assert.doesNotMatch(robotsSrc, /headers\(\)/);
+  // sitemap 只列公开页：登录墙与重定向页放进去等于把权重摊薄。
+  assert.match(sitemapSrc, /"\/login"/);
+  assert.doesNotMatch(sitemapSrc, /"\/ayuanjc"/);
+  assert.doesNotMatch(sitemapSrc, /"\/account"/);
+  assert.doesNotMatch(sitemapSrc, /"\/metrics"/);
+});
+
