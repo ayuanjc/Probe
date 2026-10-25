@@ -3,7 +3,9 @@ import type { Intent, RawSource } from "@/lib/schemas";
 import { hostOf } from "@/lib/text";
 import { searchTermFor } from "@/lib/entities";
 import { fixtureSources } from "@/lib/fixtures";
-import { resolvedTavilyKey } from "@/lib/runtime-config";
+import { resolvedBochaKey, resolvedRegion, resolvedTavilyKey } from "@/lib/runtime-config";
+import { regionPolicy, type RetrievalProvider } from "@/lib/region-policy";
+import { partitionByWindow, windowBoundsMs } from "@/lib/time-window";
 
 /**
  * 检索层。四个 provider 之间完全隔离：任何一个失败只记入 degraded，
@@ -31,22 +33,7 @@ const DAY_MS = 86_400_000;
 
 /** 意图里的时间窗转毫秒。解析失败时不设限，而不是悄悄退化成"全部"。 */
 function windowBounds(intent: Intent): { fromMs: number; toMs: number } {
-  const from = Date.parse(intent.timeRange.from);
-  const to = Date.parse(intent.timeRange.to);
-  return {
-    fromMs: Number.isNaN(from) ? 0 : from,
-    toMs: Number.isNaN(to) ? Date.now() + DAY_MS : to,
-  };
-}
-
-/**
- * 窗口外一律丢弃。用户的"最近三个月"是显式约束，
- * 拿六年前的旧闻凑数量就是撒谎——宁可空，也不借时间窗外的证据。
- */
-function inWindow(iso: string, fromMs: number, toMs: number): boolean {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return true; // 时间缺失不判为越界，但会单独记数
-  return t >= fromMs && t <= toMs;
+  return windowBoundsMs(intent.timeRange.from, intent.timeRange.to);
 }
 
 export type RetrieveResult = {
@@ -152,7 +139,7 @@ export function ownerOfDomain(domain: string): string {
 function gdeltDate(v: string): string {
   // 20261023T003000Z -> ISO
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(v);
-  if (!m) return new Date().toISOString();
+  if (!m) return "";
   return new Date(
     Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]),
   ).toISOString();
@@ -332,8 +319,75 @@ async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSour
       title: r.title,
       snippet: r.content.slice(0, 400),
       lang: "unknown",
-      publishedAt: r.published_date ?? new Date().toISOString(),
+      // 没日期就是没日期。这里曾写成 ?? new Date().toISOString()，后果见 time-window.ts 头注释。
+      publishedAt: r.published_date ?? "",
       provider: "tavily" as const,
+    };
+  });
+}
+
+/* ---------------------------------------------------------------- 博查 */
+
+/**
+ * 境内网页检索。Tavily / GDELT / HN / Wiki 全在境外，境内用户走它们等于把查询
+ * 内容发出去；博查（bochaai）是境内服务商，用来补上"没有境外源可用"的位置。
+ *
+ * 它返回的条目结构和 Tavily 接近（webPages.value[]），所以映射逻辑几乎一致 ——
+ * 唯一的差别是它带 summary 字段（服务端已经把正文摘要好了），首屏不用再抓页面。
+ */
+const BOCHA_URL = "https://api.bochaai.com/v1/web-search";
+
+/** 时间窗 → 博查的 freshness 枚举。窗口比一年还宽就干脆不限，别硬塞成一年。 */
+function bochaFreshness(intent: Intent): string {
+  const { fromMs, toMs } = windowBounds(intent);
+  const days = (toMs - fromMs) / DAY_MS;
+  if (days <= 1.5) return "oneDay";
+  if (days <= 8) return "oneWeek";
+  if (days <= 32) return "oneMonth";
+  if (days <= 370) return "oneYear";
+  return "noLimit";
+}
+
+async function fetchBocha(intent: Intent, outer?: AbortSignal): Promise<RawSource[]> {
+  const key = resolvedBochaKey();
+  if (!key) return [];
+
+  const res = await fetch(BOCHA_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer " + key,
+    },
+    body: JSON.stringify({
+      query: intent.query,
+      summary: true,
+      count: 15,
+      freshness: bochaFreshness(intent),
+    }),
+    signal: signalFor(TIMEOUT_MS, outer),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("bocha http " + res.status);
+
+  // 两种包装都见过：{data:{webPages:{value:[]}}} 与 {webPages:{value:[]}}。
+  const json = (await res.json()) as {
+    data?: { webPages?: { value?: Record<string, string>[] } };
+    webPages?: { value?: Record<string, string>[] };
+  };
+  const pages = json.data?.webPages?.value ?? json.webPages?.value ?? [];
+  return pages.map((r, i) => {
+    const url = r.url ?? "";
+    const domain = url ? hostOf(url) : "";
+    return {
+      id: "bc-" + i,
+      url,
+      domain,
+      owner: domain ? ownerOfDomain(domain) : "unknown",
+      title: r.name ?? r.title ?? "(untitled)",
+      snippet: (r.summary ?? r.snippet ?? "").slice(0, 400),
+      lang: "zh",
+      publishedAt: r.datePublished ?? r.dateLastCrawled ?? "",
+      provider: "bocha" as const,
     };
   });
 }
@@ -344,12 +398,33 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
   const degraded: string[] = [];
   const stats: Record<string, number> = {};
 
-  const jobs: { name: string; run: () => Promise<RawSource[]> }[] = [
-    { name: "gdelt", run: () => gdeltSlot(() => fetchGdelt(intent, signal)) },
-    { name: "hn", run: () => fetchHn(intent, signal) },
-    { name: "wiki", run: () => fetchWiki(intent, signal) },
-    { name: "tavily", run: () => fetchTavily(intent, signal) },
-  ];
+  /**
+   * 源不是"全都试一遍"，而是"这个区域允许试哪些"。
+   * 被区域规则拦下的源记 "name:region_blocked" —— 与 name:failed / name:empty 分开，
+   * 因为用户看到的下一步完全不同：前者是"这里本来就不该用"，后者是"上游挂了，等等再看"。
+   */
+  const region = resolvedRegion();
+  const allowed = new Set<RetrievalProvider>(regionPolicy(region).retrieval);
+  const jobs: { name: string; run: () => Promise<RawSource[]> }[] = [];
+
+  const admit = (name: RetrievalProvider, run: () => Promise<RawSource[]>) => {
+    if (allowed.has(name)) {
+      jobs.push({ name, run });
+    } else {
+      degraded.push(name + ":region_blocked");
+    }
+  };
+
+  if (allowed.has("bocha")) {
+    // 没配 key 就别让它跑成一个空结果：那是配置问题，不是"没命中"。
+    if (resolvedBochaKey()) jobs.push({ name: "bocha", run: () => fetchBocha(intent, signal) });
+    else degraded.push("bocha:not_configured");
+  }
+
+  admit("gdelt", () => gdeltSlot(() => fetchGdelt(intent, signal)));
+  admit("hn", () => fetchHn(intent, signal));
+  admit("wiki", () => fetchWiki(intent, signal));
+  admit("tavily", () => fetchTavily(intent, signal));
 
   const settled = await Promise.allSettled(jobs.map((j) => j.run()));
   const out: RawSource[] = [];
@@ -370,13 +445,23 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
   });
 
   // 各 provider 已经带上服务端时间过滤，这里再兜一层：
-  // 有的源（尤其是 Wiki 这种派生条目、Tavily 的 published_date）会忽略参数。
+  // 有的源（尤其是 Wiki 这种派生条目、Tavily 的 basic depth 根本不回日期）会忽略参数。
   const { fromMs, toMs } = windowBounds(intent);
-  const kept = out.filter((s) => inWindow(s.publishedAt, fromMs, toMs));
-  const dropped = out.length - kept.length;
-  if (dropped > 0) stats["window:dropped"] = dropped;
-  const undated = kept.filter((s) => Number.isNaN(Date.parse(s.publishedAt))).length;
-  if (undated > 0) stats["window:undated"] = undated;
+  const part = partitionByWindow(out, fromMs, toMs);
+  const kept = part.kept;
+  const dropped = part.dropped.length;
+  if (dropped > 0) {
+    stats["window:dropped"] = dropped;
+    // 按 provider 分开记：十五件事一起丢，和「gdelt 丢了三条」是两种排查方向。
+    for (const [name, n] of Object.entries(part.droppedByProvider)) {
+      stats["window:dropped:" + name] = n;
+    }
+  }
+  // 没日期的条目保留，但必须说出来：它到底在不在窗口内，我们并不知道。
+  if (part.undated.length > 0) {
+    stats["window:undated"] = part.undated.length;
+    degraded.push("window:undated_" + part.undated.length);
+  }
 
   // 全空或全失败：落 fixture，绝不返回空白页（PRD 附录 B 空态要求）。
   // 注意"窗口内确实没有"和"源挂了"是两件事，分别标明，不混成一条降级。
