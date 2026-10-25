@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CONTACT_EMAIL } from "@/lib/legal/contact";
 import { LegalShell, LegalSection, LegalList } from "@/components/LegalDoc";
 
 /**
@@ -29,7 +30,7 @@ export const metadata: Metadata = {
  */
 
 const UPDATED = "2026-10-25";
-const CONTACT = (process.env.PROBE_CONTACT_EMAIL ?? "").trim();
+const CONTACT = CONTACT_EMAIL;
 
 export default function PrivacyPage() {
   return (
@@ -75,6 +76,12 @@ export default function PrivacyPage() {
             <>
               <span className="text-neutral-300">安全日志</span>：登录与敏感操作会记录 IP 的 SHA-256 哈希
               （不是明文地址）与 User-Agent，用于识别异常登录和展示你的登录设备列表。
+            </>,
+            <>
+              <span className="text-neutral-300">协议确认记录</span>：你点击「同意并继续」时的
+              协议版本号、确认时间、停留时长与网络地址的哈希指纹，保存在服务端本地文件中，
+              用途只有一个 —— 在发生争议时证明你确实被给予了阅读并确认条款的机会。
+              该记录同样只含指纹，不含明文地址。
             </>,
             <>
               <span className="text-neutral-300">检索内容</span>：你输入的查询词，以及据此生成的摘要、
@@ -155,6 +162,10 @@ export default function PrivacyPage() {
           items={[
             <>账号信息：保存到你注销账号，或运营者依约终止服务为止。</>,
             <>审计记录：仅保留最近 2000 条，超出后最早的记录被覆盖。</>,
+            <>
+              协议确认记录：保存两年（或至协议版本被替换后一年），用于举证；单个文件超过 8MB 时
+              只保留最近一轮，不长期归档。
+            </>,
             <>检索缓存：到期即失效，不归档、不用于训练。</>,
             <>反馈文件：保存至运营者归档或删除；写满上限后停止接收而不是无限增长。</>,
             <>

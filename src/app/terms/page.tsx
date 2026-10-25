@@ -1,161 +1,49 @@
 import type { Metadata } from "next";
-import { LegalShell, LegalSection, LegalList } from "@/components/LegalDoc";
+import Link from "next/link";
+
+import { LegalDocView } from "@/lib/legal/render";
+import { TERMS_CN } from "@/lib/legal/terms-cn";
+import { CONSENT_MIN_READ_MS, TERMS_EFFECTIVE, TERMS_VERSION } from "@/lib/legal/version";
 
 /**
  * 这两页必须每次现算：备案号与联系邮箱来自部署时的环境变量。
- * 静态预渲染会在 `next build` 那一刻把它们烤死，运维改完 .env.local 重启后
+ * 静态预渲染会在 \`next build\` 那一刻把它们烤死，运维改完 .env.local 重启后
  * 页面还是旧号 —— 这种「改了没生效」在合规检查里最致命。
+ *
+ * 正文不在这个文件里，在 \`src/lib/legal/terms-cn.ts\`：版本号是正文的哈希，
+ * 正文与哈希必须是同一份数据，改字的地方只有一个。
  */
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "用户协议",
-  description: "使用探针即表示同意以下条款：邀请制账号、AI 生成内容的边界、禁止行为与责任范围。",
+  description:
+    "使用探针前请阅读：服务性质与能力边界、AI 生成内容的核对义务、禁止用途、责任限制与赔偿、中国内地 / 美国 / 新加坡三地的争议解决安排，以及对应的法律依据。",
 };
 
-/**
- * 用户协议。
- *
- * 这份文档的重心不是免责，而是把「这个产品到底是什么」说清楚 ——
- * 探针给出的是带原文链接的整理，不是判决。协议里凡是免责的话，
- * 都在解释同一个机制：模型负责排版与串联，可点开的信源才算证据。
- *
- * 几条必须写死的边界：
- *   1. 邀请制 → 账号不可转让、不可共享，邀请码只存哈希；
- *   2. AI 生成 → 不保证准确，不能作为医疗/法律/投资/安全决策的唯一依据；
- *   3. 禁止行为 → 绕过限流、批量抓取、攻击、把生成结果当权威发布；
- *   4. 管辖 → 运营者所在地有管辖权的人民法院。
- */
-
-const UPDATED = "2026-10-25";
-const CONTACT = (process.env.PROBE_CONTACT_EMAIL ?? "").trim();
+const READ_SECONDS = Math.round(CONSENT_MIN_READ_MS / 1000);
 
 export default function TermsPage() {
+  const ctx = { version: TERMS_VERSION, effective: TERMS_EFFECTIVE, readSeconds: READ_SECONDS };
+
   return (
-    <LegalShell
-      title="用户协议"
-      updated={UPDATED}
-      intro={
-        <p>
-          探针（以下称「本站」）是一个邀请制的检索与核验工具。请在使用前完整阅读本协议：
-          你完成注册、登录或继续使用，即视为已理解并同意全部条款。若不同意，请停止使用。
-        </p>
+    <LegalDocView
+      doc={TERMS_CN}
+      ctx={ctx}
+      meta={
+        <>
+          生效日期 {ctx.effective} · 版本{" "}
+          <span className="font-mono text-neutral-500">{ctx.version}</span>（正文哈希）
+        </>
       }
-    >
-      <LegalSection heading="一、服务内容">
-        <p>
-          本站接收你输入的查询，调用检索服务与人工智能模型，返回摘要、数据面板、信源列表与译文。
-          其中每个数字都附有可点开的原文链接 —— 请以原文为准。本站不生产原始事实，
-          只做收集、结构化与交叉标注。
-        </p>
-      </LegalSection>
-
-      <LegalSection heading="二、账号与邀请">
-        <LegalList
-          items={[
-            <>本站为邀请制。邀请码由运营者发放，一次性使用，服务端仅保存其哈希。</>,
-            <>账号仅限本人使用，不得转让、出租、共享或出售；由此产生的行为视为你本人的行为。</>,
-            <>你应妥善保管密码。发现账号被他人使用时，应立即在「账号」页踢除会话并修改密码。</>,
-            <>为符合网络实名管理要求，运营者可能要求补充身份核验；拒绝提供时可能无法继续使用。</>,
-          ]}
-        />
-      </LegalSection>
-
-      <LegalSection heading="三、AI 生成内容的边界">
-        <p className="text-neutral-300">
-          本站的摘要、面板与译文由模型生成，可能包含错误、过时信息或不完整的推断。
-          它们是「阅读辅助」，不是事实认定，也不是任何形式的专业意见。
-        </p>
-        <LegalList
-          items={[
-            <>不要把生成结果作为医疗、法律、投资、安全或人事决策的唯一依据。</>,
-            <>引用前请点开原始信源核对；标注为「未核验」「存在争议」的断言尤其如此。</>,
-            <>对外发布时请保留 AI 生成标识，不得将模型生成内容冒充为你独立核实的结论。</>,
-            <>模型输出可能与他人作品表述相似，这是统计生成的固有风险，本站不做原创性保证。</>,
-          ]}
-        />
-      </LegalSection>
-
-      <LegalSection heading="四、使用规范">
-        <p>你可以自由检索、阅读、导出自己的结果。以下行为被禁止：</p>
-        <LegalList
-          items={[
-            <>绕过或试图绕过限流、邀请校验、身份校验等访问控制。</>,
-            <>对本站或上游服务发起自动化批量抓取、压测、扫描、注入或拒绝服务攻击。</>,
-            <>利用本站生成、传播违法违规内容，或侵犯他人名誉、隐私、著作权与商业秘密。</>,
-            <>把本站作为对外提供服务的中间层转售（包括包装成 API 或二次分发结果集）。</>,
-            <>多人共用同一账号，或以脚本方式并发使用同一会话。</>,
-          ]}
-        />
-        <p className="text-neutral-500">
-          发现上述行为，运营者可立即限制或终止该账号，无需事先通知；已产生的费用不予退还。
-        </p>
-      </LegalSection>
-
-      <LegalSection heading="五、你的内容与我们的内容">
-        <LegalList
-          items={[
-            <>
-              你提交的查询与反馈仍归你所有。为提供服务，你授权我们在必要范围内存储、缓存、
-              发送给第三方模型与检索服务进行处理（详见《隐私政策》）。
-            </>,
-            <>
-              本站的界面、代码、结构化面板样式与产品设计归运营者所有；未经许可不得复制、
-              镜像或用于商业用途。
-            </>,
-            <>检索结果中的原始内容版权归各原站与作者所有，本站仅提供指向与摘录。</>,
-          ]}
-        />
-      </LegalSection>
-
-      <LegalSection heading="六、服务的变更、中断与终止">
-        <LegalList
-          items={[
-            <>本站可能随时调整功能、模型或检索源，也可能因维护、上游故障、合规要求而中断。</>,
-            <>本站按「现状」提供，不承诺可用性、连续性或无差错。</>,
-            <>你可以随时停止使用并要求注销账号；运营者也可在提前公告后停止全部或部分服务。</>,
-          ]}
-        />
-      </LegalSection>
-
-      <LegalSection heading="七、费用">
-        <p>
-          当前测试期内本站免费。未来若引入付费，会在站内提前公告并明确计费方式；
-          你未主动订购即不产生费用。免费期不构成今后免费的承诺。
-        </p>
-      </LegalSection>
-
-      <LegalSection heading="八、责任限制">
-        <p>
-          在法律允许的最大范围内，运营者对因使用或无法使用本站而产生的间接损失、
-          利润损失、数据损失不承担责任；就本站服务向你所负的赔偿责任总额，
-          不超过你在争议发生前十二个月内为本站实际支付的费用（免费期则为零）。
-          本条款不排除法律强制规定不得排除的责任。
-        </p>
-      </LegalSection>
-
-      <LegalSection heading="九、协议的变更与适用法律">
-        <p>
-          本协议可能随功能与法规变化而更新，更新后在本页公布并标注生效日期；
-          重大变更会在站内公告。继续使用即视为接受新版本。
-          本协议适用中华人民共和国法律（不含港澳台地区法律）；争议由运营者所在地
-          有管辖权的人民法院管辖。
-        </p>
-      </LegalSection>
-
-      <LegalSection heading="十、联系我们">
-        <p>
-          关于本协议的问题，可发至
-          {CONTACT ? (
-            <a className="text-blue-500 hover:underline" href={`mailto:${CONTACT}`}>
-              {CONTACT}
-            </a>
-          ) : (
-            <span className="text-neutral-500">运营者邮箱（部署方需配置 PROBE_CONTACT_EMAIL）</span>
-          )}
-          。我们会在 15 个工作日内答复。
-        </p>
-      </LegalSection>
-    </LegalShell>
+      actions={
+        <Link
+          href="/terms/en"
+          className="shrink-0 rounded border border-neutral-700 px-2.5 py-1 font-mono text-[10px] text-neutral-300 transition-colors hover:border-neutral-500 hover:text-white"
+        >
+          English
+        </Link>
+      }
+    />
   );
 }

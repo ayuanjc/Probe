@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { OPERATOR_NAME } from "@/lib/legal/contact";
+
 /**
  * 全站页脚：备案信息位 + 合规入口。
  *
@@ -23,7 +25,7 @@ import Link from "next/link";
 
 const ICP = (process.env.PROBE_ICP_LICENSE ?? "").trim();
 const POLICE = (process.env.PROBE_POLICE_LICENSE ?? "").trim();
-const OPERATOR = (process.env.PROBE_OPERATOR_NAME ?? "").trim();
+const OPERATOR = OPERATOR_NAME;
 
 /** 生产环境留空就不渲染；本地开发给一行提示，避免“以为已经配好了”。 */
 const IS_DEV = process.env.NODE_ENV !== "production";

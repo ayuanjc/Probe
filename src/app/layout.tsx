@@ -1,10 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { cookies } from "next/headers";
 import "./globals.css";
 import SessionBar from "@/components/SessionBar";
 import UpdateBanner from "@/components/UpdateBanner";
 import SiteFooter from "@/components/SiteFooter";
+import ConsentGate from "@/components/ConsentGate";
 import { BASE_PATH } from "@/lib/base-path";
+import { CONSENT_COOKIE, consentIsCurrent, parseConsentCookie } from "@/lib/consent";
+import { TERMS_VERSION } from "@/lib/legal/version";
 
 /**
  * 分享卡上的绝对地址从哪来：NEXT_PUBLIC_ 前缀会在构建期被内联，这里要的是部署时再定，
@@ -54,7 +58,17 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  /**
+   * 同意状态在**服务端**判一次再交给客户端：弹层一旦由客户端挂载后才判断，
+   * 已同意的用户每次进站都会先看到一帧遮罩再消失，像在闪。
+   *
+   * 副作用是 layout 依赖 cookies() → 全站动态渲染。这里无所谓：所有页面本来就
+   * 是 force-dynamic（登录态、邀请码、备案号都得现算），本来也没有可缓存的静态页。
+   */
+  const jar = await cookies();
+  const consent = parseConsentCookie(jar.get(CONSENT_COOKIE)?.value);
+
   return (
     <html lang="zh-CN">
       <body>
@@ -63,6 +77,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <UpdateBanner />
         {/* 法律信息（备案号 / 隐私政策 / 用户协议）挂在 layout，每一页都在；产品页脚仍在 Workspace 里。 */}
         <SiteFooter />
+        {/* 协议确认层放最后：它要盖住上面所有东西，包括右下角的会话胶囊。 */}
+        <ConsentGate initiallyAccepted={consentIsCurrent(consent, TERMS_VERSION)} version={TERMS_VERSION} />
       </body>
     </html>
   );

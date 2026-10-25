@@ -33,6 +33,7 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
 | `/opt/probe/app/.cache/feedback.jsonl` | 页脚反馈，一行一条（`.cache` 不在自动更新的覆盖范围内） |
 | `/opt/probe/app/.data/auth/store.json` | **授权数据**：用户 / 会话 / 邀请码的哈希 + 审计（0600，同理不在更新覆盖范围内 —— 更新不会删它） |
+| `/opt/probe/app/.data/consent/consent.log` | **协议确认记录**：一行一次确认（版本 / 时间 / 停留时长 / 地址哈希，不含明文 IP）。改用户协议后旧同意失效，这里就是举证材料；备份时与 store.json 一起拷 |
 
 ## 环境变量（`/opt/probe/probe.env`）
 
