@@ -65,6 +65,12 @@ export type OpsReport = {
     contact: string | null;
   };
   guards: { authMode: string };
+  /** 最近的服务端错误（进程内存环）：运维先看这里，再决定要不要 ssh 翻 journald。 */
+  errors: {
+    total: number;
+    byCode: { code: string; count: number }[];
+    recent: { at: number; scope: string; status: number; code: string; message: string }[];
+  };
 };
 
 function clampRatio(used: number, cap: number): number {
@@ -99,6 +105,8 @@ export function buildOpsReport(input: {
   retrieval: RetrievalRow[];
   site: OpsReport["site"];
   guards: { authMode: string };
+  /** 可省略：老调用方（测试）不传时面板显示「还没有错误」，不报错。 */
+  errors?: OpsReport["errors"];
 }): OpsReport {
   const globalCap = safeCount(input.quota.globalCap);
   const globalUsed = safeCount(input.quota.globalUsed);
@@ -136,6 +144,25 @@ export function buildOpsReport(input: {
     })
     .sort((a, b) => b.used - a.used || a.username.localeCompare(b.username));
 
+  // 错误账本整段原样透传，但把形状夹一遍：面板不该因为一条脏数据 500。
+  const errors = {
+    total: safeCount(input.errors?.total),
+    byCode: (input.errors?.byCode ?? [])
+      .filter((r) => r && typeof r.code === "string")
+      .map((r) => ({ code: r.code.slice(0, 40), count: safeCount(r.count) }))
+      .slice(0, 20),
+    recent: (input.errors?.recent ?? [])
+      .filter((r) => r && typeof r.code === "string")
+      .slice(0, 40)
+      .map((r) => ({
+        at: Number.isFinite(r.at) ? r.at : 0,
+        scope: typeof r.scope === "string" ? r.scope.slice(0, 60) : "无主",
+        status: safeCount(r.status) || 500,
+        code: r.code.slice(0, 40),
+        message: typeof r.message === "string" ? r.message.slice(0, 300) : "",
+      })),
+  };
+
   return {
     at: input.now,
     day: input.day,
@@ -157,6 +184,7 @@ export function buildOpsReport(input: {
     model: input.model,
     region: { ...input.region, retrieval: [...input.region.retrieval] },
     retrieval: input.retrieval,
+    errors,
     site: input.site,
     guards: input.guards,
   };

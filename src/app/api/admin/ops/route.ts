@@ -26,6 +26,7 @@ import {
   scopeBudgetSnapshot,
   setQuotaLimits,
 } from "@/lib/llm";
+import { errorCounters, errorTotal, recentErrors } from "@/lib/error-log";
 import { buildOpsReport, type RetrievalRow } from "@/lib/ops-report";
 
 export const runtime = "nodejs";
@@ -152,6 +153,8 @@ async function snapshot(request: Request) {
         contact: envOrNull("PROBE_CONTACT_EMAIL"),
       },
       guards: { authMode: authMode() },
+      // 错误账本是进程内存环：这里不做二次聚合，交给 buildOpsReport 夹形状。
+      errors: { total: errorTotal(), byCode: errorCounters(), recent: recentErrors(40) },
     });
   });
 }

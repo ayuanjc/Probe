@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { currentCallScope } from "./call-scope";
+import { recordError } from "./error-log";
 import { readPositiveInt } from "./rate-limit";
 
 /**
@@ -161,6 +163,16 @@ export function jsonError(
   message: string,
   headers: Record<string, string> = {},
 ): Response {
+  // 5xx 顺手记一条到进程内的错误账本：客户端只看到公共文案，
+  // 真正要修的人（运维/我）能在后台「设置」页看到「最近哪一类错误在冒」，不用先 ssh grep journald。
+  // 只记文案，不记原始异常 —— 否则密钥、内网地址会顺着面板漏出去。
+  if (status >= 500) {
+    try {
+      recordError({ status, code, message, scope: currentCallScope()?.label ?? null });
+    } catch {
+      // 记账失败不能影响响应本身
+    }
+  }
   return new Response(JSON.stringify({ ok: false, code, message }), {
     status,
     headers: {

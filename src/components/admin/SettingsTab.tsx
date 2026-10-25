@@ -11,6 +11,10 @@ import {
   emptyClass,
   inputClass,
   labelClass,
+  rowClass,
+  tableHeadClass,
+  thClass,
+  time,
   type Notice,
   type PublicUser,
 } from "./shared";
@@ -255,7 +259,7 @@ export default function SettingsTab({
 
 /** 只读的那一半：全是进程启动时读到的环境变量。 */
 function ReadOnly({ report, copied, onCopy }: { report: OpsReport; copied: boolean; onCopy: () => void }) {
-  const { site, model, region, retrieval, guards, quota, at } = report;
+  const { site, model, region, retrieval, guards, quota, errors, at } = report;
   return (
     <>
       <div className={cardClass}>
@@ -377,6 +381,48 @@ function ReadOnly({ report, copied, onCopy }: { report: OpsReport; copied: boole
             鉴权不是 on：任何能访问端口的人都是管理员。生产环境请设回 on。
           </p>
         ) : null}
+      </div>
+      <div className={cardClass}>
+        <h3 className="text-xs font-semibold text-white">最近的错误（进程内存）</h3>
+        <p className="mt-1 max-w-[76ch] text-[11px] leading-relaxed text-neutral-500">
+          只记 5xx，且只记回给客户端的那句公共文案 —— 上游原话里可能带内部地址、模型名、响应体片段，
+          不进这里。环里留最近 200 条，进程重启归零；要找更早的只能
+          <code className="mx-1 text-neutral-400">journalctl -u probe-web -n 200</code>。
+        </p>
+        {errors.recent.length === 0 ? (
+          <p className={emptyClass + " mt-2"}>还没有记到 5xx。这不等于是没出过问题 —— 也可能只是刚重启过。</p>
+        ) : (
+          <>
+            <p className="mt-2 font-mono text-[10px] text-neutral-500">
+              启动以来共 {errors.total} 条
+              {errors.byCode.length > 0
+                ? " · " + errors.byCode.slice(0, 4).map((c) => c.code + "×" + c.count).join("、")
+                : ""}
+            </p>
+            <table className="mt-2 w-full border-collapse text-left text-[11px]">
+              <thead className={tableHeadClass}>
+                <tr>
+                  <th className={thClass}>时间</th>
+                  <th className={thClass}>归属</th>
+                  <th className={thClass}>状态</th>
+                  <th className={thClass}>code</th>
+                  <th className={thClass + " w-[46%]"}>文案</th>
+                </tr>
+              </thead>
+              <tbody>
+                {errors.recent.map((e, i) => (
+                  <tr key={e.at + ":" + i} className={rowClass}>
+                    <td className="py-1.5 pr-2 font-mono text-[10px] text-neutral-500">{time(e.at)}</td>
+                    <td className="py-1.5 pr-2 text-neutral-400">{e.scope}</td>
+                    <td className="py-1.5 pr-2 font-mono tabular-nums text-red-400/80">{e.status}</td>
+                    <td className="py-1.5 pr-2 font-mono text-[10px] text-neutral-400">{e.code}</td>
+                    <td className="py-1.5 pr-2 text-neutral-500">{e.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </div>
     </>
   );
