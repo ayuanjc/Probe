@@ -1,22 +1,26 @@
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
-import { hashPassword, newSecretToken, normalizeUsername, passwordProblem } from "@/lib/auth/crypto";
 import {
-  AuthStoreError,
-  audit,
-  createUser,
-  deleteUser,
-  listUsers,
-  updateUser,
-  type Role,
-  type UserStatus,
-} from "@/lib/auth/store";
+  AccountError,
+  accountError,
+  createAccount,
+  deleteAccount,
+  listAccounts,
+  updateAccount,
+} from "@/lib/auth/account";
+import type { Role, UserStatus } from "@/lib/auth/store";
 import { requireAdmin } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** 后台用户管理。全部要求 admin，动手前后各写一条审计。 */
+/**
+ * 后台用户管理。全部要求 admin。
+ *
+ * 这层只做四件事：鉴权、限流、解析 JSON、把 AccountError 翻成 HTTP。
+ * 业务规则（用户名/密码校验、随机初始密码、强制改密、last_admin 保护、审计）
+ * 全在 src/lib/auth/account.ts —— 那里才有测试，路由里不要再写第二份。
+ */
 const perClient = createLimiter({
   name: "admin-users",
   limit: readPositiveInt("PROBE_ADMIN_RATE_PER_MIN", 60),
@@ -31,21 +35,27 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function storeError(err: unknown): Response | null {
-  if (!(err instanceof AuthStoreError)) return null;
-  const map: Record<string, [number, string]> = {
-    not_found: [404, "用户不存在。"],
-    duplicate_username: [409, "用户名已被占用。"],
-    last_admin: [409, "这是最后一个可用的管理员，这个操作会把自己锁在门外。"],
-    store_corrupt: [503, "授权数据文件损坏，请检查服务端日志。"],
-  };
-  const hit = map[err.code];
-  return hit ? json({ ok: false, error: err.code, message: hit[1] }, hit[0]) : null;
+/** 统一的失败出口：code + message + 状态码都从 account.ts 来。 */
+function fail(err: unknown, fallback: string): Response {
+  const mapped = accountError(err, publicMessage(err, fallback));
+  return json({ ok: false, error: mapped.code, message: mapped.message }, mapped.status);
 }
 
 function gate(request: Request): Response | null {
   const per = perClient.check(clientKey(request));
-  if (!per.ok) return json({ ok: false, error: "rate_limited", message: "操作过于频繁，请稍后再试。" }, 429);
+  if (!per.ok) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "rate_limited", message: "操作过于频繁，请稍后再试。" }),
+      {
+        status: 429,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "retry-after": String(per.retryAfterSeconds),
+        },
+      },
+    );
+  }
   return null;
 }
 
@@ -55,9 +65,10 @@ export async function GET(request: Request) {
   const limited = gate(request);
   if (limited) return limited;
   try {
-    return json({ ok: true, users: await listUsers() });
+    const users = await listAccounts();
+    return json({ ok: true, users });
   } catch (err) {
-    return json({ ok: false, error: "internal", message: publicMessage(err, "读取用户列表失败。") }, 500);
+    return fail(err, "读取用户列表失败。");
   }
 }
 
@@ -74,44 +85,19 @@ export async function POST(request: Request) {
     | { username?: unknown; role?: unknown; password?: unknown; note?: unknown }
     | null;
 
-  const username = normalizeUsername(typeof body?.username === "string" ? body.username : "");
-  if (!username) {
-    return json({ ok: false, error: "bad_username", message: "用户名只能用 3-32 位小写字母、数字、点、下划线或连字符。" }, 400);
-  }
-  const role: Role = body?.role === "admin" ? "admin" : "member";
-  const note = typeof body?.note === "string" ? body.note.slice(0, 200) : "";
-
-  // 没填密码就生成一个 —— 后台"添加测试用户"最常见的用法，别逼管理员现编。
-  const given = typeof body?.password === "string" ? body.password : "";
-  const generated = given ? null : newSecretToken(12);
-  const password = given || generated || "";
-  const problem = passwordProblem(password, username);
-  if (problem) {
-    return json({ ok: false, error: "bad_password", message: generated ? `生成的密码不合规：${problem}` : problem }, 400);
-  }
-
   try {
-    const user = await createUser({
-      username,
-      passwordHash: await hashPassword(password),
-      role,
-      createdBy: auth.user.username,
-      note,
-      mustChangePassword: true,
-    });
-    await audit({
+    const { user, generatedPassword } = await createAccount({
       actor: auth.user.username,
-      action: "user_created",
-      target: user.username,
-      detail: `role=${user.role}`,
       ip: clientKey(request),
+      username: typeof body?.username === "string" ? body.username : "",
+      role: body?.role === "admin" ? "admin" : "member",
+      note: typeof body?.note === "string" ? body.note : "",
+      password: typeof body?.password === "string" ? body.password : undefined,
     });
-    const { passwordHash: _drop, ...safe } = user;
-    void _drop;
     // 明文密码只在这一次响应里出现，之后库里只剩 scrypt 哈希。
-    return json({ ok: true, user: safe, password: generated ? password : undefined }, 201);
+    return json({ ok: true, user, password: generatedPassword }, 201);
   } catch (err) {
-    return storeError(err) ?? json({ ok: false, error: "internal", message: publicMessage(err, "创建用户失败。") }, 500);
+    return fail(err, "创建用户失败。");
   }
 }
 
@@ -125,48 +111,37 @@ export async function PATCH(request: Request) {
   const parsed = await readJsonBody(request, MAX_BODY_BYTES);
   if (!parsed.ok) return json({ ok: false, error: parsed.code, message: parsed.message }, parsed.status);
   const body = parsed.value as
-    | { id?: unknown; role?: unknown; status?: unknown; note?: unknown; newPassword?: unknown }
+    | {
+        id?: unknown;
+        role?: unknown;
+        status?: unknown;
+        note?: unknown;
+        newPassword?: unknown;
+        mustChangePassword?: unknown;
+      }
     | null;
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id) return json({ ok: false, error: "missing_id", message: "缺少用户 id。" }, 400);
 
-  const patch: {
-    role?: Role;
-    status?: UserStatus;
-    note?: string;
-    passwordHash?: string;
-    mustChangePassword?: boolean;
-  } = {};
-  if (body?.role === "admin" || body?.role === "member") patch.role = body.role;
-  if (body?.status === "active" || body?.status === "disabled") patch.status = body.status;
-  if (typeof body?.note === "string") patch.note = body.note;
-
-  const newPassword = typeof body?.newPassword === "string" ? body.newPassword : "";
-  if (newPassword) {
-    const problem = passwordProblem(newPassword);
-    if (problem) return json({ ok: false, error: "bad_password", message: problem }, 400);
-    patch.passwordHash = await hashPassword(newPassword);
-    // 管理员重置的密码要求本人登录后改掉。
-    patch.mustChangePassword = true;
-  }
-  if (Object.keys(patch).length === 0) {
-    return json({ ok: false, error: "nothing_to_change", message: "没有需要修改的字段。" }, 400);
-  }
-
   try {
-    const user = await updateUser(id, patch);
-    await audit({
+    const { user, changed } = await updateAccount({
       actor: auth.user.username,
-      action: "user_updated",
-      target: user.username,
-      detail: Object.keys(patch).join(","),
       ip: clientKey(request),
+      id,
+      role: body?.role === "admin" || body?.role === "member" ? (body.role as Role) : undefined,
+      status:
+        body?.status === "active" || body?.status === "disabled" ? (body.status as UserStatus) : undefined,
+      note: typeof body?.note === "string" ? body.note : undefined,
+      newPassword: typeof body?.newPassword === "string" ? body.newPassword : undefined,
+      mustChangePassword:
+        typeof body?.mustChangePassword === "boolean" ? body.mustChangePassword : undefined,
     });
-    const { passwordHash: _drop, ...safe } = user;
-    void _drop;
-    return json({ ok: true, user: safe });
+    return json({ ok: true, user, changed });
   } catch (err) {
-    return storeError(err) ?? json({ ok: false, error: "internal", message: publicMessage(err, "更新用户失败。") }, 500);
+    if (err instanceof AccountError && err.code === "not_found") {
+      return json({ ok: false, error: "not_found", message: "用户不存在。" }, 404);
+    }
+    return fail(err, "更新用户失败。");
   }
 }
 
@@ -179,14 +154,11 @@ export async function DELETE(request: Request) {
 
   const id = new URL(request.url).searchParams.get("id") ?? "";
   if (!id) return json({ ok: false, error: "missing_id", message: "缺少用户 id。" }, 400);
-  if (id === auth.user.id) {
-    return json({ ok: false, error: "self_delete", message: "不能删除当前登录的自己。" }, 400);
-  }
+
   try {
-    await deleteUser(id);
-    await audit({ actor: auth.user.username, action: "user_deleted", target: id, ip: clientKey(request) });
+    await deleteAccount({ actor: auth.user.username, ip: clientKey(request), selfId: auth.user.id, id });
     return json({ ok: true });
   } catch (err) {
-    return storeError(err) ?? json({ ok: false, error: "internal", message: publicMessage(err, "删除用户失败。") }, 500);
+    return fail(err, "删除用户失败。");
   }
 }

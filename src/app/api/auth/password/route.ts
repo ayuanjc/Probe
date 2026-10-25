@@ -1,7 +1,7 @@
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
-import { hashAddress, hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/crypto";
-import { audit, updateUser } from "@/lib/auth/store";
+import { hashAddress } from "@/lib/auth/crypto";
+import { AccountError, accountError, changeOwnPassword } from "@/lib/auth/account";
 import { issueSession } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth/guard";
 
@@ -9,9 +9,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * 改密码。改完必须换一枚新 cookie：
- * updateUser 会把该用户的**全部**会话撤销（这是"改密码就该踢掉其他设备"的正确行为），
- * 包括当前这枚 —— 所以紧接着要重新签发，否则用户改完密码就被自己踢出登录。
+ * 改密码。
+ *
+ * 语义细节（当前密码校验、与旧密码相同要拒、密码规则）在 changeOwnPassword 里。
+ * 这里必须记住的一件事：updateUser 改密时会撤销该用户**全部**会话，
+ * 所以紧接着要重新签发一枚 cookie，否则用户改完密码就被自己踢出去了。
  */
 const perClient = createLimiter({
   name: "auth-password",
@@ -51,27 +53,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    if (!(await verifyPassword(current, gate.user.passwordHash))) {
-      await audit({ actor: gate.user.username, action: "password_failed", ip });
-      return json({ ok: false, error: "bad_credentials", message: "当前密码不正确。" }, 401);
-    }
-    const problem = passwordProblem(next, gate.user.username);
-    if (problem) return json({ ok: false, error: "bad_password", message: problem }, 400);
-    if (await verifyPassword(next, gate.user.passwordHash)) {
-      return json({ ok: false, error: "same_password", message: "新密码不能和当前密码相同。" }, 400);
-    }
-
-    const updated = await updateUser(gate.user.id, {
-      passwordHash: await hashPassword(next),
-      mustChangePassword: false,
-    });
+    const updated = await changeOwnPassword({ user: gate.user, current, next, ip });
     const session = await issueSession(updated.id, request, {
       ipHash: hashAddress(ip),
       userAgent: request.headers.get("user-agent") ?? "",
     });
-    await audit({ actor: updated.username, action: "password_changed", target: updated.username, ip });
     return json({ ok: true }, 200, { "set-cookie": session.cookie });
   } catch (err) {
+    if (err instanceof AccountError) {
+      const mapped = accountError(err, "");
+      return json({ ok: false, error: mapped.code, message: mapped.message }, mapped.status);
+    }
     return json({ ok: false, error: "internal", message: publicMessage(err, "修改密码失败，请稍后重试。") }, 500);
   }
 }

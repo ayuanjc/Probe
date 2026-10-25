@@ -180,6 +180,10 @@ X-Permitted-Cross-Domain-Policies: none
 - **会话可服务端撤销**：退出、停用用户、改密码都会 `revokeUserSessions`。
   只清 cookie 等于没退（token 在有效期内仍能用）。改密码后会给当前设备重新签发一枚，
   否则用户改完密码把自己踢出去。
+- **会话列表只出不可逆指纹**：`PublicSession` 不含 `tokenHash` —— 会话 token 存的是无盐
+  SHA-256，拿到哈希就能自己比对，等同凭据。IP 也只出 `hashAddress` 前 8 位。
+  撤销单台会话必须带 `userId`（`revokeSessionOfUser`），否则管理员能拿别处的 session id
+  跨用户踢人。
 - **最后一个可用管理员不能被降级 / 停用 / 删除**（`last_admin`）。一次误点就把自己锁在
   后台门外，界面上没有任何补救入口（只能上 `npm run auth`）。
 - **存储解析失败即 `store_corrupt`，绝不回退空库**：回退空库会让 bootstrap 重新种管理员，
@@ -267,8 +271,11 @@ curl -s $B/api/metrics | head -c 200
 
 ## 五、自动化测试
 
-`tests/security.test.ts` 与 `tests/auth.test.ts`（`npm test`，共 167 个用例全绿）覆盖上面每一层。
-下面是安全层的部分，授权层（scrypt 参数上限、脏哈希、`last_admin`、邀请码两阶段、会话撤销、`store_corrupt`、CLI 哈希互认）见 `tests/auth.test.ts`：
+`tests/security.test.ts`、`tests/auth.test.ts`、`tests/account.test.ts`
+（`npm test`，共 **204** 个用例全绿）覆盖上面每一层。下面是安全层的部分；
+授权层（scrypt 参数上限、脏哈希、`last_admin`、邀请码两阶段、会话撤销、`store_corrupt`、
+CLI 哈希互认）见 `tests/auth.test.ts`，账号服务层（一次性密码、改密后旧会话全失效、
+跨用户踢会话、错误码映射）见 `tests/account.test.ts`：
 
 - `readPositiveInt` 的六种非法值全部回落默认值（`NaN` 静默关限流的回归测试）
 - 限流窗口刷新、键表 `maxKeys` 上限（灌 5000 个键后 `size() <= 32`）

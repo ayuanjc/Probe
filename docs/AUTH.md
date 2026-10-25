@@ -30,20 +30,32 @@
 src/lib/auth/
   crypto.ts   密码/令牌/地址的哈希、密码策略、用户名规范化   —— 全站唯一实现
   store.ts    store.json 的读写（串行化 + 原子落盘）、用户/邀请/会话/审计的增删改查
-  session.ts  cookie 的签发与解析（名字、Path、Ttl、Secure 判定）
+  account.ts  账号业务层：建号 / 改号 / 删号 / 注册 / 改密 / 设备管理 —— 判定都在这
+  session.ts  cookie 的签发与解析（名字、Path、Ttl、Secure 判定、当前会话 id）
   guard.ts    闸门：requireUser / requireAdmin / requirePageUser / requirePageAdmin
 src/app/api/auth/
-  login  logout  signup  me  password
+  login  logout  signup  me  password  sessions
 src/app/api/admin/
-  users  invites  audit
+  users  invites  audit  sessions
 src/app/
   login/  signup/  account/  <ADMIN_PATH>/  ← 后台目录名 = src/lib/admin-path.ts 里的 ADMIN_PATH
 src/components/
   AuthPanels.tsx   LoginPanel / SignupPanel / ChangePasswordPanel
-  AdminConsole.tsx 用户 / 邀请码 / 审计 三个页签
+  AccountSessions.tsx 账号页的「登录设备」卡片
+  admin/          后台拆分：AdminConsole（外壳）+ UsersTab / InvitesTab / AuditTab / SessionsDrawer / shared
   SessionBar.tsx   右下角身份条（谁登录着、退出、进后台）
 scripts/auth-cli.mjs  命令行运维（服务起不来时的最后一条路）
 ```
+
+### 分层：路由是薄壳，判定在 account.ts
+
+`/api/admin/*`、`/api/auth/{signup,password}` 只做五件事：跨站闸、限流、读 body、
+调 `account.ts` 里的一个函数、把 `AccountError` 翻成状态码。**别把业务判定写回路由里** ——
+之前「后台建的号要不要强制改密」「注册失败要不要吃掉邀请码名额」被抄成四份，改漏了两份。
+
+`account.ts` 里的 `storeError()` 负责把 store 抛的 `AuthStoreError`（重名、最后一个管理员、
+坏库、邀请码用完）就地翻成 `AccountError`，所以上层只处理一种错误类型。
+错误码 → 状态码 / 中文文案只有一张表（`STATUS` / `MESSAGE`），加新错误码时一起加。
 
 ### basePath 铁律（真的踩过）
 
@@ -125,7 +137,18 @@ npm run auth -- create-admin admin        # 不给 --password 就随机生成并
 
 ## 5. 发号与开户
 
-登录后台 `/ayuanjc`（**不叫 /admin**，只有 `role=admin` 能进）：
+登录后台 `/ayuanjc`（**不叫 /admin**，只有 `role=admin` 能进）。三个页签：
+
+| 页签 | 能做什么 |
+| --- | --- |
+| 用户 | 搜索（用户名/备注）+ 筛选（全部/管理员/待改密/已停用）、建号、停用·启用、升降角色、行内重置密码、删除、点「N 台」看该用户的登录设备 |
+| 邀请码 | 生成（备注/次数/有效小时/角色）、复制注册链接、按状态筛选、撤销 |
+| 审计 | 关键词过滤 + 分组（全部/登录/用户/邀请码/会话/可疑） |
+
+两个和界面有关的小约定：「＋添加用户」留空密码就自动生成，明文只在响应里出现一次；
+邀请码的**注册链接也只能在刚生成时复制** —— 库里只有 SHA-256，事后谁都拼不出来。
+
+邀请码怎么发、怎么用：
 
 1. **邀请码页签** → 填备注 / 可用次数 / 有效小时（≤0 = 永久）→ 生成。
    明文码**只显示这一次**，刷新就没了（库里只有 SHA-256）。
@@ -161,6 +184,29 @@ npm run auth -- rm-user test-01
 - 停用用户 / 改密码时，该用户**全部**会话立即撤销。改密码后当前设备会被重新签发一枚，
   否则用户改完密码就把自己踢出去了（`src/app/api/auth/password/route.ts` 里的顺序很关键）。
 
+### 6.1 登录设备（谁能看到、能踢谁）
+
+| 端点 | 谁可调 | 行为 |
+| --- | --- | --- |
+| `GET /api/auth/sessions` | 登录用户 | 自己的设备列表 + `currentSessionId` |
+| `DELETE /api/auth/sessions?id=S` | 登录用户 | 撤销自己的一枚；撤到当前那枚就等于退出 |
+| `DELETE /api/auth/sessions?others=1` | 登录用户 | 保留当前，撤销其余全部 |
+| `GET /api/admin/sessions?userId=` | 仅管理员 | 看某个用户的设备 |
+| `DELETE /api/admin/sessions?userId=&id=S` | 仅管理员 | 踢掉该用户的某台设备 |
+| `DELETE /api/admin/sessions?userId=&all=1` | 仅管理员 | 踢掉该用户的全部设备 |
+
+三条硬性约束，改这块代码时别松开：
+
+1. **对外视图里没有 `tokenHash`**。会话 token 是 256 位随机值，但存的是无盐 SHA-256 ——
+   拿到哈希就能自己比对，等同凭据。`PublicSession` 只出 `id / ipHash / userAgent / live`。
+2. **`revokeSessionOfUser(userId, sessionId)` 必须带 userId**。少这个参数，管理员就能拿
+   别处看来的 session id 跨用户踢人。
+3. **IP 只露指纹前 8 位**（`hashAddress` 不可逆）。登录设备页面上写的是
+   `IP 指纹 e791d9dc`，不是地址本身。
+
+撤销走的是服务端：被踢的下一次请求就 401（`findSessionByToken` 看到 `revoked`），
+不需要等 cookie 过期。
+
 ---
 
 ## 7. 防滥用
@@ -170,6 +216,7 @@ npm run auth -- rm-user test-01
 | `/api/auth/login` | 5 | `PROBE_LOGIN_RATE_PER_MIN` |
 | `/api/auth/signup` | 3 | `PROBE_SIGNUP_RATE_PER_MIN` |
 | `/api/auth/password` | 5 | `PROBE_PASSWORD_RATE_PER_MIN` |
+| `/api/auth/sessions` | 30 | `PROBE_SESSION_RATE_PER_MIN` |
 | `/api/admin/*` | 60 | `PROBE_ADMIN_RATE_PER_MIN` |
 
 另外三条细节：
@@ -268,6 +315,8 @@ PROBE_AUTH_MODE=off
 - **限流在进程内存里**：重启清零，多进程不共享。写进 nginx 的 `limit_req` 才是硬的那一道。
 - **审计只记管理动作与登录**，不是全量访问日志（全量在 nginx 里）。
 - **`usage.calls` 是近似的**：每 5 秒合并落盘一次，别拿它当计费依据。
+- **会话列表里没有「位置/城市」**：只有 IP 的不可逆指纹，看不出这是哪台设备（UA 可伪造）。
+  它的用途是「发现多出一台不认识的会话就踢掉」，不是审计取证。
 - **store.json 无加密**：它是 0600 的明文 JSON，谁有 shell 谁就能改。
   这跟「有 root 就能改数据库」是一个层级的信任假设。
 

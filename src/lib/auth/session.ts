@@ -74,6 +74,15 @@ export async function resolveSessionFromRequest(request: Request): Promise<Sessi
   return findSessionByToken(token);
 }
 
+/**
+ * 当前请求用的是哪一枚会话（设备列表要标「这一台」）。
+ * 只读判定，不刷新 lastSeenAt —— 列表页不该让会话看起来"刚活跃"。
+ */
+export async function currentSessionId(request: Request): Promise<string | null> {
+  const found = await resolveSessionFromRequest(request);
+  return found && found.ok ? found.session.id : null;
+}
+
 export async function issueSession(
   userId: string,
   request: Request,

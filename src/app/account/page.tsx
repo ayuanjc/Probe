@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import ProbeLogo from "@/components/ProbeLogo";
+import AccountSessions from "@/components/AccountSessions";
 import { ChangePasswordPanel } from "@/components/AuthPanels";
 import { requirePageUser } from "@/lib/auth/guard";
 
 /**
- * 个人页：目前只有改密码。
+ * 个人页：改密码 + 登录设备。
  * 首登被强制改密的用户（mustChangePassword）也会从这里走一次。
  */
 export const dynamic = "force-dynamic";
@@ -38,6 +39,14 @@ export default async function AccountPage() {
           </p>
         )}
         <ChangePasswordPanel />
+      </div>
+
+      <div className="rounded-md border border-neutral-800 bg-[#0f0f0f] p-5">
+        <h2 className="mb-1 text-[15px] font-semibold text-white">登录设备</h2>
+        <p className="mb-4 text-[12px] leading-relaxed text-neutral-500">
+          改密码会同步撤销全部设备；换机器、借人用过之后可以单独踢掉。
+        </p>
+        <AccountSessions />
       </div>
 
       <nav className="text-center font-mono text-[11px] text-neutral-600">

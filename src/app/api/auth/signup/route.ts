@@ -1,7 +1,8 @@
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
-import { hashAddress, hashPassword, normalizeUsername, passwordProblem } from "@/lib/auth/crypto";
-import { audit, checkInvite, commitInviteUse, createUser, findUserByUsername, markLogin } from "@/lib/auth/store";
+import { hashAddress } from "@/lib/auth/crypto";
+import { markLogin, checkInvite } from "@/lib/auth/store";
+import { AccountError, accountError, registerWithInvite } from "@/lib/auth/account";
 import { issueSession } from "@/lib/auth/session";
 import { authMode, ensureBootstrap } from "@/lib/auth/guard";
 
@@ -10,8 +11,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * 邀请码注册。
- * 顺序很重要：**先建用户、后记名额**。反过来一旦建号失败（用户名撞了、密码不合规），
- * 邀请码就白吃一次 —— 那是管理员要重新发一个码才能补救的事故。
+ *
+ * "先建用户、后记名额"这条顺序、用户名与密码的校验、被撤销/过期/用完的文案，
+ * 都在 src/lib/auth/account.ts 的 registerWithInvite 里（那里有测试）。
+ * 这里只做：跨站闸、限流、解析、签发会话。
  */
 const perClient = createLimiter({
   name: "auth-signup",
@@ -19,13 +22,6 @@ const perClient = createLimiter({
 });
 
 const MAX_BODY_BYTES = 4_000;
-
-const INVITE_MESSAGE: Record<string, string> = {
-  not_found: "邀请码无效。",
-  revoked: "邀请码已被撤销。",
-  exhausted: "邀请码已用完。",
-  expired: "邀请码已过期。",
-};
 
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -57,66 +53,32 @@ export async function POST(request: Request) {
   const limited = await readJsonBody(request, MAX_BODY_BYTES);
   if (!limited.ok) return json({ ok: false, error: limited.code, message: limited.message }, limited.status);
   const body = limited.value as { code?: unknown; username?: unknown; password?: unknown } | null;
-  const code = typeof body?.code === "string" ? body.code : "";
-  const rawName = typeof body?.username === "string" ? body.username : "";
+  const code = typeof body?.code === "string" ? body.code.trim() : "";
+  const username = typeof body?.username === "string" ? body.username : "";
   const password = typeof body?.password === "string" ? body.password : "";
 
-  if (!code || !rawName || !password) {
+  if (!code || !username || !password) {
     return json({ ok: false, error: "missing_field", message: "请填写邀请码、用户名和密码。" }, 400);
   }
-  const username = normalizeUsername(rawName);
-  if (!username) {
-    return json(
-      { ok: false, error: "bad_username", message: "用户名只能用 3-32 位小写字母、数字、点、下划线或连字符，且以字母或数字开头。" },
-      400,
-    );
-  }
-  const pwProblem = passwordProblem(password, username);
-  if (pwProblem) return json({ ok: false, error: "bad_password", message: pwProblem }, 400);
 
   try {
     await ensureBootstrap();
-    const checked = await checkInvite(code);
-    if (!checked.ok) {
-      await audit({ actor: "signup", action: "invite_rejected", detail: checked.reason, ip });
-      return json(
-        { ok: false, error: "invite_invalid", message: INVITE_MESSAGE[checked.reason] ?? "邀请码无效。" },
-        400,
-      );
-    }
-    if (await findUserByUsername(username)) {
-      return json({ ok: false, error: "duplicate_username", message: "这个用户名已被占用。" }, 409);
-    }
-
-    const user = await createUser({
-      username,
-      passwordHash: await hashPassword(password),
-      role: checked.invite.role,
-      createdBy: `invite:${checked.invite.id}`,
-      note: checked.invite.note,
-      inviteId: checked.invite.id,
-      mustChangePassword: false,
-    });
-    await commitInviteUse(checked.invite.id, user.id);
-
+    const { user } = await registerWithInvite({ code, username, password, ip });
     const session = await issueSession(user.id, request, {
       ipHash: hashAddress(ip),
       userAgent: request.headers.get("user-agent") ?? "",
     });
     await markLogin(user.id);
-    await audit({
-      actor: user.username,
-      action: "signup",
-      target: user.username,
-      detail: `invite=${checked.invite.id.slice(0, 8)}`,
-      ip,
-    });
     return json(
       { ok: true, user: { username: user.username, role: user.role }, expiresAt: session.expiresAt },
       201,
       { "set-cookie": session.cookie },
     );
   } catch (err) {
+    if (err instanceof AccountError) {
+      const mapped = accountError(err, "");
+      return json({ ok: false, error: mapped.code, message: mapped.message }, mapped.status);
+    }
     return json({ ok: false, error: "internal", message: publicMessage(err, "注册失败，请稍后重试。") }, 500);
   }
 }

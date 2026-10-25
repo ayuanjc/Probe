@@ -88,6 +88,24 @@ type Store = {
 export type PublicUser = Omit<StoredUser, "passwordHash"> & { sessions: number };
 export type PublicInvite = Omit<StoredInvite, "codeHash">;
 
+/**
+ * 一个登录设备（会话）的对外视图。
+ * tokenHash 永远不出现在这里 —— 它不是"摘要"而是凭据本身的可逆映射（sha256 无盐），
+ * 谁拿到哈希就能自己比对；所以对外只给 id 与元数据。
+ */
+export type PublicSession = {
+  id: string;
+  userId: string;
+  createdAt: number;
+  lastSeenAt: number;
+  expiresAt: number;
+  /** IP 的不可逆指纹（前 16 位 hex）：只用来区分「是不是同一台机器」，不能还原成地址。 */
+  ipHash: string;
+  userAgent: string;
+  /** 未撤销且未过期。 */
+  live: boolean;
+};
+
 export type StoreErrorCode =
   | "not_found"
   | "duplicate_username"
@@ -199,6 +217,11 @@ async function read<T>(fn: (s: Store) => T): Promise<T> {
 
 export function todayKey(at = Date.now()): string {
   return new Date(at).toISOString().slice(0, 10);
+}
+
+/** 把内部用户记录转成对外视图（去掉 passwordHash）。路由与服务层都走这个，别再各写一份。 */
+export function publicUser(u: StoredUser, sessionCount = 0): PublicUser {
+  return toPublic(u, sessionCount);
 }
 
 function toPublic(u: StoredUser, sessionCount: number): PublicUser {
@@ -531,6 +554,57 @@ export async function revokeUserSessions(userId: string): Promise<number> {
 
 export async function sessionCount(userId: string): Promise<number> {
   return read((s) => liveSessionCount(s, userId));
+}
+
+function toPublicSession(sess: StoredSession): PublicSession {
+  return {
+    id: sess.id,
+    userId: sess.userId,
+    createdAt: sess.createdAt,
+    lastSeenAt: sess.lastSeenAt,
+    expiresAt: sess.expiresAt,
+    ipHash: sess.ipHash,
+    userAgent: sess.userAgent,
+    live: !sess.revoked && sess.expiresAt > Date.now(),
+  };
+}
+
+/** 某个用户的全部会话（含已撤销/过期，界面靠 live 区分）。最近活跃在前。 */
+export async function listSessionsForUser(userId: string): Promise<PublicSession[]> {
+  return read((s) =>
+    s.sessions
+      .filter((x) => x.userId === userId)
+      .map(toPublicSession)
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt),
+  );
+}
+
+/**
+ * 撤销某个用户的**某一个**会话。
+ * 带 userId 校验是有意的：管理员拿着别处的 session id 不能跨用户踢人。
+ * 返回 false 表示「这个 id 不是这个用户的」。
+ */
+export async function revokeSessionOfUser(userId: string, sessionId: string): Promise<boolean> {
+  return mutate((s) => {
+    const sess = s.sessions.find((x) => x.id === sessionId);
+    if (!sess || sess.userId !== userId) return false;
+    sess.revoked = true;
+    return true;
+  });
+}
+
+/** 踢掉除 keepSessionId 之外的全部会话（「退出其它设备」）。 */
+export async function revokeOtherSessions(userId: string, keepSessionId: string): Promise<number> {
+  return mutate((s) => {
+    let n = 0;
+    for (const sess of s.sessions) {
+      if (sess.userId === userId && sess.id !== keepSessionId && !sess.revoked) {
+        sess.revoked = true;
+        n += 1;
+      }
+    }
+    return n;
+  });
 }
 
 /* ------------------------------ 审计 / 启动 ------------------------------ */
