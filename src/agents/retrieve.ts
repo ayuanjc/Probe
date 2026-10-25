@@ -6,6 +6,7 @@ import { fixtureSources } from "@/lib/fixtures";
 import { resolvedBochaKey, resolvedRegion, resolvedTavilyKey } from "@/lib/runtime-config";
 import { regionPolicy, type RetrievalProvider } from "@/lib/region-policy";
 import { partitionByWindow, windowBoundsMs } from "@/lib/time-window";
+import { failureCode } from "@/lib/provider-errors";
 
 /**
  * 检索层。四个 provider 之间完全隔离：任何一个失败只记入 degraded，
@@ -147,6 +148,20 @@ function gdeltDate(v: string): string {
 
 /* ---------------------------------------------------------------- GDELT */
 
+/**
+ * 上游失败时把响应体头部一起带上。博查的额度不足是 403 + 正文一句话，
+ * 只看状态码会把「账号没钱」误报成「key 不对」。
+ */
+async function httpFailure(provider: string, res: Response): Promise<Error> {
+  let detail = "";
+  try {
+    detail = (await res.text()).replace(/\s+/g, " ").slice(0, 160);
+  } catch {
+    detail = "";
+  }
+  return new Error(provider + " http " + res.status + (detail ? " " + detail : ""));
+}
+
 async function fetchGdelt(intent: Intent, outer?: AbortSignal): Promise<RawSource[]> {
   // 关键：中文实体必须换成英文别名，否则 GDELT 必然 0 结果（索引以英文源为主）。
   const q =
@@ -168,7 +183,7 @@ async function fetchGdelt(intent: Intent, outer?: AbortSignal): Promise<RawSourc
     signal: signalFor(GDELT_TIMEOUT_MS, outer),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("gdelt http " + res.status);
+  if (!res.ok) throw await httpFailure("gdelt", res);
   const text = await res.text();
   // GDELT 在限流/无结果时返回非 JSON 的纯文本，必须先判形。
   if (!text.trimStart().startsWith("{")) throw new Error("gdelt non-json response");
@@ -208,7 +223,7 @@ async function fetchHn(intent: Intent, outer?: AbortSignal): Promise<RawSource[]
       "created_at_i>=" + Math.floor(fromMs / 1000) + ",created_at_i<=" + Math.floor(toMs / 1000),
     );
   const res = await fetch(url, { signal: signalFor(TIMEOUT_MS, outer), cache: "no-store" });
-  if (!res.ok) throw new Error("hn http " + res.status);
+  if (!res.ok) throw await httpFailure("hn", res);
   const json = (await res.json()) as {
     hits?: { objectID: string; title?: string; story_title?: string; url?: string; created_at: string; points?: number }[];
   };
@@ -252,7 +267,7 @@ async function fetchWiki(intent: Intent, outer?: AbortSignal): Promise<RawSource
       fmt(to),
     { signal: signalFor(TIMEOUT_MS, outer), cache: "no-store" },
   );
-  if (!res.ok) throw new Error("wiki http " + res.status);
+  if (!res.ok) throw await httpFailure("wiki", res);
 
   const json = (await res.json()) as { items?: { timestamp: string; views: number }[] };
   const items = json.items ?? [];
@@ -304,7 +319,7 @@ async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSour
     signal: signalFor(TIMEOUT_MS, outer),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("tavily http " + res.status);
+  if (!res.ok) throw await httpFailure("tavily", res);
 
   const json = (await res.json()) as {
     results?: { url: string; title: string; content: string; published_date?: string }[];
@@ -367,7 +382,7 @@ async function fetchBocha(intent: Intent, outer?: AbortSignal): Promise<RawSourc
     signal: signalFor(TIMEOUT_MS, outer),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("bocha http " + res.status);
+  if (!res.ok) throw await httpFailure("bocha", res);
 
   // 两种包装都见过：{data:{webPages:{value:[]}}} 与 {webPages:{value:[]}}。
   const json = (await res.json()) as {
@@ -418,13 +433,26 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
   if (allowed.has("bocha")) {
     // 没配 key 就别让它跑成一个空结果：那是配置问题，不是"没命中"。
     if (resolvedBochaKey()) jobs.push({ name: "bocha", run: () => fetchBocha(intent, signal) });
-    else degraded.push("bocha:not_configured");
+    else if (region === "cn") {
+      // 只在境内报这一条：境内它是唯一允许的检索源，缺了就真没源可用；
+      // 境外不配博查是正常配置（有 Tavily 那一路），报出来只是噪音。
+      degraded.push("bocha:not_configured");
+    }
   }
 
   admit("gdelt", () => gdeltSlot(() => fetchGdelt(intent, signal)));
   admit("hn", () => fetchHn(intent, signal));
   admit("wiki", () => fetchWiki(intent, signal));
-  admit("tavily", () => fetchTavily(intent, signal));
+  // 顺序要紧：先看区域，再看 key。境内本来就不用 tavily，说「未配置」是撒谎 ——
+  // key 明明在 .env 里，是这套出境规则不用它。
+  if (!allowed.has("tavily")) {
+    admit("tavily", () => fetchTavily(intent, signal)); // admit 自己记 region_blocked
+  } else if (resolvedTavilyKey()) {
+    admit("tavily", () => fetchTavily(intent, signal));
+  } else {
+    // 允许却缺 key：那是配置问题，跑成空结果会伪装成「没命中」。
+    degraded.push("tavily:not_configured");
+  }
 
   const settled = await Promise.allSettled(jobs.map((j) => j.run()));
   const out: RawSource[] = [];
@@ -433,14 +461,18 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
     const name = jobs[i].name;
     if (s.status === "fulfilled") {
       stats[name] = s.value.length;
-      // 没 key 的 tavily 返回空是预期行为，不算降级；其他源空结果要说出来。
-      if (s.value.length === 0 && name !== "tavily") degraded.push(name + ":empty");
+      // 到这一步还空，就是真的没命中（缺 key 的情况在前面就记成 not_configured 了）。
+      if (s.value.length === 0) degraded.push(name + ":empty");
       out.push(...s.value);
     } else {
       // 失败也带上原因码：裸的 "gdelt" 和 "gdelt:empty" 在界面上都是「降级」，
       // 但一个是请求挂了、一个是本轮真的没命中，指标面板按码分组时要能分开。
       stats[name] = 0;
-      degraded.push(name + ":failed");
+      // 没余额 / key 不对 / 被限流 / 超时，是四种不同的下一步，别都写 failed。
+      const code = failureCode(name, s.reason);
+      degraded.push(code);
+      // 分类码进界面，原文进日志：界面上一句话不撒谎，排查时能拿到上游原话。
+      console.warn("[retrieve] " + code + " " + String((s.reason as Error | undefined)?.message ?? s.reason).slice(0, 200));
     }
   });
 
