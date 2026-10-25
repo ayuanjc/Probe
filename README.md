@@ -100,7 +100,7 @@ npm run dev                  # http://localhost:3210
 | --- | --- |
 | `OPENAI_API_KEY` | 意图精修、断言抽取、流式摘要 |
 | `OPENAI_BASE_URL` | OpenAI 兼容接口地址（要带 `/v1`）；空 = 官方。DeepSeek / 本地 Ollama 走这个 |
-| `PROBE_MODEL` | 指定模型，默认 `gpt-4.1-mini`（面板里的「指定模型」优先于它） |
+| `PROBE_MODEL` | 指定模型，默认 `gpt-6-luna`（面板里的「指定模型」优先于它） |
 | `TAVILY_API_KEY` | 补一路通用搜索，显著提升信源多样性 |
 | `PROBE_RATE_LIMIT_PER_MIN` | 单用户每分钟检索上限，默认 3（PRD 附录 B） |
 

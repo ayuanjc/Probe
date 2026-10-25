@@ -290,10 +290,10 @@ test("resolvedOpenaiBaseUrl / resolvedModelId：面板值优先于环境变量",
       assert.equal(modelIsExplicit(), true);
 
       withRuntimeConfig(
-        { openaiBaseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+        { openaiBaseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
         () => {
           assert.equal(resolvedOpenaiBaseUrl(), "https://api.deepseek.com/v1");
-          assert.equal(resolvedModelId(), "deepseek-chat");
+          assert.equal(resolvedModelId(), "deepseek-flash");
         },
       );
     });
@@ -312,12 +312,12 @@ test("configFromRequest：三个头一起到达时才进运行时配置，脏地
     headers: {
       "x-probe-openai-key": "sk-test-1234567890",
       "x-probe-openai-base-url": "https://api.deepseek.com/v1/",
-      "x-probe-model": "deepseek-chat",
+      "x-probe-model": "deepseek-flash",
     },
   });
   const cfg = configFromRequest(good);
   assert.equal(cfg.openaiBaseUrl, "https://api.deepseek.com/v1");
-  assert.equal(cfg.model, "deepseek-chat");
+  assert.equal(cfg.model, "deepseek-flash");
 
   const bad = new Request("http://x.test/api/search", {
     headers: { "x-probe-openai-key": "sk-test-1234567890", "x-probe-openai-base-url": "ftp://nope" },

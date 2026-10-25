@@ -113,7 +113,7 @@ export function resolvedModelId(): string {
 }
 
 /** 面板空着、env 也没配时用的模型；设置面板的 placeholder 也读它，免得两处对不上。 */
-export const DEFAULT_MODEL_ID = "gpt-4.1-mini";
+export const DEFAULT_MODEL_ID = "gpt-6-luna";
 
 /** 用户是不是明确指定了模型（面板或 env 都算），界面据此显示「已指定」。 */
 export function modelIsExplicit(): boolean {

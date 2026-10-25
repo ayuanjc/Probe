@@ -38,15 +38,16 @@ const MODEL_OPTIONS: string[] = Array.from(
   new Set([
     DEFAULT_MODEL,
     ...PROVIDERS.map((p) => p.model),
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "o4-mini",
-    "deepseek-reasoner",
-    "kimi-latest",
-    "glm-4.5-air",
-    "qwen-max",
-    "qwen2.5:14b",
+    /** 2026-10 当下的档位：贵的一档、便宜的一档各留几个，换服务商时不至于只会写老名字。 */
+    "gpt-6.1-sol",
+    "gpt-5.6-luna",
+    "gpt-oss-120b",
+    "deepseek-v4-pro",
+    "kimi-k3.1-pro",
+    "glm-5.3-flash",
+    "qwen3.8-max",
+    "qwen3.8-flash",
+    "qwen3.8:latest",
   ]),
 );
 

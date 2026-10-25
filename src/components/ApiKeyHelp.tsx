@@ -10,6 +10,10 @@ import type { ReactNode } from "react";
  *
  * PROVIDERS 是预设：点一下把接口地址与模型一起填好。里面的 model 是照各家文档抄的
  * 示例名，不是白名单 —— 模型名本来就能手填，填错了上游返回 400，面板里有提示。
+ *
+ * 抄写日期：2026-10-25。这份表会过时，过时了就把 id 换成当天的旗舰/廉价档；
+ * 别指望它自己跟上（各家改名比发版还勤：OpenAI 的 mini/nano 已经换成 luna/terra/sol，
+ * DeepSeek 的 deepseek-chat 已经不接受）。
  */
 
 export type ProviderPreset = {
@@ -28,7 +32,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "openai",
     name: "OpenAI 官方",
     baseUrl: "",
-    model: "gpt-4.1-mini",
+    model: "gpt-6-luna",
     keyUrl: "https://platform.openai.com/api-keys",
     note: "接口地址留空即官方",
   },
@@ -36,7 +40,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "deepseek",
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     keyUrl: "https://platform.deepseek.com/api_keys",
     note: "便宜、中文稳，key 也是 sk- 开头",
   },
@@ -44,7 +48,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "moonshot",
     name: "Kimi（月之暗面）",
     baseUrl: "https://api.moonshot.cn/v1",
-    model: "kimi-k2-0905-preview",
+    model: "kimi-k3.1-pro",
     keyUrl: "https://platform.moonshot.cn/console/api-keys",
     note: "长上下文友好",
   },
@@ -52,7 +56,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "zhipu",
     name: "智谱 GLM",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    model: "glm-4.6",
+    model: "glm-5.3",
     keyUrl: "https://bigmodel.cn/usercenter/apikeys",
     note: "有免费额度；路径是 /api/paas/v4",
   },
@@ -60,7 +64,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "dashscope",
     name: "阿里百炼（Qwen）",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen-plus",
+    model: "qwen3.8-flash",
     keyUrl: "https://bailian.console.aliyun.com/",
     note: "必须走 compatible-mode 兼容路径",
   },
@@ -68,7 +72,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "siliconflow",
     name: "硅基流动",
     baseUrl: "https://api.siliconflow.cn/v1",
-    model: "deepseek-ai/DeepSeek-V3",
+    model: "deepseek-ai/DeepSeek-V4-Flash",
     keyUrl: "https://cloud.siliconflow.cn/account/ak",
     note: "一个 key 转多家开源模型",
   },
@@ -76,7 +80,7 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "openrouter",
     name: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    model: "openai/gpt-4.1-mini",
+    model: "openai/gpt-6-luna",
     keyUrl: "https://openrouter.ai/keys",
     note: "聚合一堆厂商，模型名带 厂商/ 前缀",
   },
@@ -84,14 +88,14 @@ export const PROVIDERS: ProviderPreset[] = [
     id: "ollama",
     name: "本地 Ollama",
     baseUrl: "http://127.0.0.1:11434/v1",
-    model: "qwen2.5:7b",
+    model: "qwen3.8:latest",
     keyUrl: "https://ollama.com/download",
     note: "不用注册，key 随便填 8 位（如 ollama-local）",
   },
 ];
 
 /** 面板 placeholder 用的兜底模型名，必须和 runtime-config 的 DEFAULT_MODEL_ID 一致。 */
-export const DEFAULT_MODEL = "gpt-4.1-mini";
+export const DEFAULT_MODEL = "gpt-6-luna";
 
 function Code({ children }: { children: ReactNode }) {
   return (
@@ -192,7 +196,7 @@ export function OpenAiKeyHelp() {
       <p className="text-[11px] leading-relaxed text-neutral-500">
         填了不生效？大概率是格式：key 要 8–400 字符且不含空白，接口地址要带
         <Code>http://</Code> 或 <Code>https://</Code>，模型名不能带空格
-        （<Code>gpt 4o</Code> 会被当成没填，写成 <Code>gpt-4o</Code>）。
+        （<Code>gpt 6-luna</Code> 会被当成没填，写成 <Code>gpt-6-luna</Code>）。
         格式不对不会报错、只会静默回落到服务端配置 —— 所以「填了没生效」先回来核一遍格式；
         上游 401 / 404 则是 key 或接口地址本身不对，看服务端日志里那一条 status。
       </p>

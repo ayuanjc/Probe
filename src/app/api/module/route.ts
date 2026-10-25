@@ -223,7 +223,7 @@ export async function POST(request: Request) {
     title: planned.spec.title.trim() || planned.reason,
   };
   // 回显的模型名也要取请求里的那个：modelId() 读的是运行时配置，
-  // 在 withRuntimeConfig 外面直接调，拿到的是 env / 默认值 —— 面板填了 deepseek-chat
-  // 却回显 gpt-4.1-mini，用户会以为设置没生效。
+  // 在 withRuntimeConfig 外面直接调，拿到的是 env / 默认值 —— 面板填了 deepseek-flash
+  // 却回显 gpt-6-luna，用户会以为设置没生效。
   return json({ ...planned, spec, model: cfg.model || modelId() });
 }

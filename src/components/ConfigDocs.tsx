@@ -42,7 +42,7 @@ const CONFIG_ROWS: { label: string; store: string; header: string; env: string; 
     store: "设置 → model",
     header: "x-probe-model",
     env: "PROBE_MODEL",
-    fallback: "都没有：gpt-4.1-mini",
+    fallback: "都没有：gpt-6-luna",
   },
 ];
 
@@ -50,7 +50,7 @@ const ENV_ROWS: [string, string, string][] = [
   ["OPENAI_API_KEY", "意图精修 / 断言抽取 / 摘要 / 段落翻译", "空"],
   ["OPENAI_BASE_URL", "OpenAI 兼容接口地址（网关 / DeepSeek / 本地 Ollama）", "空 = 官方"],
   ["TAVILY_API_KEY", "网页检索（Tavily 搜索层）", "空"],
-  ["PROBE_MODEL", "模型 id", "gpt-4.1-mini"],
+  ["PROBE_MODEL", "模型 id", "gpt-6-luna"],
   ["PROBE_RATE_LIMIT_PER_MIN", "/api/search 每 IP 每分钟检索次数", "3"],
   ["PROBE_TRANSLATE_RATE_LIMIT_PER_MIN", "/api/translate 每 IP 每分钟", "20"],
   ["PROBE_MODULE_RATE_LIMIT_PER_MIN", "/api/module 每 IP 每分钟", "12"],
@@ -80,7 +80,7 @@ const ENV_SAMPLE = [
   "# 走别家 / 自建网关时才需要（含 /v1，例如 DeepSeek 是 https://api.deepseek.com/v1）",
   "# OPENAI_BASE_URL=https://api.deepseek.com/v1",
   "TAVILY_API_KEY=tvly-…",
-  "PROBE_MODEL=gpt-4.1-mini",
+  "PROBE_MODEL=gpt-6-luna",
   "",
   "# 限流：默认值很紧，本地压测时调高",
   "PROBE_RATE_LIMIT_PER_MIN=3",
