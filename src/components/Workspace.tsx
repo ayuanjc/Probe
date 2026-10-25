@@ -25,6 +25,8 @@ import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
 import ResultRail, { ResultJumpBar, railSections } from "./ResultRail";
+import EvidencePanel from "./EvidencePanel";
+import { useEvidence } from "@/hooks/useEvidence";
 import { pushHistory, readHistory } from "@/lib/history";
 import type { Dataset } from "@/lib/schemas";
 import {
@@ -114,6 +116,12 @@ export default function Workspace({
   trending?: TrendingSnapshot | null;
 }) {
   const { state, run, reset, addModule } = useProbe();
+  /**
+   * 断言核验是「第二次请求」：首屏 SSE 只把断言带回来（state.claims），
+   * 真正去留出集找证词要等用户点那一下 —— 那一步要跑十几次上游、几十秒，
+   * 顺手触发等于把每一次普通检索都变成一次付费的长任务。
+   */
+  const { view: evidenceView, run: runEvidence, reset: resetEvidence } = useEvidence();
   const [input, setInput] = useState(initialQuery);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -144,6 +152,31 @@ export default function Workspace({
    * 改成从存储重建再合并，执行顺序怎么变都不会丢。
    */
   const historyRef = useRef<string[]>([]);
+
+  /**
+   * 本轮引用过的来源（按 owner 规整）：交给核验当「自己人」名单，
+   * 命中就整条剔除 —— 自己引自己不能算作证。
+   */
+  const citedOwners = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          state.sources
+            .map((s) => (s.owner || "").trim().toLowerCase().replace(/^www\./, ""))
+            .filter((o) => o.length > 0),
+        ),
+      ),
+    [state.sources],
+  );
+
+  /** 新的一轮开始就把旧核验收起来：否则会出现「新查询 + 旧吻合度」这种自相矛盾的画面。 */
+  useEffect(() => {
+    if (running) resetEvidence();
+  }, [running, state.query, resetEvidence]);
+
+  const verifyNow = useCallback(() => {
+    void runEvidence(state.claims, citedOwners);
+  }, [runEvidence, state.claims, citedOwners]);
 
   const remember = useCallback((q: string) => {
     // 并集按「存储在前、本会话补后」拼：存储一定是最新的写入，反过来 fold 会把顺序倒置。
@@ -535,6 +568,17 @@ export default function Workspace({
                 hasMeta={state.status === "done"}
                 elapsedMs={state.elapsedMs}
                 history={history}
+                evidence=
+                  {state.claims.length > 0
+                    ? {
+                        status: evidenceView.status,
+                        agreement:
+                          evidenceView.status === "done"
+                            ? (evidenceView.result.view.agreement?.value ?? null)
+                            : null,
+                      }
+                    : null}
+                onVerify={verifyNow}
                 onPickQuery={pickTopic}
                 onReRun={reRun}
                 onNewSearch={newSearch}
@@ -547,6 +591,7 @@ export default function Workspace({
                   hasSummary: state.text.length > 0,
                   modules: state.modules.length,
                   hasGraph: state.entityGraph !== null,
+                  hasEvidence: state.claims.length > 0,
                   sources: state.sources.length,
                   hasMeta: state.status === "done",
                 })}
@@ -648,6 +693,21 @@ export default function Workspace({
                   collapsed={graphCollapsed}
                   onToggle={() => setGraphCollapsed((v) => !v)}
                 />
+                </div>
+              )}
+
+              {/*
+                断言核验夹在共现图与信源之间：读完「这轮说了什么」与「谁跟谁一起出现」，
+                下一个自然的问题是「这些话有别人作证吗」，最后才是去读原始信源。
+                按钮在卡里，用户点了才跑 —— 核验不跟着首屏自动触发。
+              */}
+              {state.claims.length > 0 && (
+                <div id="sec-evidence" className="scroll-mt-16">
+                  <EvidencePanel
+                    view={evidenceView}
+                    claimCount={state.claims.length}
+                    onRun={verifyNow}
+                  />
                 </div>
               )}
 

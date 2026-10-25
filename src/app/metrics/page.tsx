@@ -1,6 +1,8 @@
 import Link from "next/link";
+import CalibrationCard from "@/components/CalibrationCard";
 import MetricsPanel from "@/components/MetricsPanel";
 import ProbeLogo from "@/components/ProbeLogo";
+import { calibrationSnapshot } from "@/lib/calibration-store";
 import { requirePageUser } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +10,7 @@ export const metadata = { title: "运行指标 · 探针" };
 
 export default async function MetricsPage() {
   await requirePageUser();
+  const snapshot = await calibrationSnapshot();
   return (
     <main className="mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-5 py-8 sm:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 pb-5">
@@ -26,6 +29,8 @@ export default async function MetricsPage() {
           降级码、独立源数与置信度分布 —— 面板上的每个数字都能在这里找到它是怎么来的。
         </p>
       </div>
+
+      <CalibrationCard snapshot={snapshot} />
 
       <MetricsPanel />
     </main>

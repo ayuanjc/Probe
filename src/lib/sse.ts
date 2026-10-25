@@ -1,7 +1,7 @@
 
 import type { EntityGraph } from "./entity-graph";
 import type { ClarifyPayload } from "./polysemy";
-import type { Confidence, Field, Intent, ModuleSpec } from "./schemas";
+import type { Claim, Confidence, Field, Intent, ModuleSpec } from "./schemas";
 
 /**
  * SSE 事件契约（PRD 附录 A）。
@@ -73,6 +73,12 @@ export type ProbeEvent =
         notes: string[];
         elapsedMs: number;
         stats?: Record<string, number>;
+        /**
+         * 本轮抽到的断言（带 quote）。发到前端不是为了让界面直接显示它们 ——
+         * 是为了让「核验这一轮」能在用户点的时候单独发一次请求：
+         * 核验要跑十几次上游、几十秒，不能挂在首屏的 SSE 上等人。
+         */
+        claims?: Claim[];
       };
     }
   | { event: "error"; data: { message: string } };

@@ -298,6 +298,8 @@ async function* runStages(
       notes: analysis.notes,
       elapsedMs: Date.now() - started,
       stats: retrieved.stats,
+      // 断言跟着 done 外发，供结果页的「核验这一轮」按需触发（见 /api/evidence）。
+      claims: analysis.claims.slice(0, 30),
     },
   };
 }

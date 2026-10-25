@@ -231,5 +231,34 @@ export function buildDossier(input: DossierInput): DossierResult {
   return { rows, view, counts, blocked, demo: input.demo === true, degraded };
 }
 
+
+/**
+ * 把「全部断言 + 其中一部分有判定」压成可直接交给 buildDossier 的一对数组。
+ *
+ * 为什么需要它：核验有前置闸门（checkWorthy）与预算上限，所以总有一批断言根本没被核过。
+ * 直接把它们一起塞进 buildDossier 会被记成「未找到证据」—— 那是两个完全不同的结论：
+ * 「查了没查到」与「根本没查」。所以先按「有判定」挑出来，并把 claimIndex 重排成新数组的下标。
+ *
+ * 判定顺序无关：同一 claimIndex 出现多次时以后一条为准（判定器不该重复，但脏数据不能炸）。
+ */
+export function pickJudged(
+  claims: readonly Claim[],
+  verdicts: readonly ClaimVerdict[],
+): { claims: Claim[]; verdicts: ClaimVerdict[]; notJudged: number } {
+  const at = new Map<number, ClaimVerdict>();
+  for (const v of verdicts) at.set(v.claimIndex, v);
+
+  const picked: Claim[] = [];
+  const remapped: ClaimVerdict[] = [];
+  claims.forEach((claim, i) => {
+    const verdict = at.get(i);
+    if (!verdict) return;
+    remapped.push({ ...verdict, claimIndex: picked.length });
+    picked.push(claim);
+  });
+
+  return { claims: picked, verdicts: remapped, notJudged: claims.length - picked.length };
+}
+
 /** 卡片标题用的唯一名字。PRD 边界：不做事实裁决，所以只叫「外部吻合度」。 */
 export const DOSSIER_TITLE = "外部吻合度";

@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
-import type { Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
+import type { Claim, Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 import type { EntityGraph } from "@/lib/entity-graph";
 import type { ClarifyPayload } from "@/lib/polysemy";
 import { MODULE_SIZE } from "@/lib/module-catalog";
@@ -43,6 +43,11 @@ export type ProbeState = {
   degraded: string[];
   /** 后端对口径的补充说明（例如「低置信：聚合数字已抑制」）。 */
   notes: string[];
+  /**
+   * 本轮抽到的断言。结果页拿它去调 /api/evidence —— 核验要几十秒，
+   * 所以只在用户点了「核验这一轮」时才发，不跟着首屏跑。
+   */
+  claims: Claim[];
   elapsedMs: number | null;
   error: string | null;
 };
@@ -59,6 +64,7 @@ const IDLE: ProbeState = {
   clarify: null,
   degraded: [],
   notes: [],
+  claims: [],
   elapsedMs: null,
   error: null,
 };
@@ -290,6 +296,7 @@ export function useProbe() {
               status: "done",
               degraded: event.data.degraded,
               notes: event.data.notes ?? [],
+              claims: event.data.claims ?? [],
               elapsedMs: event.data.elapsedMs,
             };
           case "error":

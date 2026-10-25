@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, Clock3, Link2, Plus, RotateCw, ShieldCheck } from "lucide-react";
+import { Check, Clock3, Link2, Loader2, Plus, RotateCw, ShieldCheck, ShieldQuestion } from "lucide-react";
 
 /**
  * 结果页左侧栏。
@@ -43,6 +43,15 @@ export type ResultRailProps = {
   hasMeta: boolean;
   elapsedMs: number | null;
   history: string[];
+  /**
+   * 断言核验的摘要（null = 本轮没有可核的断言，入口不出现）。
+   * 只放状态与一个数字：侧栏是目录，不是报告 —— 完整结论在页面上那张卡里。
+   */
+  evidence: {
+    status: "idle" | "running" | "done" | "failed";
+    agreement: number | null;
+  } | null;
+  onVerify: () => void;
   onPickQuery: (q: string) => void;
   onReRun: () => void;
   onNewSearch: () => void;
@@ -54,6 +63,8 @@ export function railSections(p: {
   hasSummary: boolean;
   modules: number;
   hasGraph: boolean;
+  /** 有断言才有「断言核验」那一节 —— 没抽到断言的轮次点进去是空的。 */
+  hasEvidence?: boolean;
   sources: number;
   hasMeta: boolean;
 }): RailSection[] {
@@ -61,6 +72,7 @@ export function railSections(p: {
   if (p.hasSummary) out.push({ id: "sec-summary", label: "摘要" });
   if (p.modules > 0) out.push({ id: "sec-modules", label: "面板", count: p.modules });
   if (p.hasGraph) out.push({ id: "sec-graph", label: "共现图" });
+  if (p.hasEvidence) out.push({ id: "sec-evidence", label: "断言核验" });
   if (p.sources > 0) out.push({ id: "sec-sources", label: "信源", count: p.sources });
   if (p.hasMeta) out.push({ id: "sec-meta", label: "口径与统计" });
   return out;
@@ -118,10 +130,18 @@ export default function ResultRail(props: ResultRailProps) {
         hasSummary: props.hasSummary,
         modules: props.modules.length,
         hasGraph: props.hasGraph,
+        hasEvidence: props.evidence !== null,
         sources: props.sourceCount,
         hasMeta: props.hasMeta,
       }),
-    [props.hasSummary, props.modules.length, props.hasGraph, props.sourceCount, props.hasMeta],
+    [
+      props.hasSummary,
+      props.modules.length,
+      props.hasGraph,
+      props.evidence,
+      props.sourceCount,
+      props.hasMeta,
+    ],
   );
   const active = useActiveSection(sections.map((s) => s.id));
   const shownEntities = props.entities.slice(0, 4);
@@ -263,6 +283,30 @@ export default function ResultRail(props: ResultRailProps) {
 
       {/* 接下来做什么 */}
       <div className="mt-3 border-t border-neutral-800 pt-2">
+        {props.evidence !== null && (
+          <button
+            type="button"
+            onClick={props.onVerify}
+            disabled={props.evidence.status === "running"}
+            className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left text-neutral-400 transition-colors hover:bg-white/[0.04] hover:text-white disabled:opacity-50"
+            title="逐条去本轮没引用过的来源里找证词（要跑十几次上游，几十秒）"
+          >
+            {props.evidence.status === "running" ? (
+              <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" strokeWidth={1.5} />
+            ) : (
+              <ShieldQuestion aria-hidden className="h-3 w-3 shrink-0" strokeWidth={1.5} />
+            )}
+            <span className="truncate">
+              {props.evidence.status === "running"
+                ? "正在核验…"
+                : props.evidence.status === "failed"
+                  ? "核验失败 · 再试"
+                  : props.evidence.agreement !== null
+                    ? "吻合度 " + Math.round(props.evidence.agreement * 100) + "%"
+                    : "核验这一轮"}
+            </span>
+          </button>
+        )}
         <button
           type="button"
           onClick={props.onReRun}
