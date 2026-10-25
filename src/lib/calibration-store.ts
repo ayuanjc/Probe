@@ -40,6 +40,12 @@ export type CalibrationSample = {
   contradicted: number;
   /** 这一轮一共核了几条（含不可核的）。 */
   claims: number;
+  /**
+   * 落这条样本的用户 id。null = 历史遗留（本字段是后加的）或匿名。
+   * 有了它才能只让当事人贴标签：样本库是全局共享的，任何人都能按 id 改别人的标记，
+   * 而 ECE 是所有用户共看的数字 —— 一条被乱标的样本会污染所有人的校准结论。
+   */
+  by: string | null;
   /** 人工判定：true = 这一轮的结论成立；null = 还没人看。 */
   correct: boolean | null;
   labeledAt: number | null;
@@ -58,20 +64,39 @@ export function appendSample(
   return kept.length > max ? kept.slice(kept.length - max) : kept;
 }
 
-/** 给一条样本贴标签。返回 ok=false 表示这条不存在（多半是样本上限把它挤掉了）。 */
+/** 谁在贴标签。admin 可以标任何一条（清库、修误标），普通用户只能标自己的。 */
+export type LabelActor = { id: string | null; admin: boolean };
+
+/**
+ * 给一条样本贴标签。
+ *
+ * 三种结果必须分开，不能用 ok=false 一概而论：
+ * - ok=false, denied=false → 这条不存在（多半是样本上限把它挤掉了）；
+ * - ok=false, denied=true  → 存在，但不是这个人能标的；
+ * - ok=true               → 标上了。
+ * 混成一个 false，界面只能回一句"找不到"，而被拒绝的人会一直重试。
+ */
 export function applyLabel(
   list: readonly CalibrationSample[],
   id: string,
   correct: boolean,
   at: number,
-): { list: CalibrationSample[]; ok: boolean } {
+  actor: LabelActor = { id: null, admin: false },
+): { list: CalibrationSample[]; ok: boolean; denied: boolean } {
   let ok = false;
+  let denied = false;
   const next = list.map((s) => {
     if (s.id !== id) return s;
+    const mine = s.by !== null && actor.id !== null && s.by === actor.id;
+    // 历史样本没有 by：谁都证明不了是自己的，只让管理员标。
+    if (!mine && !actor.admin) {
+      denied = true;
+      return s;
+    }
     ok = true;
     return { ...s, correct, labeledAt: at };
   });
-  return { list: ok ? next : list.slice(), ok };
+  return { list: ok ? next : list.slice(), ok, denied };
 }
 
 /**
@@ -193,6 +218,7 @@ export function parseSamples(raw: string | null): CalibrationSample[] {
       contradicted:
         typeof s.contradicted === "number" && Number.isFinite(s.contradicted) ? s.contradicted : 0,
       claims: typeof s.claims === "number" && Number.isFinite(s.claims) ? s.claims : 0,
+      by: typeof s.by === "string" && s.by.length > 0 ? s.by : null,
       correct: typeof s.correct === "boolean" ? s.correct : null,
       labeledAt:
         typeof s.labeledAt === "number" && Number.isFinite(s.labeledAt) ? s.labeledAt : null,
@@ -218,6 +244,8 @@ export async function readSamples(store: SampleStore = defaultStore()): Promise<
 }
 
 export type RecordInput = {
+  /** 是谁触发的这一轮核验（匿名模式下为 null）。 */
+  by?: string | null;
   predicted: number;
   judged: number;
   nEff: number;
@@ -238,6 +266,7 @@ export async function recordSample(
     nEff: Math.max(0, input.nEff),
     contradicted: Math.max(0, Math.round(input.contradicted)),
     claims: Math.max(0, Math.round(input.claims)),
+    by: typeof input.by === "string" && input.by.length > 0 ? input.by : null,
     correct: null,
     labeledAt: null,
   };
@@ -251,15 +280,16 @@ export async function recordSample(
 export async function labelSample(
   id: string,
   correct: boolean,
+  actor: LabelActor = { id: null, admin: false },
   store: SampleStore = defaultStore(),
-): Promise<{ ok: boolean; sample: CalibrationSample | null }> {
+): Promise<{ ok: boolean; denied: boolean; sample: CalibrationSample | null }> {
   return serialize(async () => {
     const list = parseSamples(await store.read());
-    const res = applyLabel(list, id, correct, Date.now());
-    if (!res.ok) return { ok: false, sample: null };
+    const res = applyLabel(list, id, correct, Date.now(), actor);
+    if (!res.ok) return { ok: false, denied: res.denied, sample: null };
     await store.write(JSON.stringify(res.list, null, 2));
     const hit = res.list.find((s) => s.id === id) ?? null;
-    return { ok: true, sample: hit };
+    return { ok: true, denied: false, sample: hit };
   });
 }
 

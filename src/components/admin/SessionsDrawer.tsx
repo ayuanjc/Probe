@@ -8,6 +8,7 @@ import {
   btnPrimary,
   deviceLabel,
   emptyClass,
+  ipFingerprint,
   since,
   time,
   type Notice,
@@ -140,7 +141,7 @@ export default function SessionsDrawer({
                   <div className="min-w-0">
                     <p className="truncate font-mono text-[12px] text-neutral-200">{deviceLabel(s.userAgent)}</p>
                     <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
-                      IP 指纹 {s.ipHash.slice(0, 8)} · 最后活跃 {since(s.lastSeenAt)}
+                      IP 指纹 {ipFingerprint(s.ipHash)} · 最后活跃 {since(s.lastSeenAt)}
                     </p>
                     <p className="mt-0.5 font-mono text-[10px] text-neutral-700">
                       登录于 {time(s.createdAt)} · 到期 {time(s.expiresAt)}

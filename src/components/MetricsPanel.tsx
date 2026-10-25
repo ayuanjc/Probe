@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { appPath } from "@/lib/base-path";
 import type { MetricsSnapshot, RunView } from "@/lib/metrics";
 
@@ -61,17 +61,29 @@ export default function MetricsPanel() {
   const [auto, setAuto] = useState(true);
   const [loading, setLoading] = useState(false);
 
+  /**
+   * 自动刷新每 5 秒一次，而 /api/metrics 在慢机器上可能超过 5 秒。
+   * 上一次还没回来就再发一次，两次响应到达顺序不定 —— 早发晚到的那个会把
+   * 新数字盖回旧的，界面表现为「计数往回跳」。所以只认最新一次的结果。
+   */
+  const reqSeq = useRef(0);
+
   const load = useCallback(async () => {
+    reqSeq.current += 1;
+    const seq = reqSeq.current;
     setLoading(true);
     try {
       const res = await fetch(appPath("/api/metrics"), { cache: "no-store" });
       if (!res.ok) throw new Error("HTTP " + res.status);
-      setData((await res.json()) as Payload);
+      const next = (await res.json()) as Payload;
+      if (seq !== reqSeq.current) return;
+      setData(next);
       setError(null);
     } catch (err) {
+      if (seq !== reqSeq.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, []);
 

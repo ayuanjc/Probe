@@ -45,7 +45,7 @@ export const ALIASES: Alias[] = [
   { zh: ["美联储"], en: "Federal Reserve", type: "org" },
   { zh: ["欧洲央行"], en: "European Central Bank", type: "org" },
   { zh: ["芯片", "半导体"], en: "semiconductor", type: "tech" },
-  { zh: ["大模型", "大语言模型"], en: "large language model", type: "tech" },
+  { zh: ["大模型", "大语言模型", "llm"], en: "large language model", type: "tech" },
   { zh: ["电动车", "电动汽车"], en: "electric vehicle", type: "tech" },
   { zh: ["光伏", "太阳能"], en: "solar power", type: "tech" },
   { zh: ["量子计算"], en: "quantum computing", type: "tech" },
@@ -57,7 +57,6 @@ export const ALIASES: Alias[] = [
   // 这里刻意不放 "ai" / "js" / "ts" 这类两字母别名 —— 词典用的是 includes，
   // "ai" 会命中 "maintain"、"said"，把无关查询全带偏。
   { zh: ["人工智能", "artificial intelligence"], en: "artificial intelligence", type: "tech" },
-  { zh: ["大语言模型", "llm"], en: "large language model", type: "tech" },
   { zh: ["rust"], en: "Rust", type: "tech" },
   { zh: ["python"], en: "Python", type: "tech" },
   { zh: ["javascript"], en: "JavaScript", type: "tech" },
@@ -131,15 +130,23 @@ export function extractEntities(query: string): Entity[] {
   // 1) 词典：整句里出现的中文/英文别名
   const ql = query.toLowerCase();
   for (const a of ALIASES) {
-    for (const z of a.zh) {
-      if (hasAlias(ql, z.toLowerCase())) {
-        // 别名本身是英文小写时（rust / docker / tls），展示名用规范写法，
-        // 否则界面上会写着 "rust"。中文别名保持中文。
-        const display = /[\u4e00-\u9fa5]/.test(z) ? z : a.en;
-        push(display, a.type, [a.en]);
-        break;
-      }
+    const zhHit = a.zh.find((z) => hasAlias(ql, z.toLowerCase()));
+    if (zhHit) {
+      // 别名本身是英文小写时（rust / docker / tls），展示名用规范写法，
+      // 否则界面上会写着 "rust"。中文别名保持中文。
+      const display = CJK.test(zhHit) ? zhHit : a.en;
+      push(display, a.type, [a.en]);
+      continue;
     }
+    /*
+     * 规范英文名也要判一次。
+     *
+     * 上面只遍历 zh，而词典里有一批条目（Zhipu AI / Federal Reserve /
+     * quantum computing / humanoid robot…）的 zh 里**没有**英文别名，
+     * 于是英文查询完全命不中词典，掉到 :164 的兜底：首词当 org、无 candidates，
+     * 后续 GDELT 检索就拿不到规范英文名 —— 词典等于白建。
+     */
+    if (hasAlias(ql, a.en.toLowerCase())) push(a.en, a.type, [a.en]);
   }
 
   // 2) 引号里的短语一定是用户点名的实体

@@ -28,6 +28,11 @@ export default function FeedbackButton({ query }: { query?: string }) {
   const [receipt, setReceipt] = useState("");
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * 在飞提交的序号。关掉浮层再打开重写一条时，旧请求若晚一步成功，
+   * 会按旧闭包把刚写的新草稿清空、还弹一句「已收到」—— 用户会以为新内容发走了。
+   */
+  const inflight = useRef(0);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -56,6 +61,8 @@ export default function FeedbackButton({ query }: { query?: string }) {
     }
     setState("sending");
     setNote("");
+    inflight.current += 1;
+    const ticket = inflight.current;
     try {
       const res = await fetch(appPath("/api/feedback"), {
         method: "POST",
@@ -71,6 +78,8 @@ export default function FeedbackButton({ query }: { query?: string }) {
         | { ok: true; id: string }
         | { ok: false; message?: string }
         | null;
+      // 这条已经不是最新一次提交：结果与界面无关，直接不管。
+      if (ticket !== inflight.current) return;
       if (!res.ok || !data || data.ok !== true) {
         setState("error");
         setNote(
@@ -85,6 +94,7 @@ export default function FeedbackButton({ query }: { query?: string }) {
       setMessage("");
       setContact("");
     } catch {
+      if (ticket !== inflight.current) return;
       setState("error");
       setNote("网络断了，这条没发出去。");
     }

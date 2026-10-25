@@ -190,14 +190,20 @@ export default function VerifyPanel() {
           ) : (
             <div className="mt-3 flex items-end gap-3">
               <div className="text-lg text-neutral-300">
-                {tooFew && agree ? "无独立证据" : "本轮无外部核验"}
+                {scores.blocked === "aborted"
+                  ? "核验已取消"
+                  : tooFew && agree
+                    ? "无独立证据"
+                    : "本轮无外部核验"}
               </div>
               <div className="pb-1 font-mono text-[11px] text-neutral-500">≈{scores.nEff.toFixed(1)} 个独立源</div>
             </div>
           )}
 
           <p className="mt-2 text-[11px] text-neutral-500">
-            {tooFew && agree
+            {scores.blocked === "aborted"
+              ? "核验中途被取消（页面关闭或请求中断）—— 这不是这篇文章的问题，重跑一次即可。"
+              : tooFew && agree
               ? "只有一个独立来源投票，给不出区间 —— 一个来源的吻合度不是吻合度。"
               : agree
                 ? "外部证据对本文断言的加权支持比例，不是真假判决。"

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --require ./tests-resolve.cjs --test \".tmp/test-build/tests/*.test.js\"",
     "verify:api": "node scripts/verify-api.mjs",
+    "fuzz": "node scripts/probe-fuzz.mjs",
     "auth": "node scripts/auth-cli.mjs"
   },
   "dependencies": {

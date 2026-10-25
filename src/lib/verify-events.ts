@@ -69,7 +69,11 @@ export type VerifyScoresEvent = {
   /** 请求中途被取消：覆盖不全但不是系统截的，文案要和 partial 分开写。 */
   aborted: boolean;
   /** 非 null 时 agreement 一定为 null：本轮没有做外部核验。 */
-  blocked: "no_evidence" | "all_unverifiable" | "no_claims" | null;
+  /**
+   * aborted 与 no_claims 必须分开：一个是「你关掉了页面」，一个是「这篇文章没有可核断言」。
+   * 中途取消也常常一条断言都还没抽到，混用会让用户以为自己的文章没救。
+   */
+  blocked: "no_evidence" | "all_unverifiable" | "no_claims" | "aborted" | null;
   rows: { claimIndex: number; quote: string; status: ClaimStatus; label: string; reason: string; weight: number }[];
 };
 

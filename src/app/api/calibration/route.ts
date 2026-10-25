@@ -38,30 +38,46 @@ const Body = z.object({
   correct: z.boolean(),
 });
 
-async function guard(request: Request) {
-  if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
+/** 通过闸门时把用户带出来 —— 贴标签要按人判归属，只判「登录了没」不够。 */
+async function guard(request: Request): Promise<{ denied: Response } | { user: { id: string; admin: boolean } }> {
+  if (isCrossSite(request)) {
+    return { denied: json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403) };
+  }
   const auth = await requireUser(request);
-  if (!auth.ok) return auth.response;
+  if (!auth.ok) return { denied: auth.response };
   const per = perClient.check(clientKey(request));
   if (!per.ok) {
-    return rateLimited(per.retryAfterSeconds, "请求过于频繁，请 " + per.retryAfterSeconds + " 秒后再试。");
+    return {
+      denied: rateLimited(per.retryAfterSeconds, "请求过于频繁，请 " + per.retryAfterSeconds + " 秒后再试。"),
+    };
   }
-  return null;
+  return { user: { id: auth.user.id, admin: auth.user.role === "admin" } };
 }
 
 export async function GET(request: Request) {
-  const denied = await guard(request);
-  if (denied) return denied;
+  const gated = await guard(request);
+  if ("denied" in gated) return gated.denied;
   try {
-    return json({ ok: true, snapshot: await calibrationSnapshot() });
+    const snapshot = await calibrationSnapshot();
+    /**
+     * recent 里带着样本 id，而 id 现在是「贴标签的凭据」。
+     * 不是自己的样本，别把 id 交出去 —— 归属校验已经拦得住，但没理由先递刀。
+     * by 字段同样不下发：谁核验了什么不需要互相知道。
+     */
+    const recent = snapshot.recent.map((s) => ({
+      ...s,
+      by: undefined,
+      id: s.by === gated.user.id || gated.user.admin ? s.id : "",
+    }));
+    return json({ ok: true, snapshot: { ...snapshot, recent } });
   } catch (err) {
     return json({ ok: false, error: "internal", message: publicMessage(err, "读取校准样本失败。") }, 500);
   }
 }
 
 export async function POST(request: Request) {
-  const denied = await guard(request);
-  if (denied) return denied;
+  const gated = await guard(request);
+  if ("denied" in gated) return gated.denied;
 
   const limited = await readJsonBody(request, MAX_BODY_BYTES);
   if (!limited.ok) {
@@ -82,8 +98,23 @@ export async function POST(request: Request) {
   }
 
   try {
-    const res = await labelSample(parsed.data.id, parsed.data.correct);
+    const res = await labelSample(parsed.data.id, parsed.data.correct, gated.user);
     if (!res.ok) {
+      /**
+       * 「不是你的样本」与「样本没了」必须回不同的话：
+       * 前者是权限问题（换个人、或者去标自己那一轮），后者是时序问题（重跑一次）。
+       * 统一回 404 会让人一直重试。
+       */
+      if (res.denied) {
+        return json(
+          {
+            ok: false,
+            error: "not_your_sample",
+            message: "这条样本不是你那一轮核验产生的，只有它的发起人（或管理员）能贴标记。",
+          },
+          403,
+        );
+      }
       return json(
         {
           ok: false,

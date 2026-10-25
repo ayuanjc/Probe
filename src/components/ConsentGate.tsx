@@ -130,27 +130,44 @@ export default function ConsentGate({
     setFailed("");
     const at = Date.now();
     const msRead = at - startedAt.current;
+    // 只有「请求根本没到服务端」才能退回本地 cookie。
+    let res: Response | null = null;
     try {
-      const res = await fetch(appPath("/api/consent"), {
+      res = await fetch(appPath("/api/consent"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ version, at, msRead }),
       });
-      if (!res.ok) {
-        // 版本对不上（409）说明协议刚改过：让服务端渲染一次新的弹层文案。
-        if (res.status === 409) {
-          setAccepted(false);
-          setFailed("协议刚刚更新，页面将重新加载。");
-          setSubmitting(false);
-          router.refresh();
-          return;
-        }
-        throw new Error("consent failed: " + res.status);
-      }
     } catch {
+      res = null;
+    }
+
+    if (res && !res.ok) {
+      // 版本对不上（409）说明协议刚改过：让服务端渲染一次新的弹层文案。
+      if (res.status === 409) {
+        setAccepted(false);
+        setFailed("协议刚刚更新，页面将重新加载。");
+        setSubmitting(false);
+        router.refresh();
+        return;
+      }
+      /*
+       * 服务端明确拒绝（400/403/429/500）时**不能**放行。
+       *
+       * 原来这里只是 throw，然后被同一个 catch 接住写本地 cookie 并 setAccepted(true)：
+       * 服务端说「不收」，浏览器照样记下「已同意」并让人进门 —— 同意只存在于本地，
+       * 服务端没有任何同意记录，真出事时举证链是空的。拒绝就是拒绝，用户重试即可。
+       */
+      setFailed("提交失败（" + res.status + "），请稍后重试。");
+      setSubmitting(false);
+      return;
+    }
+
+    if (!res) {
       /**
-       * 网络断了也不该把人锁在门外 —— 服务端记录没写成只影响举证，
-       * 本地 cookie 仍然能让他继续用。这条路径不写日志，就没有「服务端同意记录」。
+       * 网络断了（TypeError）= 请求没到服务端，这时不该把人锁在门外：
+       * 本地 cookie 让他继续用，代价是这一条没有服务端同意记录。
+       * 注意区分：上面那条 res && !res.ok 是「服务端拒绝」，不走这里。
        */
       document.cookie = [
         CONSENT_COOKIE + "=" + consentCookieValue(version, at),

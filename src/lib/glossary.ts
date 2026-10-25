@@ -3,6 +3,14 @@
  * 每条都是「用户会怎么误读」而不是词典定义 —— 解释的目的是防止误读，不是补常识。
  */
 
+/*
+ * 文案里引用的常量直接 import，不要抄数字：
+ * 这两处曾写「0.74」「按 99 记」，而代码里是 0.64 与 RATIO_CAP = 9.99。
+ * 界面在解释一条不存在的规则，比不解释更糟。
+ */
+import { NO_CHECK_CONSISTENCY_CAP } from "./confidence";
+import { RATIO_CAP } from "./heat";
+
 export type GlossaryKey =
   | "ambiguity"
   | "confidence"
@@ -75,7 +83,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
     oneLine: "抽出的断言之间有没有互相矛盾。",
     body: [
       "把结构化断言两两比对（数字、日期、主体）。没有可核对的断言时取 0.5 —— 不是满分，也不是零分，是「不知道」。",
-      "因此当核对条数为 0 时，总分上限是 0.74：缺一致性证据，就不该出现高置信。",
+      `因此当核对条数为 0 时，总分上限是 ${NO_CHECK_CONSISTENCY_CAP}：缺一致性证据，就不该出现高置信。`,
     ],
   },
   nChecked: {
@@ -83,7 +91,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
     oneLine: "实际做了交叉比对的断言数量。",
     body: [
       "0 表示这一轮没有任何断言被两两核对过（常见于只有单一来源、或断言抽取未启用）。",
-      "它为 0 时一致性按 0.5 记，总分封顶 0.74。",
+      `它为 0 时一致性按 0.5 记，总分封顶 ${NO_CHECK_CONSISTENCY_CAP}。`,
     ],
   },
   nSyndicated: {
@@ -137,7 +145,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
     oneLine: "近 7 天的日均条数 ÷ 前 30 天的日均条数。1 就是和平时一样。",
     body: [
       "它回答的是「这两天是不是比平时多」，而不是「今天比昨天多了多少」：单日噪声会被 7 天平均抵掉。",
-      "分母用均值而不是中位数，是为了让「平时几乎没人提」的话题也能算出倍数；分母为 0 时按 99 记（从无到有）。",
+      `分母用均值而不是中位数，是为了让「平时几乎没人提」的话题也能算出倍数；分母为 0 时按上限 ${RATIO_CAP} 记（从无到有）。`,
       "代价是反应慢一拍：一个刚起来的爆发，r7 会把前面安静的几天一起平均进去。",
     ],
   },

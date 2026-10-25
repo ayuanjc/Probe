@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { appPath } from "@/lib/base-path";
 import { compile } from "@/lib/compile";
 import { DEFAULT_KIND, KIND_ZH, MODULE_SIZE, compileErrorText } from "@/lib/module-catalog";
@@ -61,6 +61,18 @@ export default function ModulePrompt({
     reason: string;
   } | null>(null);
   const seq = useRef(0);
+  /**
+   * 这个框在浮层里：点「生成」后浮层立刻收起，组件随之卸载。
+   * 请求还在飞时卸载，回调里那句 onAdd 会往已经变了形态的网格里插卡。
+   * 卸载后就别再动外部状态了 —— abort 省流量，真正的闸门是这个标志。
+   */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const taken = useMemo(() => new Set(modules.map((m) => m.id)), [modules]);
 
@@ -89,6 +101,7 @@ export default function ModulePrompt({
         body: JSON.stringify({ instruction: ask, datasets: datasets.map(toMeta) }),
       });
       const data = (await res.json().catch(() => null)) as ModulePlanReply | null;
+      if (!alive.current) return;
       if (!data) {
         setError("接口没有返回可读结果（" + res.status + "）。");
         return;
@@ -143,9 +156,11 @@ export default function ModulePrompt({
       setOk({ id, title: spec.title, engine: data.engine, reason: data.reason });
       setInstruction("");
     } catch (err) {
+      if (!alive.current) return;
       setError(err instanceof Error ? err.message : "请求失败");
     } finally {
-      setBusy(false);
+      // 卸载后 setBusy 没有意义，但留着也无害；这里只在还活着时收尾。
+      if (alive.current) setBusy(false);
     }
   }
 

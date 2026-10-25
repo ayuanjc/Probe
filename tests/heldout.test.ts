@@ -73,7 +73,29 @@ test("检索器：把检索词交给 search，并把自证剔掉", async () => {
     0,
   );
   assert.deepEqual(calls, ["21.3 十亿美元 营收"]);
-  assert.deepEqual(got.map((x) => x.id), ["e2"]);
+  // 自证那条（nvidia.com）被剔掉，留下的是 reuters 那条。
+  assert.deepEqual(got.map((x) => x.url), ["https://reuters.com/e2"]);
+  /*
+   * id 必须带 claimIndex。
+   *
+   * 上游检索器每次都从头编号（held-0、held-1…），不同断言之间必然撞号；
+   * 消费方按 id 建 map 去重，撞号会让有效独立源数系统性少算 ——
+   * 所以这里断言的是「带本断言下标」，不是某个具体名字。
+   */
+  assert.deepEqual(got.map((x) => x.id), ["held-0-0"]);
+});
+
+test("检索器：不同断定言的证据 id 不撞号", async () => {
+  const find = makeHeldoutRetriever({
+    citedOwners: [],
+    search: async () => [ev("e1", "reuters.com"), ev("e2", "apnews.com")],
+  });
+  const claim = { attr: "营收", value: "1", quote: "原文四个字", sourceIds: ["s1"], kind: "quantitative" as const };
+  const a = await find(claim, 3);
+  const b = await find(claim, 7);
+  assert.deepEqual(a.map((x) => x.id), ["held-3-0", "held-3-1"]);
+  assert.deepEqual(b.map((x) => x.id), ["held-7-0", "held-7-1"]);
+  assert.equal(new Set([...a, ...b].map((x) => x.id)).size, 4);
 });
 
 test("检索器：search 抛错时往上抛，不伪装成空集", async () => {

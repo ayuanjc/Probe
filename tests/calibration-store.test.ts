@@ -13,7 +13,12 @@ import {
   type CalibrationSample,
 } from "@/lib/calibration-store";
 
-function sample(id: string, predicted: number, correct: boolean | null = null): CalibrationSample {
+function sample(
+  id: string,
+  predicted: number,
+  correct: boolean | null = null,
+  by: string | null = "u1",
+): CalibrationSample {
   return {
     id,
     at: 1_000,
@@ -22,6 +27,7 @@ function sample(id: string, predicted: number, correct: boolean | null = null): 
     nEff: 3,
     contradicted: 0,
     claims: 5,
+    by,
     correct,
     labeledAt: correct === null ? null : 2_000,
   };
@@ -54,14 +60,15 @@ test("appendSample：同 id 覆盖，超上限丢最老的", () => {
 });
 
 test("applyLabel：命中就改，未命中不改且返回新数组", () => {
+  // sample() 默认 by="u1"：这里以本人身份标，才走得到「命中就改」那条路。
   const list = [sample("a", 0.8), sample("b", 0.6)];
-  const hit = applyLabel(list, "b", true, 9_000);
+  const hit = applyLabel(list, "b", true, 9_000, { id: "u1", admin: false });
   assert.equal(hit.ok, true);
   assert.equal(hit.list[1].correct, true);
   assert.equal(hit.list[1].labeledAt, 9_000);
   assert.equal(hit.list[0].correct, null);
 
-  const miss = applyLabel(list, "zzz", true, 9_000);
+  const miss = applyLabel(list, "zzz", true, 9_000, { id: "u1", admin: false });
   assert.equal(miss.ok, false);
   assert.notEqual(miss.list, list);
   assert.deepEqual(miss.list.map((s) => s.correct), [null, null]);
@@ -129,7 +136,7 @@ test("parseSamples：坏文件当空库，脏条目逐条丢", () => {
 test("recordSample / labelSample：走存储往返", async () => {
   const store = mem();
   const s = await recordSample(
-    { predicted: 0.73, judged: 4, nEff: 3.1, contradicted: 1, claims: 6 },
+    { by: "u1", predicted: 0.73, judged: 4, nEff: 3.1, contradicted: 1, claims: 6 },
     store,
   );
   assert.match(s.id, /^cal_/);
@@ -139,14 +146,48 @@ test("recordSample / labelSample：走存储往返", async () => {
   assert.equal(read.length, 1);
   assert.equal(read[0].predicted, 0.73);
 
-  const miss = await labelSample("cal_nope", true, store);
+  const miss = await labelSample("cal_nope", true, { id: "u1", admin: false }, store);
   assert.equal(miss.ok, false);
+  assert.equal(miss.denied, false);
   assert.equal((await readSamples(store))[0].correct, null);
 
-  const hit = await labelSample(s.id, true, store);
+  const hit = await labelSample(s.id, true, { id: "u1", admin: false }, store);
   assert.equal(hit.ok, true);
   assert.equal(hit.sample?.correct, true);
   const after = await readSamples(store);
   assert.equal(after[0].correct, true);
   assert.ok(JSON.parse(store.raw() as string));
+});
+test("applyLabel：别人的样本标不了，管理员可以；历史样本只认管理员", () => {
+  const list = [sample("mine", 0.8, null, "u1"), sample("other", 0.7, null, "u2"), sample("legacy", 0.6, null, null)];
+
+  // 不是自己的：拒绝，且不写任何东西
+  const denied = applyLabel(list, "other", true, 9_000, { id: "u1", admin: false });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.denied, true);
+  assert.equal(denied.list.find((s) => s.id === "other")?.correct, null);
+
+  // 自己的：放行
+  const mine = applyLabel(list, "mine", true, 9_000, { id: "u1", admin: false });
+  assert.equal(mine.ok, true);
+
+  // 管理员：谁都能标
+  const asAdmin = applyLabel(list, "other", false, 9_000, { id: "root", admin: true });
+  assert.equal(asAdmin.ok, true);
+
+  // 历史样本（by=null）证明不了归属，普通用户标不了、管理员可以
+  const legacyByUser = applyLabel(list, "legacy", true, 9_000, { id: "u1", admin: false });
+  assert.equal(legacyByUser.denied, true);
+  const legacyByAdmin = applyLabel(list, "legacy", true, 9_000, { id: "root", admin: true });
+  assert.equal(legacyByAdmin.ok, true);
+});
+
+test("recordSample：写明 by，未登录落 null", async () => {
+  const store = mem();
+  const owned = await recordSample({ by: "u9", predicted: 0.5, judged: 2, nEff: 1, contradicted: 0, claims: 3 }, store);
+  assert.equal(owned.by, "u9");
+  const anon = await recordSample({ predicted: 0.4, judged: 1, nEff: 1, contradicted: 0, claims: 2 }, store);
+  assert.equal(anon.by, null);
+  const list = await readSamples(store);
+  assert.deepEqual(list.map((s) => s.by), ["u9", null]);
 });

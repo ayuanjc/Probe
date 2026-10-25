@@ -55,6 +55,8 @@ function gate(request: Request): Response | null {
 }
 
 export async function GET(request: Request) {
+  /** 只读接口也拒跨站：这些响应里全是账号与地址指纹，没有一处是给别的站点读的。 */
+  if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
   const limited = gate(request);

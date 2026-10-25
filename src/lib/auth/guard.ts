@@ -23,9 +23,25 @@ import { SESSION_COOKIE, clearCookie } from "./session";
 export type AuthMode = "on" | "off";
 
 /** PROBE_AUTH_MODE=off 只在本地调试用；默认 on。 */
+let warnedOpenAuth = false;
+
 export function authMode(): AuthMode {
   const raw = (process.env.PROBE_AUTH_MODE ?? "on").trim().toLowerCase();
-  return raw === "off" || raw === "0" || raw === "false" || raw === "disabled" ? "off" : "on";
+  const off = raw === "off" || raw === "0" || raw === "false" || raw === "disabled";
+  if (!off) return "on";
+  /**
+   * authMode=off 时每个请求都直接拿到一个 admin 身份的占位用户 —— 也就是说
+   * 后台用户管理、审计、邀请码这些接口对任何能访问到端口的人敞开。
+   * 本地调试这样很方便，生产环境上它等于「没有鉴权」。这里不改行为（改了就违背运维的显式配置），
+   * 但一定要在日志里喊出来：出事时第一眼看的就是这几行。
+   */
+  if (!warnedOpenAuth && process.env.NODE_ENV === "production") {
+    warnedOpenAuth = true;
+    console.warn(
+      "[auth] PROBE_AUTH_MODE=off：所有 API 都会以管理员身份执行，且不校验会话。生产环境请设回 on。",
+    );
+  }
+  return "off";
 }
 
 let bootstrap: Promise<void> | null = null;

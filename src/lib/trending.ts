@@ -121,12 +121,16 @@ function toStory(hit: HnHit): TrendingStory | null {
   const title = (hit.title ?? "").trim();
   if (title.length < 8) return null;
   const url = hit.url ?? "https://news.ycombinator.com/item?id=" + hit.objectID;
+  // created_at_i 缺失/非数字时 toISOString() 抛 RangeError，整批故事全丢；
+  // 单条时间不可解析就单条丢弃，其余照常展示。
+  const sec = Number(hit.created_at_i);
+  if (!Number.isFinite(sec)) return null;
   return {
     title,
     url,
     points: hit.points ?? 0,
     comments: hit.num_comments ?? 0,
-    createdAt: new Date(hit.created_at_i * 1000).toISOString(),
+    createdAt: new Date(sec * 1000).toISOString(),
     host: hostOf(url),
   };
 }
@@ -234,11 +238,28 @@ function rankTopics(topics: TrendingTopic[]): void {
 }
 
 let cache: { at: number; ttl: number; snapshot: TrendingSnapshot } | null = null;
+/**
+ * 同刻并发只打一次上游。
+ *
+ * 首页首屏与 /api/trending 会同时到达：缓存还是空的，两边都进入 buildSnapshot，
+ * HN 被请求两遍（每遍最多 1000 条 story + 逐条聚合），基线构建也会被触发两次 ——
+ * 而这条链路上游是限流的第三方，重复请求换来的只是一份一模一样的榜单。
+ * 用一次 in-flight Promise 复用：后来的调用者直接等同一份结果。
+ * 注意 force=true 也会加入在飞的那次（force 的语义是「别用旧缓存」，不是「再打一遍上游」）。
+ */
+let inflight: Promise<TrendingSnapshot> | null = null;
 
 export async function getTrending(force = false): Promise<TrendingSnapshot> {
   const now = Date.now();
   if (!force && cache && now - cache.at < cache.ttl) return cache.snapshot;
+  if (inflight) return inflight;
+  inflight = buildSnapshot(now).finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
 
+async function buildSnapshot(now: number): Promise<TrendingSnapshot> {
   const degraded: string[] = [];
   const since = Math.floor(now / 1000) - WINDOW_HOURS * 3600;
 

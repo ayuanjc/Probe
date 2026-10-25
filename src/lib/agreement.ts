@@ -141,7 +141,16 @@ export function fleissKappa(matrix: Matrix): KappaStats | null {
   const { rows, items, raters } = m;
 
   let pObservedSum = 0;
-  const colSum = new Array<number>(raters).fill(0);
+  /*
+   * 列数 = **类别数**（row 的宽度），不是判定者数。
+   *
+   * 原本写的是 new Array(raters)：只要类别比判定者多，colSum[j] 就是 undefined，
+   * colSum[j] += row[j] 变成 NaN，pExpected 跟着 NaN —— 而下面那句
+   * Math.abs(1 - pExpected) < 1e-12 对 NaN 恒为假，于是 NaN 一路返回成 kappa，
+   * 界面显示 NaN，而不是「未知」。readMatrix 已保证每行等宽，取第一行长度即可。
+   */
+  const width = rows[0]?.length ?? 0;
+  const colSum = new Array<number>(width).fill(0);
   for (const row of rows) {
     let agree = 0;
     for (let j = 0; j < row.length; j++) {

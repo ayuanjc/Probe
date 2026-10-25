@@ -148,10 +148,11 @@ function TopicCard({
           onClick={() => onPick(topic.name)}
           className="min-w-0 flex-1 truncate text-left text-[15px] font-medium text-white transition-colors hover:text-blue-400"
         >
-          {topic.name}
+          {topic.name || topic.key || "（未命名话题）"}
         </button>
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-blue-500">
-          {topic.articles24h} 条
+          {/* 字段可能缺失：直接插值会印出「undefined 条」。 */}
+          {Number.isFinite(topic.articles24h) ? topic.articles24h : 0} 条
         </span>
       </div>
 

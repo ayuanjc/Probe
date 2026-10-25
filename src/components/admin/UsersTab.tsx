@@ -117,17 +117,23 @@ export default function UsersTab({
     await reload();
   };
 
-  const patchUser = async (id: string, patch: Record<string, unknown>, label: string) => {
-    if (busy) return;
+  /** 返回是否真的改成功了：调用方要靠它决定「清空输入 / 收起输入行」能不能做。 */
+  const patchUser = async (
+    id: string,
+    patch: Record<string, unknown>,
+    label: string,
+  ): Promise<boolean> => {
+    if (busy) return false;
     setBusy(id + label);
     const r = await api("/api/admin/users", { method: "PATCH", body: { id, ...patch } });
     setBusy("");
     if (!r.ok) {
       onSay({ kind: "err", text: r.message });
-      return;
+      return false;
     }
     onSay({ kind: "ok", text: "已" + label });
     await reload();
+    return true;
   };
 
   const removeUser = async (user: PublicUser) => {
@@ -148,7 +154,14 @@ export default function UsersTab({
       onSay({ kind: "err", text: "新密码至少 10 位。" });
       return;
     }
-    await patchUser(user.id, { newPassword: resetValue }, "重置密码");
+    /*
+     * 失败时不能清空。
+     *
+     * 原来无条件清空并收起输入行：管理员输了 20 位密码、服务端 400/500 回来，
+     * 界面上唯一的痕迹就是一闪而过的提示，输入框已经空了 —— 他只会以为密码改了。
+     */
+    const ok = await patchUser(user.id, { newPassword: resetValue }, "重置密码");
+    if (!ok) return;
     setResetFor(null);
     setResetValue("");
   };

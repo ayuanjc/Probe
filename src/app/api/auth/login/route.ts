@@ -21,6 +21,54 @@ const perClient = createLimiter({
 
 const MAX_BODY_BYTES = 4_000;
 
+/**
+ * 按账号的失败退避。
+ *
+ * 现有的 per-IP 5 次/分钟挡不住「同一账号、很多个 IP」的撞库：
+ * 换一批代理就是一个新 IP，每个 IP 都只试 1-2 次，永远不会触发限流。
+ * 这里按**用户名**记失败次数，失败多了就在响应前多睡一会儿（指数退避、封顶 1.5 秒）。
+ *
+ * 为什么是延迟而不是直接 429：硬锁会让人拿别人的用户名把对方锁在门外（拒绝服务）。
+ * 延迟只惩罚正在试的人 —— 正常用户输错两次几乎无感，而撞库的每次尝试都变慢。
+ */
+const BAD_WINDOW_MS = 15 * 60_000;
+const BAD_SOFT_LIMIT = 3;
+const badByName = new Map<string, { n: number; at: number }>();
+
+function backoffFor(name: string): number {
+  if (!name) return 0;
+  const rec = badByName.get(name);
+  if (!rec) return 0;
+  if (Date.now() - rec.at > BAD_WINDOW_MS) {
+    badByName.delete(name);
+    return 0;
+  }
+  if (rec.n < BAD_SOFT_LIMIT) return 0;
+  return Math.min(1_500, (rec.n - BAD_SOFT_LIMIT + 1) * 200);
+}
+
+function noteBadName(name: string): void {
+  if (!name) return;
+  const rec = badByName.get(name);
+  const now = Date.now();
+  if (!rec || now - rec.at > BAD_WINDOW_MS) {
+    badByName.set(name, { n: 1, at: now });
+  } else {
+    badByName.set(name, { n: rec.n + 1, at: now });
+  }
+  // 表本身不能无界：过期条目先清，仍然太多就整体丢掉（丢掉的代价只是退避重置）。
+  if (badByName.size > 2_048) {
+    for (const [key, value] of badByName) {
+      if (now - value.at > BAD_WINDOW_MS) badByName.delete(key);
+    }
+    if (badByName.size > 2_048) badByName.clear();
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** 用户不存在时拿去空转的哈希，只在第一次用到时算一次。 */
 let dummyHash: Promise<string> | null = null;
 function getDummyHash(): Promise<string> {
@@ -69,12 +117,16 @@ export async function POST(request: Request) {
   try {
     await ensureBootstrap();
     const user = username ? await findUserByUsername(username) : null;
+    // 失败次数够了就先慢下来（在付出 scrypt 代价之前，省得被当 CPU 放大器）。
+    const wait = backoffFor(username ?? "");
+    if (wait > 0) await sleep(wait);
     // 无论有没有这个用户，都付出一次 scrypt 的代价。
     const ok = user
       ? await verifyPassword(password, user.passwordHash)
       : await verifyPassword(password, await getDummyHash());
 
     if (!user || !ok) {
+      noteBadName(username ?? "");
       await audit({ actor: username ?? rawName.slice(0, 32), action: "login_failed", ip });
       return json({ ok: false, error: "bad_credentials", message: "用户名或密码不正确。" }, 401);
     }
@@ -83,6 +135,8 @@ export async function POST(request: Request) {
       return json({ ok: false, error: "account_disabled", message: "账号已被停用，请联系管理员。" }, 403);
     }
 
+    // 登录成功就把这个账号的失败计数清掉：一次成功足够证明它是本人在用。
+    if (username) badByName.delete(username);
     const session = await issueSession(user.id, request, {
       ipHash: hashAddress(ip),
       userAgent: request.headers.get("user-agent") ?? "",

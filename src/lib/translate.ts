@@ -20,6 +20,14 @@ const FETCH_TIMEOUT_MS = 8000;
 const TRANSLATE_TIMEOUT_MS = 7000;
 const DOC_MAX_CHARS = 6000;
 const MAX_SEGMENTS = 48;
+/**
+ * 单次 /api/translate 的总墙钟预算。
+ *
+ * 以前只有「单段 7 秒 × 重试 2 次 × 3 个并发 × 最多 48 段」这个乘积：
+ * 最坏情况下单请求能挂 ~224 秒，路由早就超时返回了，而上游额度照样被烧完。
+ * 现在整条链路共享一个 deadline，超了就带着 engine:partial_NofM 收工。
+ */
+const TOTAL_BUDGET_MS = 20_000;
 const SEG_TARGET_CHARS = 260;
 
 type Fetched = { ok: boolean; text: string; title: string; reason?: string; truncated?: boolean };
@@ -73,7 +81,12 @@ function toText(html: string): { title: string; body: string } {
   return { title, body: text };
 }
 
-export async function fetchArticle(url: string): Promise<Fetched> {
+/**
+ * 抓正文。maxChars 让调用方决定截断口径：对照页只要 6000 字就够，
+ * 文档核验要的是完整正文（见 verify-doc.ts 的 VERIFY_MAX_CHARS）——
+ * 原来两边共用 DOC_MAX_CHARS，核验宣称处理 4 万字，实际只拿到 6000 字。
+ */
+export async function fetchArticle(url: string, maxChars = DOC_MAX_CHARS): Promise<Fetched> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -103,20 +116,37 @@ export async function fetchArticle(url: string): Promise<Fetched> {
 
     const type = rep.contentType;
     const raw = rep.body;
-    if (!type.includes("html") && !type.includes("xml") && !type.includes("text/plain")) {
+    /*
+     * content-type 不可全信。
+     *
+     * 不少站点（尤其是前置了 WAF 或对象存储的）回 application/octet-stream，
+     * 有的干脆不带 content-type —— 于是明明是一篇 HTML，被判成 not_html，
+     * 界面写「这条信源没有可对照的正文」。类型缺失时直接看正文开头。
+     */
+    const looksHtml = /^(?:\s|\uFEFF)*(?:<!doctype\s+html|<html|<head|<body)/i.test(raw);
+    if (
+      !type.includes("html") &&
+      !type.includes("xml") &&
+      !type.includes("text/plain") &&
+      !looksHtml
+    ) {
       return { ok: false, text: "", title: "", reason: "not_html" };
     }
 
     const { title, body } = toText(raw);
     if (body.length < 120) return { ok: false, text: "", title, reason: "too_short" };
 
-    const truncated = body.length > DOC_MAX_CHARS;
-    return { ok: true, text: truncated ? body.slice(0, DOC_MAX_CHARS) : body, title, truncated };
+    const cap = Math.max(1, Math.floor(maxChars));
+    const truncated = body.length > cap;
+    return { ok: true, text: truncated ? body.slice(0, cap) : body, title, truncated };
   }
 }
 
 /** 按段落 → 句子切分。太短的句子并回上一段，避免出现"一句话一个卡片"。 */
-export function splitSegments(text: string, max = MAX_SEGMENTS): { segments: string[]; truncated: boolean } {
+export function splitSegments(
+  text: string,
+  max = MAX_SEGMENTS,
+): { segments: string[]; truncated: boolean; /** 截断前的段数（分页/覆盖率都要用真实分母） */ total: number } {
   const clean = text.replace(/\r/g, "").replace(/[ \t]+/g, " ").trim();
   const paras = clean.split(/\n{1,}/).map((p) => p.trim()).filter((p) => p.length > 0);
 
@@ -159,7 +189,7 @@ export function splitSegments(text: string, max = MAX_SEGMENTS): { segments: str
   }
 
   const truncated = merged.length > max;
-  return { segments: truncated ? merged.slice(0, max) : merged, truncated };
+  return { segments: truncated ? merged.slice(0, max) : merged, truncated, total: merged.length };
 }
 
 /* ------------------------------- 引擎 ------------------------------- */
@@ -193,7 +223,7 @@ function cacheSet(key: string, dst: string): void {
 
 type MemReply = { translatedText?: string; quotaFinished?: boolean; responseStatus?: number | string };
 
-async function memTranslateOne(text: string, pair: string): Promise<string> {
+async function memTranslateOne(text: string, pair: string, deadline?: number): Promise<string> {
   const key = pair + "\u0000" + text;
   const cached = cacheGet(key);
   if (cached) return cached;
@@ -209,6 +239,8 @@ async function memTranslateOne(text: string, pair: string): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const rep = await getDirect(url, {
       timeoutMs: TRANSLATE_TIMEOUT_MS,
+      // 只剩 1 秒预算时就只等 1 秒：单段超时不能突破总预算。
+      deadline,
       headers: { accept: "application/json" },
       maxBytes: 400_000,
     });
@@ -245,6 +277,7 @@ async function memTranslateOne(text: string, pair: string): Promise<string> {
 async function memTranslateAll(
   segments: string[],
   pair: string,
+  deadline?: number,
 ): Promise<{ dsts: string[]; failed: number; reason?: string }> {
   const dsts = new Array<string>(segments.length).fill("");
   let failed = 0;
@@ -254,8 +287,14 @@ async function memTranslateAll(
   const workers = new Array(Math.min(3, segments.length)).fill(0).map(async () => {
     while (cursor < segments.length) {
       const i = cursor++;
+      // 预算耗尽后不再发请求：剩下的段直接记未翻，界面据此显示「部分未译」。
+      if (deadline !== undefined && Date.now() >= deadline) {
+        failed++;
+        reason = reason ?? "mymemory_deadline";
+        continue;
+      }
       try {
-        dsts[i] = await memTranslateOne(segments[i], pair);
+        dsts[i] = await memTranslateOne(segments[i], pair, deadline);
       } catch (err) {
         failed++;
         reason = err instanceof Error ? err.message : "mymemory_failed";
@@ -270,7 +309,12 @@ const TranslationSchema = z.object({
   items: z.array(z.object({ i: z.number().int().min(0), dst: z.string() })),
 });
 
-async function llmTranslateAll(segments: string[], from: LangCode, to: LangCode): Promise<string[] | null> {
+async function llmTranslateAll(
+  segments: string[],
+  from: LangCode,
+  to: LangCode,
+  signal?: AbortSignal,
+): Promise<string[] | null> {
   const numbered = segments.map((s, i) => i + 1 + ". " + s).join("\n");
   const out = await generateStructured({
     schema: TranslationSchema,
@@ -279,7 +323,7 @@ async function llmTranslateAll(segments: string[], from: LangCode, to: LangCode)
       "不要合并、不要删减、不要补充解释，不要改写成更通顺的版本。i 从 0 开始，与输入编号一一对应。",
     prompt:
       "目标语言：" + LANG_NAME[to].zh + "（" + to + "）\n源语言：" + LANG_NAME[from].zh + "\n\n" + numbered,
-  });
+  }, undefined, signal);
   if (!out) return null;
   const dsts = new Array<string>(segments.length).fill("");
   for (const item of out.items) {
@@ -386,13 +430,15 @@ export async function translateDocument(input: TranslateInput): Promise<Translat
   let engineNote = "";
   let dsts: string[] = new Array(segments.length).fill("");
 
-  const llm = await llmTranslateAll(segments, from, to);
+  // 整条链路的 deadline（抓正文已经花掉的时间要扣掉，不能重新计时）。
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
+  const llm = await llmTranslateAll(segments, from, to, AbortSignal.timeout(TOTAL_BUDGET_MS));
   if (llm) {
     engine = "llm";
     engineNote = "模型逐段翻译（保留数字与专名，不改写）";
     dsts = llm;
   } else if (pair) {
-    const mem = await memTranslateAll(segments, pair);
+    const mem = await memTranslateAll(segments, pair, deadline);
     if (mem.failed === segments.length) {
       degraded.push("engine:unavailable");
       engineNote = "翻译引擎不可用，仅展示原文分段。";
@@ -407,7 +453,13 @@ export async function translateDocument(input: TranslateInput): Promise<Translat
     engineNote = "该语言对没有可用引擎，仅展示原文分段。";
   }
 
-  if (fetchReason) {
+  /*
+   * 只有「正文确实没拿到、退回了摘要」才说只对照了片段。
+   *
+   * fetchReason 一有值就 push 的话，docSource 仍是 provided 的情形（前端把原文片段
+   * 一起传上来了，压根不需要抓全文）也会被写成「只对照了标题」—— 界面在谎报口径。
+   */
+  if (fetchReason && docSource !== "provided") {
     degraded.push("doc:title_only");
   }
 

@@ -132,24 +132,41 @@ export function SignupPanel() {
   const [error, setError] = useState("");
   const [invite, setInvite] = useState<{ valid: boolean; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 在飞的验码请求：换码或卸载时 abort，别让旧响应落在新码下面。 */
+  const inflight = useRef<AbortController | null>(null);
+  /** 最新要问的码。响应回来时比对，不是最新就丢弃（闭包里的 trimmed 拦不住这件事）。 */
+  const want = useRef("");
 
   // 邀请码边输边验：等 400ms 不敲了再问，避免每敲一个字符打一次接口。
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     const trimmed = code.trim();
+    want.current = trimmed;
+    inflight.current?.abort();
+    inflight.current = null;
     if (trimmed.length < 8) {
       setInvite(null);
       return;
     }
     timer.current = setTimeout(async () => {
+      const ac = new AbortController();
+      inflight.current = ac;
       try {
-        const res = await fetch(appPath(`/api/auth/signup?code=${encodeURIComponent(trimmed)}`));
-        const data = (await res.json()) as {
+        const res = await fetch(appPath(`/api/auth/signup?code=${encodeURIComponent(trimmed)}`), {
+          signal: ac.signal,
+        });
+        // 错误页/网关页不是 JSON：parse 失败是「没问出来」，不是「邀请码不可用」。
+        const data = (await res.json().catch(() => null)) as {
           valid?: boolean;
           reason?: string;
           role?: string;
           remainingUses?: number;
-        };
+        } | null;
+        if (ac.signal.aborted || want.current !== trimmed) return;
+        if (!res.ok || !data) {
+          setInvite(null);
+          return;
+        }
         if (data.valid) {
           setInvite({
             valid: true,
@@ -166,11 +183,14 @@ export function SignupPanel() {
           setInvite({ valid: false, text: map[data.reason ?? ""] ?? "邀请码不可用" });
         }
       } catch {
-        setInvite(null);
+        // 自己 abort 掉的不算「查不到」。
+        if (ac.signal.aborted) return;
+        if (want.current === trimmed) setInvite(null);
       }
     }, 400);
     return () => {
       if (timer.current) clearTimeout(timer.current);
+      inflight.current?.abort();
     };
   }, [code]);
 

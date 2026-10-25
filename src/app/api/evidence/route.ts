@@ -16,6 +16,7 @@ import { makeHeldoutDeps, tavilyHeldoutSearch } from "@/agents/heldout";
 import { llmEnabled } from "@/lib/llm";
 import { selectVerifiable } from "@/lib/check-worthy";
 import { recordSample } from "@/lib/calibration-store";
+import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,6 +97,23 @@ export async function POST(request: Request) {
   }
 
   const body = parsed.data;
+  /**
+   * 这条路由此前**完全没进 ALS**（AsyncLocalStorage 运行时配置）。
+   *
+   * 后果不是慢一点，是整个功能对主力配置失效：设置面板里填的 Tavily / 模型 key 走的是
+   * 请求头 → ALS，而这里读的是进程环境 → 没配 env 的部署永远返回「本机缺留出集检索」，
+   * 用户明明在面板里填了 key 却被告知没有。反过来 env 有 key 时又绕过了区域闸门，
+   * 按 env 而不是按这次请求的来源决定出不出境。
+   */
+  const cfg = await prepareRuntimeConfig(request);
+  return withRuntimeConfig(cfg, () => handle(request, body, auth.user.id));
+}
+
+async function handle(
+  request: Request,
+  body: z.infer<typeof Body>,
+  userId: string,
+): Promise<Response> {
   const release = gate.acquire();
   if (!release) return json({ ok: false, error: "busy", message: "已有一轮核验在跑，请稍后再试。" }, 503);
 
@@ -118,8 +136,9 @@ export async function POST(request: Request) {
     const canJudge = llmEnabled();
     const deps = makeHeldoutDeps({
       search,
-      judge: llmJudge(),
+      judge: llmJudge(undefined, request.signal),
       citedOwners: body.citedOwners,
+      signal: request.signal,
     });
     if (!deps || !canJudge) {
       const empty = buildDossier({ claims: [], verdicts: [], evidence: [], citedOwners: body.citedOwners });
@@ -142,7 +161,10 @@ export async function POST(request: Request) {
       });
     }
 
-    const res = await verifyClaims(body.claims, deps, { citedOwners: body.citedOwners });
+    const res = await verifyClaims(body.claims, deps, {
+      citedOwners: body.citedOwners,
+      signal: request.signal,
+    });
     const picked = pickJudged(body.claims, res.verdicts);
     const result = buildDossier({
       claims: picked.claims,
@@ -165,6 +187,7 @@ export async function POST(request: Request) {
     if (result.view.agreement && result.counts.judged > 0) {
       try {
         const sample = await recordSample({
+          by: userId,
           predicted: result.view.agreement.value,
           judged: result.counts.judged,
           nEff: result.view.nEff,

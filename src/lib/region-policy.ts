@@ -38,8 +38,15 @@ const CN_MODEL_HOSTS: readonly string[] = [
   "spark-api-open.xf-yun.com", // 讯飞星火
 ];
 
+/*
+ * 本机 / 内网模型端点。这张表要和 service-labels.ts 的 LOCAL_HOSTS 对齐：
+ * 那边把 host.docker.internal 显示成「本机 / 内网模型」，这边却判成境外域名，
+ * 结果是「界面说这是本机模型，策略把境内用户挡在这台本机模型外面」——
+ * 在 Docker 里跑 ollama 的人 100% 会撞上，而且报错说的是「区域不允许」。
+ * 169.254.x.x（链路本地 / 各云元数据）也一并算内网：它绝不该被当成公网模型端。
+ */
 const PRIVATE_HOST_RE =
-  /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|::1|\[::1\])$/;
+  /^(localhost|host\.docker\.internal|127\.\d+\.\d+\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|::1|\[::1\]|\[?::ffff:169\.254\.\d+\.\d+\]?)$/;
 
 export type RegionPolicy = {
   region: Region;

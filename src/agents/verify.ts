@@ -85,6 +85,12 @@ export type VerifyOptions = {
   maxClaims?: number;
   /** 每条断言最多回填几条证据 id，只影响展开区长度。 */
   maxEvidenceIds?: number;
+  /**
+   * 请求取消信号。要按 break 判、不能等到下一条断言才发现 ——
+   * 一轮核验十几条、每条一次检索 + 一次判定，中途取消后继续跑完就是几十次白花的上游调用，
+   * 而且会一直占着并发闸门（别人的核验只能 503）。
+   */
+  signal?: AbortSignal;
 };
 
 const DEFAULT_MAX_CLAIMS = 12;
@@ -266,7 +272,12 @@ export async function verifyClaims(
   // 重复投票，而它们其实只代表一家媒体的一个说法。
   const seenEvidence = new Map<string, HeldoutEvidence>();
 
+  let aborted = false;
   for (const item of batch) {
+    if (opts.signal?.aborted) {
+      aborted = true;
+      break;
+    }
     const one = await verifyOne(item.claim, item.index, deps, {
       citedOwners: opts.citedOwners,
       maxEvidenceIds: maxEvidence,
@@ -274,6 +285,20 @@ export async function verifyClaims(
     verdicts.push(one.verdict);
     degraded.push(...one.degraded);
     for (const e of one.evidence) if (!seenEvidence.has(e.id)) seenEvidence.set(e.id, e);
+  }
+
+  /**
+   * 中途取消：没跑完的那几条补「已取消」的 neutral，而不是让它们凭空消失。
+   * 界面按 claimIndex 找 verdict，缺一条就是那一行永远停在「核验中」。
+   * 同时记一条 degraded：这一轮的吻合度**不能**当成完整结论来看。
+   */
+  if (aborted) {
+    const ran = new Set(verdicts.map((v) => v.claimIndex));
+    for (const item of batch) {
+      if (ran.has(item.index)) continue;
+      verdicts.push(neutral(item.index, "核验被取消（页面关闭或请求中断），这条没有比对。"));
+    }
+    degraded.push("verify:aborted");
   }
 
   return {
@@ -310,7 +335,7 @@ export function alignVerdicts(claims: Claim[], verdicts: ClaimVerdict[]): ClaimV
  * 默认判定器：把断言与留出证据一起交给模型，要求三态之一 + 一句理由。
  * 无 key 时返回 null（调用方按未核验计），绝不返回一个「大概是 support」的猜测。
  */
-export function llmJudge(sink?: UsageSink): VerifyDeps["judge"] {
+export function llmJudge(sink?: UsageSink, signal?: AbortSignal): VerifyDeps["judge"] {
   return async (claim, evidence) => {
     if (!llmEnabled()) return null;
     const bundle = evidence.slice(0, 6).map((e) => ({
@@ -339,6 +364,7 @@ export function llmJudge(sink?: UsageSink): VerifyDeps["judge"] {
           JSON.stringify(bundle, null, 1),
       },
       sink,
+      signal,
     );
   };
 }

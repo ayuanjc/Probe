@@ -8,7 +8,19 @@
  * 读 NEXT_PUBLIC_ 前缀的变量：只有这个前缀会被内联进浏览器 bundle，
  * 服务端的 PROBE_BASE_PATH（next.config.ts 用的那个）在客户端是读不到的。
  */
-export const BASE_PATH = (process.env.NEXT_PUBLIC_PROBE_BASE_PATH ?? "").replace(/\/+$/, "");
+export const BASE_PATH = (() => {
+  const raw = (process.env.NEXT_PUBLIC_PROBE_BASE_PATH ?? "").trim();
+  /*
+   * 前导斜杠不是可选项。
+   *
+   * 配成 "probe" 时 appPath("/api/search") 得到 "probe/api/search" —— 一个**相对路径**，
+   * 浏览器会把它解析成 /<当前目录>/probe/api/search：在 /account 页上就是
+   * /account/probe/api/search，404；在根路径上又碰巧像是能用，于是这个错只在
+   * 二级路由上暴露。补一个斜杠，比让每个调用点各自猜要可靠。
+   */
+  const withSlash = raw && !raw.startsWith("/") ? "/" + raw : raw;
+  return withSlash.replace(/\/+$/, "");
+})();
 
 /** 把站内绝对路径拼上部署前缀：appPath("/api/search") → "/probe/api/search"。 */
 export function appPath(p: string): string {

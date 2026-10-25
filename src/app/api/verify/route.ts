@@ -5,6 +5,7 @@ import { runVerify } from "@/agents/verify-pipeline";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
+import { usageAccumulator } from "@/lib/metrics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,10 +60,14 @@ const Body = z.object({
 async function jsonResponse(input: { text?: string; url?: string }, signal: AbortSignal): Promise<Response> {
   const events: VerifyEvent[] = [];
   let failure: string | null = null;
+  const meter = usageAccumulator();
   try {
-    for await (const event of runVerify(input, signal)) events.push(event);
+    for await (const event of runVerify(input, signal, meter.sink)) events.push(event);
   } catch (err) {
     failure = publicMessage(err, "核验过程中出错了，请稍后重试。");
+  } finally {
+    // 核验是几十次上游调用的长链路，账必须在收尾处落一行，否则线上没人知道烧了多少。
+    console.info("[verify] usage", meter.read());
   }
 
   const doc = events.find((e) => e.event === "doc.parsed");
@@ -118,6 +123,7 @@ function sseResponse(
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const meter = usageAccumulator();
       let closed = false;
       const push = (chunk: string): boolean => {
         if (closed) return false;
@@ -141,7 +147,7 @@ function sseResponse(
       };
 
       try {
-        for await (const event of runVerify(input, signal)) {
+        for await (const event of runVerify(input, signal, meter.sink)) {
           // 断开即停：核验是长链路，用户关掉页面后继续跑几十次上游调用是纯浪费。
           if (!push(encodeVerifyEvent(event))) break;
         }
@@ -150,6 +156,7 @@ function sseResponse(
         const message = publicMessage(err, "核验过程中出错了，请稍后重试。");
         push(encodeVerifyEvent({ event: "error", data: { message } }));
       } finally {
+        console.info("[verify] usage", meter.read());
         finish();
       }
     },

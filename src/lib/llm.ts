@@ -1,4 +1,5 @@
 
+import { createHash } from "node:crypto";
 import { generateObject, generateText, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
@@ -60,8 +61,37 @@ function chatModel(p: Client) {
  */
 const textOnlyUpstreams = new Set<string>();
 
+/**
+ * 记忆键 = 接口地址 + key 指纹。
+ *
+ * 只按地址记的话，任何人用自己的 key 指向一个拒过 json_schema 的网关，
+ * 就会把**同一地址下的所有用户**（包括官方 key）一起拖进纯文本模式，
+ * 直到进程重启 —— 换 key 也不失效。key 只进哈希，不进日志也不进内存可读位。
+ */
 function upstreamKey(): string {
-  return resolvedOpenaiBaseUrl() ?? "official";
+  const base = resolvedOpenaiBaseUrl() ?? "official";
+  const key = resolvedOpenaiKey() ?? "";
+  const fp = key ? createHash("sha256").update(key).digest("hex").slice(0, 8) : "nokey";
+  return base + "\u0000" + fp;
+}
+
+/**
+ * 单次上游调用的墙钟上限。
+ *
+ * 之前完全没设：generateObject / generateText 既不传 abortSignal 也不带超时。
+ * 上游「TCP 连上了但不回包」（网关挂起、TLS 黑洞、被墙到一半）时，
+ * /api/search 与文档核验会无限期挂着 —— 客户端断开也不会停，而 takeBudget()
+ * 早就把这一次记进额度了。默认 30s 是一次 chat 调用的合理上限，
+ * 慢到超过它基本等于失败，早断早重试比一直等更划算。
+ */
+function callTimeoutMs(): number {
+  return readPositiveInt("PROBE_LLM_TIMEOUT_MS", 30_000, { max: 300_000 });
+}
+
+/** 把「调用方 abort」与「自己超时」合成一个 signal。没有调用方 signal 时只带超时。 */
+function callSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(callTimeoutMs());
+  return signal ? AbortSignal.any([timeout, signal]) : timeout;
 }
 
 /* ------------------------- 每日调用预算 ------------------------- */
@@ -310,6 +340,7 @@ async function structuredAsText<T>(
   args: StructuredCall<T>,
   promptChars: number,
   sink?: UsageSink,
+  signal?: AbortSignal,
 ): Promise<T | null> {
   const res = await generateText({
     model: chatModel(p),
@@ -320,6 +351,10 @@ async function structuredAsText<T>(
       skeletonHint(args.schema),
     prompt: args.prompt,
     temperature: 0,
+    // 重试与外层显式循环重复：SDK 自带 maxRetries（默认 2）× 这里的 for 循环
+    // = 单次逻辑调用最多 6 发上游，而额度只记 1 次。重试权收回到调用方。
+    maxRetries: 0,
+    abortSignal: callSignal(signal),
   });
   const parsed = extractJson(res.text);
   if (parsed === undefined) return null;
@@ -341,6 +376,7 @@ async function structuredAsText<T>(
 export async function generateStructured<T>(
   args: StructuredCall<T>,
   sink?: UsageSink,
+  signal?: AbortSignal,
 ): Promise<T | null> {
   const p = client();
   if (!p) return null;
@@ -350,7 +386,7 @@ export async function generateStructured<T>(
   // 这个上游以前拒过 json_schema：直接走文本模式，不再浪费一发必然 400 的请求。
   if (textOnlyUpstreams.has(upstreamKey())) {
     try {
-      const loose = await structuredAsText(p, args, promptChars, sink);
+      const loose = await structuredAsText(p, args, promptChars, sink, signal);
       if (loose !== null) return loose;
     } catch (err) {
       console.warn(
@@ -365,6 +401,9 @@ export async function generateStructured<T>(
   let triedTextMode = false;
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    // 第二次尝试是另一次真实调用：额度要再记一次，否则「一次逻辑调用」在报价上
+    // 永远按一发算，重试风暴时预算计数低报 N 倍。额度用完就别再打第二次。
+    if (attempt > 0 && !takeBudget()) return null;
     try {
       const res = await generateObject({
         model: chatModel(p),
@@ -372,6 +411,9 @@ export async function generateStructured<T>(
         system: args.system,
         prompt: args.prompt,
         temperature: 0,
+        // 同上：重试只由这个 for 负责，优先级与判定都在我们手上。
+        maxRetries: 0,
+        abortSignal: callSignal(signal),
       });
       sink?.({
         kind: "structured",
@@ -390,7 +432,7 @@ export async function generateStructured<T>(
             (err instanceof Error ? err.message.slice(0, 160) : ""),
         );
         try {
-          const loose = await structuredAsText(p, args, promptChars, sink);
+          const loose = await structuredAsText(p, args, promptChars, sink, signal);
           if (loose !== null) return loose;
         } catch (inner) {
           console.warn(
@@ -474,7 +516,23 @@ export async function* streamSummary(
   // 已经吐过字 = 真摘要写了一半断掉。这时候不能接一段「当前没有可用的模型 key」：
   // key 是有的（否则走不到这里），那句话是假的，而且会把半截真摘要说成模板产物。
   // 一个字都没吐，才补一句中性的失败说明，让读者知道后面为什么是空的。
-  if (failed && !emitted) yield* failureNote();
+  if (failed && !emitted) {
+    yield* failureNote();
+  } else if (failed && emitted) {
+    /*
+     * 断在半句上什么都不说，是最糟的一种：读者看到的是一句语法完整、语义不完整的话，
+     * 会当成摘要的全部内容。补一句短的，明确「到这里就断了」。
+     */
+    yield* truncationNote();
+  }
+}
+
+/** 流式中途断掉时的收尾说明（不猜原因，只说事实）。 */
+function* truncationNote(): Generator<string> {
+  const text = "（摘要到这里中断了：与模型的连接提前结束，后半段没有生成。）";
+  for (let i = 0; i < text.length; i += 14) {
+    yield text.slice(i, i + 14);
+  }
 }
 
 /**

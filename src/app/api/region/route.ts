@@ -1,4 +1,6 @@
 import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/runtime-config";
+import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
+import { clientKey } from "@/lib/request-guard";
 
 /**
  * 设置面板里的「当前区域」。
@@ -10,7 +12,24 @@ import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/ru
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * 这条不要求登录：它要在登录前也能判断「你现在被当成哪一侧」。
+ * 但正因为不登录，就得有人守着请求量 —— 返回值里带着模型端点与可用检索源，
+ * 等于一份部署指纹，免费无限次拉取毫无意义。
+ */
+const perClient = createLimiter({
+  name: "region",
+  limit: readPositiveInt("PROBE_REGION_RATE_PER_MIN", 60),
+});
+
 export async function GET(request: Request) {
+  const per = perClient.check(clientKey(request));
+  if (!per.ok) {
+    return Response.json(
+      { ok: false, error: "rate_limited", message: "请求太频繁，请稍后再试。" },
+      { status: 429, headers: { "cache-control": "no-store", "retry-after": String(per.retryAfterSeconds) } },
+    );
+  }
   const cfg = await prepareRuntimeConfig(request);
   const summary = await withRuntimeConfig(cfg, () => regionSummary());
   return Response.json(summary, { headers: { "cache-control": "no-store" } });

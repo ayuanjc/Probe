@@ -1,4 +1,5 @@
 import { llmEnabled } from "@/lib/llm";
+import type { UsageSink } from "@/lib/metrics";
 import { coverageOf, gradeOf } from "@/lib/grade";
 import { loadDoc } from "@/lib/verify-doc";
 import { authorityOf, HIGH_AUTHORITY } from "@/lib/authority";
@@ -203,7 +204,11 @@ export function citedOwnersOf(sourceUrl: string | null): string[] {
   }
 }
 
-export async function* runVerify(input: VerifyInput, signal?: AbortSignal): AsyncGenerator<VerifyEvent> {
+export async function* runVerify(
+  input: VerifyInput,
+  signal?: AbortSignal,
+  sink?: UsageSink,
+): AsyncGenerator<VerifyEvent> {
   const started = Date.now();
   const degraded: string[] = [];
   const notes: string[] = [];
@@ -238,7 +243,7 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
     const scores = emptyScores("no_claims", {
       gaps: coverageGaps({
         truncated: doc.truncated,
-        segmentsTotal: segments.length,
+        segmentsTotal: doc.segmentsTotal,
         segmentsExtracted: segments.length,
         claimsGated: 0,
         claimsPicked: 0,
@@ -262,7 +267,7 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
   const claims: DocClaim[] = [];
   for (const seg of extractFrom) {
     if (signal?.aborted) break;
-    const got = await extractSegmentClaims(seg);
+    const got = await extractSegmentClaims(seg, sink, signal);
     degraded.push(...got.degraded);
     if (got.claims.length === 0 && got.dropped.count === 0) continue;
 
@@ -290,7 +295,10 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
 
   if (claims.length === 0) {
     notes.push("claims:none");
-    const scores = emptyScores("no_claims", { aborted: signal?.aborted === true });
+    // 中途取消也常常一条断言都还没抽到，但原因完全不同：那不是文章的问题。
+    const scores = emptyScores(signal?.aborted ? "aborted" : "no_claims", {
+      aborted: signal?.aborted === true,
+    });
     yield { event: "doc.scored", data: scores };
     if (signal?.aborted) return;
     yield {
@@ -318,7 +326,11 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
   const citedOwners = citedOwnersOf(doc.sourceUrl);
   // 缺 key 时 tavilyHeldoutSearch 返回 null，于是 deps 为 null —— 走「本轮没有做外部核验」
   // 的诚实分支，绝不回退到用本文自己的段落给自己作证。
-  const deps = makeHeldoutDeps({ search: tavilyHeldoutSearch(), judge: llmJudge(), citedOwners });
+  const deps = makeHeldoutDeps({
+    search: tavilyHeldoutSearch(),
+    judge: llmJudge(sink, signal),
+    citedOwners,
+  });
   if (!deps) notes.push("claims:no_retriever");
 
   // ── 3. 逐条核验。每条都推 evidence.retrieved，再推 nli.verdict（契约第 2 条）。 ──
@@ -376,26 +388,49 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
   }
 
   // ── 4. 汇总。只把「本轮真核过的那批」交给 dossier：没核的断言不是「未找到证据」。 ──
+  //
+  // 这里有两套坐标，混用是这条流水线最贵的坑（审查报告 P0-1）：
+  //   - picked[i].index 是**全量 claims** 的下标（check-worthy.ts:103 给的），
+  //     而 kept 已按分数降序排过（check-worthy.ts:110）；
+  //   - buildDossier 是按「传进来的 claims 数组位置」回填判定的（dossier.ts:135-136）。
+  // 直接把 picked.map(p => p.claim) 交进去，verdict 就贴到了另一条断言上 ——
+  // 吻合度、字母档、证据行全错，而界面看起来完全正常。
+  // 所以：进 dossier 前把 verdict 的 claimIndex 换成 picked 的位置，
+  // 出来后再把 rows 换回全量坐标（前端拿它去对 claim.extracted 的 start+i）。
+  const posOf = new Map<number, number>();
+  picked.forEach((p, i) => posOf.set(p.index, i));
+
   const judgedClaims = picked.map((p) => p.claim as Claim);
+  const judgedVerdicts: ClaimVerdict[] = verdicts.map((v) => {
+    const pos = posOf.get(v.claimIndex);
+    return pos === undefined ? v : { ...v, claimIndex: pos };
+  });
   const dossier = buildDossier({
     claims: judgedClaims,
-    verdicts,
+    verdicts: judgedVerdicts,
     evidence: [...authById.values()],
     citedOwners,
   });
   degraded.push(...dossier.degraded);
+
+  // rows 换回全量坐标：界面用 claimsByIdx（键来自 claim.extracted）查它，
+  // 用位置下标去查会「查得到另一条」，比查不到更难发现。
+  const rowsAtOriginal = dossier.rows.map((row) => {
+    const original = picked[row.claimIndex]?.index;
+    return original === undefined ? row : { ...row, claimIndex: original };
+  });
 
   // 只数「系统真的少看了东西」的三件事：正文被截、段落超上限、断言超预算。
   // 闸门跳过（观点/预测/模糊断言）与检索/判定失败都不算 —— 那些都在 degraded 与 rows 的 reason 里，
   // 把它们混进 partial 会让一条本可以完整的字母档顶着「没跑完」的黄条。
   const gaps = coverageGaps({
     truncated: doc.truncated,
-    segmentsTotal: segments.length,
+    segmentsTotal: doc.segmentsTotal,
     segmentsExtracted: extractFrom.length,
     claimsGated: gate.kept.length,
     claimsPicked: picked.length,
   });
-  const scores = scoresFrom(dossier, {
+  const scores = scoresFrom({ ...dossier, rows: rowsAtOriginal }, {
     gaps,
     aborted,
     highAuthorityConflict: hasHighAuthorityConflict(verdicts, authById),

@@ -271,8 +271,21 @@ async function fetchWiki(intent: Intent, outer?: AbortSignal): Promise<RawSource
   );
   if (!res.ok) throw await httpFailure("wiki", res);
 
-  const json = (await res.json()) as { items?: { timestamp: string; views: number }[] };
-  const items = json.items ?? [];
+  const json = (await res.json()) as { items?: { timestamp?: unknown; views?: unknown }[] };
+  /*
+   * 上游字段一律当不可信处理。
+   *
+   * 以前这里假设 items[0] 存在、views 是数字、timestamp 是 10 位 YYYYMMDDHH。
+   * 任何一条不成立，要么标题里印出 undefined，要么 Date.UTC(NaN...) 抛 RangeError，
+   * 被外层记成 wiki:failed —— 一个数据格式变化看起来像「维基挂了」。
+   */
+  const items = (json.items ?? []).filter(
+    (it): it is { timestamp: string; views: number } =>
+      typeof it?.timestamp === "string" &&
+      /^\d{10}$/.test(it.timestamp) &&
+      typeof it.views === "number" &&
+      Number.isFinite(it.views),
+  );
   if (items.length === 0) return [];
 
   const peak = items.reduce((a, b) => (b.views > a.views ? b : a), items[0]);
@@ -403,7 +416,20 @@ async function fetchBocha(intent: Intent, outer?: AbortSignal): Promise<RawSourc
   const json = (await res.json()) as {
     data?: { webPages?: { value?: Record<string, string>[] } };
     webPages?: { value?: Record<string, string>[] };
+    code?: number | string;
+    msg?: string;
+    message?: string;
   };
+  /*
+   * 博查出错时也回 200，body 是 {code, msg} 或 {message}，没有 webPages。
+   *
+   * 不区分的话它会和「这次搜索没有命中」长得一模一样，最后记成 bocha:empty ——
+   * 界面写「没有检索到相关信源」，用户以为事实缺失，实际是 key 欠费或者参数不对。
+   */
+  const hasPages = Boolean(json.data?.webPages || json.webPages);
+  if (!hasPages && (json.code !== undefined || json.msg || json.message)) {
+    throw new Error("bocha_error:" + String(json.msg ?? json.message ?? json.code).slice(0, 160));
+  }
   const pages = json.data?.webPages?.value ?? json.webPages?.value ?? [];
   return pages.map((r, i) => {
     const url = r.url ?? "";

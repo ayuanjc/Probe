@@ -61,6 +61,10 @@ const PROVIDER_TEXT: Record<string, string> = {
   fixture: "本地演示样本",
   claims: "事实断言抽取",
   window: "时间窗过滤",
+  // 下面三个原来没有条目，界面上会直接把内部标识（dated / dataset / rows）印出来。
+  dated: "发布日期推断",
+  dataset: "数据集",
+  rows: "数据行",
 };
 
 /**
@@ -120,6 +124,15 @@ function degradeText(item: string): string {
   if (item.startsWith("region:")) return regionText(item);
   // 时间窗的两条码必须说清「为什么少」，否则界面只剩一句「本轮无命中」。
   if (item === "window:empty") return "时间窗（本轮命中全在窗外）";
+  // 模型编引文是真实存在的：这些条我们丢掉了，但必须让用户知道丢了几条、为什么。
+  const quoteMiss = /^claims:quote_miss_(\d+)$/.exec(item);
+  if (quoteMiss) return "断言抽取（" + quoteMiss[1] + " 条引文在原文里找不到，已丢弃）";
+  // 抽取「没跑起来」和「跑起来但没抽到」是两件事：前者是故障，后者可能是文章确实没有可核断言。
+  if (item === "claims:extract_failed") return "断言抽取（模型调用失败，本轮没有跑出结果）";
+  const fromUrl = /^dated:from_url_(\d+)$/.exec(item);
+  if (fromUrl) return "发布日期推断（" + fromUrl[1] + " 条取自链接里的日期，属推导值）";
+  if (/^dataset:invalid_/.test(item)) return "数据集（引用了不存在的数据集，相关卡片已跳过）";
+  if (item === "rows:non_finite") return "数据行（含有非有限数值的行已丢弃）";
   const undated = /^window:undated_(\d+)$/.exec(item);
   if (undated) return "时间窗（" + undated[1] + " 条没有发布时间，按未知保留）";
   const i = item.indexOf(":");
@@ -160,6 +173,8 @@ export default function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const running = state.status === "running";
   const booted = useRef(false);
+  /** 新卡片闪烁的 timer：留着是为了在重放/卸载时清掉，别让回调去碰已卸载的元素。 */
+  const flashTimer = useRef<number | null>(null);
   const datasets = useMemo(() => datasetsFromModules(state.modules), [state.modules]);
   // 生成器只属于「结果页」：跑完、且真有可出图的数据集，才给它一个位置。
   const diyReady = state.status === "done" && datasets.length > 0;
@@ -399,15 +414,31 @@ export default function Workspace({
    */
   const revealModule = (id: string) => {
     const reveal = () => {
-      const el = document.querySelector('[data-module-id="' + id + '"]');
+      /*
+       * id 走 CSS.escape：卡片 id 里出现引号/反斜杠时，拼出来的选择器是废的，
+       * querySelector 会直接抛异常（在 rAF 里抛就是一条没人接的错）。
+       */
+      const el = document.querySelector('[data-module-id="' + CSS.escape(id) + '"]');
       if (!el) return false;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("card-flash");
-      window.setTimeout(() => el.classList.remove("card-flash"), 1400);
+      // 记下 timer：组件卸载后那个回调仍会跑，元素早已不在文档里。
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => {
+        flashTimer.current = null;
+        el.classList.remove("card-flash");
+      }, 1400);
       return true;
     };
     if (!reveal()) window.requestAnimationFrame(reveal);
   };
+
+  /* 卸载时把闪烁 timer 收掉：它握住的是 DOM 节点，不该在页面换了之后还活着。 */
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    };
+  }, []);
 
   // StrictMode 下 effect 会跑两次，用 ref 保证自动查询只发一次。
   useEffect(() => {

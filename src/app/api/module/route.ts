@@ -206,8 +206,13 @@ export async function POST(request: Request) {
       return generateStructured({ schema: PickSchema, system: SYSTEM, prompt });
     });
   } catch (err) {
-    // 生成失败不向用户暴露内部原因，回落到规则方案。
-    publicMessage(err, "面板生成失败");
+    /**
+     * 这里原来把 publicMessage 的返回值丢掉了，why 还停在上面那句
+     * 「模型没有返回可用方案」——于是 key 无效、429、超时统统显示成「模型没给方案」，
+     * 用户没有任何线索去查自己的配置。publicMessage 已经做过脱敏（只回可读原因），
+     * 拿它的返回当代替原因即可。
+     */
+    why = publicMessage(err, "面板生成失败");
   } finally {
     release();
   }

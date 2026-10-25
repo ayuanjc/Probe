@@ -56,6 +56,15 @@ export type PublicSession = {
 
 export type Notice = { kind: "ok" | "err"; text: string };
 
+/**
+ * IP 指纹只展示前 8 位。字段可能缺失（旧版本写进 store 的会话记录里没有它），
+ * 直接 slice 会抛 TypeError 把整张列表打成白屏 —— 缺就显式显示「—」。
+ */
+export function ipFingerprint(hash: string | null | undefined): string {
+  const h = (hash ?? "").trim();
+  return h ? h.slice(0, 8) : "—";
+}
+
 export function time(ts: number | null): string {
   if (!ts) return "—";
   const d = new Date(ts);
@@ -111,11 +120,25 @@ export async function api<T>(
   path: string,
   init?: { method?: string; body?: unknown },
 ): Promise<{ ok: boolean; status: number; data: T | null; message: string }> {
-  const res = await fetch(appPath(path), {
-    method: init?.method ?? "GET",
-    headers: init?.body ? { "content-type": "application/json" } : undefined,
-    body: init?.body ? JSON.stringify(init.body) : undefined,
-  });
+  /*
+   * fetch 必须自己兜住。
+   *
+   * 原来只有 res.json() 包了 try，fetch 本身裸奔：断网、服务端 502、请求被中断时
+   * 这个 Promise 直接 reject，而**所有**调用点都是 `const r = await api(...)` 后紧接
+   * setBusy("") / setLoading(false) —— 那些语句永不执行，按钮永久禁用、管理台与设备
+   * 抽屉永久停在「读取中」，用户没有任何重试入口（还得刷新页面）。
+   * 这里失败也要给出形状一致的结果，让调用方走正常的 !ok 分支。
+   */
+  let res: Response;
+  try {
+    res = await fetch(appPath(path), {
+      method: init?.method ?? "GET",
+      headers: init?.body ? { "content-type": "application/json" } : undefined,
+      body: init?.body ? JSON.stringify(init.body) : undefined,
+    });
+  } catch {
+    return { ok: false, status: 0, data: null, message: "网络异常，请检查连接后重试" };
+  }
   let data: unknown = null;
   try {
     data = await res.json();

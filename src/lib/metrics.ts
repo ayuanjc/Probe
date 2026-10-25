@@ -139,6 +139,29 @@ export function usageSink(run: RunRecord): UsageSink {
   };
 }
 
+/**
+ * 一次性用量累加器：给不属于「检索轮次」的长链路（文档核验）用。
+ *
+ * 为什么不直接塞进 metrics 环：RunRecord 要求 query/stages/confidence/band 这一整套，
+ * 核验没有这些字段，硬塞进去会让 /metrics 的分布被两种口径的样本混在一起。
+ * 但用量必须能被看见 —— 以前核验链路一个 sink 都没传，24 次上游调用在账上全是 0。
+ */
+export function usageAccumulator(): { sink: UsageSink; read: () => RunUsage } {
+  const acc = emptyUsage();
+  const sink: UsageSink = (d) => {
+    acc.calls += 1;
+    acc[d.kind] += 1;
+    acc.promptChars += d.promptChars;
+    acc.outputChars += d.outputChars;
+    if (typeof d.tokensIn === "number" || typeof d.tokensOut === "number") {
+      acc.measured += 1;
+      acc.tokensIn += d.tokensIn ?? 0;
+      acc.tokensOut += d.tokensOut ?? 0;
+    }
+  };
+  return { sink, read: () => ({ ...acc }) };
+}
+
 /** 最近一轮的编号，便于日志/测试对齐。 */
 export function lastRunId(): string | null {
   return runs.length > 0 ? runs[runs.length - 1].id : null;
@@ -147,7 +170,14 @@ export function lastRunId(): string | null {
 export function resetMetrics(): void {
   runs.length = 0;
   totalRuns = 0;
-  seq = 0;
+  /*
+   * seq **不**归零。
+   *
+   * id 是 "r" + seq，而 endRun 靠 id 去重。reset 之后归零，会让「reset 前
+   * startRun、reset 后 endRun」的那一轮拿到一个已被丢弃记录用过的编号：
+   * 如果恰好同 id 的记录还在环里，这一轮就被静默丢弃，metrics 少一轮且无痕迹。
+   * 编号只需要在本进程内单调，不需要从 1 开始。
+   */
 }
 
 function percentile(values: number[], q: number): number {

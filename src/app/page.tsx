@@ -18,7 +18,9 @@ export default async function Page({
   // 页面级只是体验：真正拦住未授权访问的是 /api/* 里的 requireUser。
   await requirePageUser();
   const params = await searchParams;
-  const query = (params.q ?? "").trim();
+  // 夹一下长度：/api/search 的上限是 400 字，这里不拦就等于让首屏自动跑一轮注定 400 的请求，
+  // 用户看到的是「查询过长」而不是「你贴的东西太多了，前 400 字已在搜」。
+  const query = (params.q ?? "").trim().slice(0, 400);
   const trending = query ? null : await getTrending();
   return <Workspace initialQuery={query} trending={trending} />;
 }

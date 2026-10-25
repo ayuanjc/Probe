@@ -39,7 +39,9 @@ export function parseHistory(raw: string | null): string[] {
     const out: string[] = [];
     for (const item of parsed) {
       if (typeof item !== "string") continue;
-      const q = item.trim();
+      // 夹到查询上限（/api/search 是 400 字）：存储是可以被手改的，
+      // 一条十兆的字符串进来能让侧边栏渲染出几屏空白。
+      const q = item.trim().slice(0, 400);
       if (!q || out.includes(q)) continue;
       out.push(q);
       if (out.length >= HISTORY_MAX) break;
@@ -52,7 +54,7 @@ export function parseHistory(raw: string | null): string[] {
 
 /** 纯函数：把 q 提到最前、去重、截断。单测只测这一层，不碰存储。 */
 export function mergeHistory(list: readonly string[], q: string): string[] {
-  const query = q.trim();
+  const query = q.trim().slice(0, 400);
   if (!query) return list.slice(0, HISTORY_MAX);
   const out = [query];
   for (const item of list) {

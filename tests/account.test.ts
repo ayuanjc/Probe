@@ -13,6 +13,7 @@ import {
   findUserById,
   findUserByUsername,
   listAudit,
+  listInvites,
   listUsers,
   sessionCount,
   updateUser,
@@ -245,6 +246,30 @@ test("registerWithInvite 无效邀请码 / 密码不合规都给出明确原因"
   assert.equal(user.username, "nobody");
 });
 
+test("registerWithInvite 并发用同一个码：只有一个号能落地，名额只记一次", async () => {
+  freshDir();
+  const { code, invite } = await createInvite({ maxUses: 1, createdBy: "admin" });
+
+  /*
+   * maxUses=1 的码被两个人同时抢：老实现两边都能过 checkInvite，
+   * 后 commit 的那个失败却已经把 user 建出来了 —— 邀请制形同虚设。
+   * 现在建号与记名额在同一个 mutate 里，两个请求只有一个能整体成功。
+   */
+  const results = await Promise.allSettled([
+    registerWithInvite({ code, username: "race-a", password: "a good long password" }),
+    registerWithInvite({ code, username: "race-b", password: "a good long password" }),
+  ]);
+  const ok = results.filter((r) => r.status === "fulfilled");
+  assert.equal(ok.length, 1, "只该有一个人注册成功");
+
+  const names = (await listUsers()).map((u) => u.username);
+  const created = names.filter((n) => n === "race-a" || n === "race-b");
+  assert.equal(created.length, 1, "失败的那次不能把用户留在库里");
+
+  const stored = (await listInvites()).find((x) => x.id === invite.id);
+  assert.ok(stored);
+  assert.equal(stored.uses, 1, "名额只记一次");
+});
 /* -------------------------------- 删除自己 -------------------------------- */
 
 test("deleteAccount 拒绝删除自己，删别人时审计记用户名", async () => {

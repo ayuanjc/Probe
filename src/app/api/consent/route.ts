@@ -80,7 +80,13 @@ export async function POST(request: NextRequest) {
     return jsonError(400, "read_too_fast", "请完整阅读后再确认。");
   }
 
-  const at = Math.min(Date.now(), Math.max(0, Math.round(toNumber((body as { at?: unknown }).at, Date.now()))));
+  /**
+   * cookie 里的时间戳用**服务端**时间，不再采信客户端自报的 at。
+   * 客户端传 0 会写出「1 秒 = 1970」的同意凭据，而 parseConsentCookie 会把 2020 以前的时间戳
+   * 判成伪造 —— 同一枚 cookie 由本服务发出去、又被自己判无效，用户下一刷还得再同意一次。
+   * 时间本来就是「服务端观察到这次同意」的时刻，没有必要问客户端。
+   */
+  const at = Date.now();
 
   await recordConsent({
     version,

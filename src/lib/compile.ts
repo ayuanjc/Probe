@@ -76,12 +76,20 @@ function categoryAxis(name: string, unit?: string) {
 }
 
 export function compile(spec: ModuleSpec, dataset: Dataset | undefined): CompileResult {
+  /*
+   * 数据集校验必须在 table/kpi 提前返回**之前**。
+   *
+   * 表格与 KPI 不走 ECharts，但它们照样读 dataset 渲染行与数字：
+   * 之前这两种卡片对不存在的数据集直接回 ok:true，于是卡片空着上屏、
+   * module.error 里什么都没有 —— 图表至少还会说一句「找不到对应的数据集」，
+   * 表格连这句都没有，用户只看到一张空卡。
+   */
+  if (!dataset || dataset.id !== spec.dataset) {
+    return { ok: false, reason: "unknown_dataset", detail: spec.dataset };
+  }
   if (spec.kind === "table" || spec.kind === "kpi") {
     // 表格与 KPI 不需要 ECharts，由 React 组件直接渲染 dataset。
     return { ok: true, option: {} };
-  }
-  if (!dataset || dataset.id !== spec.dataset) {
-    return { ok: false, reason: "unknown_dataset", detail: spec.dataset };
   }
 
   const fieldNames = new Set(dataset.fields.map((f) => f.name));

@@ -111,6 +111,10 @@ export type StoreErrorCode =
   | "duplicate_username"
   | "last_admin"
   | "invite_invalid"
+  /** 下面三个在 mutate 内部重新校验邀请码时抛出：与 account 层的错误码同名，便于直接透出。 */
+  | "invite_revoked"
+  | "invite_expired"
+  | "invite_exhausted"
   | "store_corrupt";
 
 export class AuthStoreError extends Error {
@@ -389,9 +393,20 @@ export async function createInvite(input: {
 }): Promise<{ invite: PublicInvite; code: string }> {
   // 20 字节 = 160 位随机，base64url 27 个字符，抄写/复制都够用。
   const code = newSecretToken(20);
-  const maxUses = Math.min(Math.max(Math.floor(input.maxUses ?? 1), 1), 200);
-  const hours = input.expiresInHours ?? 72;
+  /**
+   * 这里的 Number 兜底不是多余的：Math.min/Math.max 遇到 NaN 会原样把 NaN 传下去，
+   * 而 NaN 参与比较永远是 false —— maxUses=NaN 意味着 `uses >= maxUses` 永不成立（无限次邀请码），
+   * expiresAt=NaN 经 JSON.stringify 变成 null（永不过期）。调用方传个 "abc" 就能造出这种码。
+   */
+  const wantUses = Math.floor(Number(input.maxUses ?? 1));
+  const maxUses = Number.isFinite(wantUses) ? Math.min(Math.max(wantUses, 1), 200) : 1;
+  const wantHours = input.expiresInHours === undefined ? 72 : input.expiresInHours;
+  const hours = wantHours === null ? null : Number(wantHours);
   const now = Date.now();
+  const expiresAt =
+    hours === null || !Number.isFinite(hours)
+      ? null
+      : now + Math.min(Math.max(hours, 1), 24 * 365) * 3_600_000;
   const invite = await mutate((s) => {
     const row: StoredInvite = {
       id: randomUUID(),
@@ -400,7 +415,7 @@ export async function createInvite(input: {
       role: input.role === "admin" ? "admin" : "member",
       maxUses,
       uses: 0,
-      expiresAt: hours === null ? null : now + Math.min(Math.max(hours, 1), 24 * 365) * 3_600_000,
+      expiresAt,
       createdAt: now,
       createdBy: input.createdBy,
       revoked: false,
@@ -463,6 +478,56 @@ export async function commitInviteUse(inviteId: string, userId: string): Promise
     if (inv.uses >= inv.maxUses) throw new AuthStoreError("invite_invalid", "邀请码已用完。");
     inv.uses += 1;
     inv.usedBy.push({ userId, at: Date.now() });
+  });
+}
+
+/**
+ * 建号 + 记名额，必须在**同一个** mutate 里完成。
+ *
+ * 老的两步走（checkInvite → createUser → commitInviteUse）有一个真实的并发漏洞：
+ * 两个请求可以同时通过 checkInvite（maxUses=1 的码两边都读到 uses:0），
+ * 先到的 commit 成功，后到的 commit 抛错 —— 但**两个用户的号都已经建出来了**。
+ * 结果就是「注册报错说邀请码已用完，那人却能拿自己设的密码登录」，邀请制被绕过。
+ *
+ * 放进同一个 mutate 后：要么用户与名额一起落地，要么一起不动（mutator 抛错时
+ * writeStore 根本不会被调用），重名/密码不合规也不会白吃名额。
+ */
+export async function createUserWithInvite(input: {
+  inviteId: string;
+  username: string;
+  passwordHash: string;
+}): Promise<StoredUser> {
+  return mutate((s) => {
+    const inv = s.invites.find((x) => x.id === input.inviteId);
+    if (!inv) throw new AuthStoreError("invite_invalid", "邀请码不存在。");
+    if (inv.revoked) throw new AuthStoreError("invite_revoked", "邀请码已被撤销。");
+    if (inv.expiresAt !== null && inv.expiresAt <= Date.now()) {
+      throw new AuthStoreError("invite_expired", "邀请码已过期。");
+    }
+    if (inv.uses >= inv.maxUses) throw new AuthStoreError("invite_exhausted", "邀请码已用完。");
+    if (s.users.some((u) => u.username === input.username)) {
+      throw new AuthStoreError("duplicate_username", `用户名 ${input.username} 已存在。`);
+    }
+    const now = Date.now();
+    const user: StoredUser = {
+      id: randomUUID(),
+      username: input.username,
+      role: inv.role,
+      status: "active",
+      passwordHash: input.passwordHash,
+      createdAt: now,
+      createdBy: "invite:" + inv.id,
+      updatedAt: now,
+      lastLoginAt: null,
+      mustChangePassword: false,
+      note: inv.note,
+      inviteId: inv.id,
+      usage: { day: todayKey(now), calls: 0 },
+    };
+    s.users.push(user);
+    inv.uses += 1;
+    inv.usedBy.push({ userId: user.id, at: now });
+    return user;
   });
 }
 

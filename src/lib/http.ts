@@ -28,6 +28,14 @@ type Options = {
   headers?: Record<string, string>;
   maxRedirects?: number;
   maxBytes?: number;
+  /**
+   * 整条重定向链的绝对截止时刻（epoch ms）。
+   *
+   * 不给它的时候，每跟一跳都会重开一个 timeoutMs 计时器：默认 8s × 最多 4 跳
+   * = 单次抓取能挂到 32s，而调用方按「8s 抓一次」估的超时全被打穿。
+   * 由入口算一次，后续每一跳只拿剩余预算。
+   */
+  deadline?: number;
 };
 
 const DEFAULT_UA = "Mozilla/5.0 (compatible; probe/0.1; +https://localhost)";
@@ -116,6 +124,8 @@ type HostVerdict =
   | { ok: false; reason: string };
 
 const hostCache = new Map<string, { v: HostVerdict; at: number }>();
+/** 缓存上限。DNS 校验结果是小对象，但无界 Map 就是内存泄漏的另一种写法。 */
+const HOST_CACHE_MAX = 512;
 
 /**
  * 允许访问的端口（默认只有 80 / 443）。
@@ -190,8 +200,20 @@ async function resolveAllowed(hostname: string): Promise<HostVerdict> {
   }
 
   hostCache.set(host, { v: verdict, at: Date.now() });
-  if (hostCache.size > 512) {
-    for (const [k, entry] of hostCache) if (Date.now() - entry.at >= HOST_TTL_MS) hostCache.delete(k);
+  /*
+   * 先清过期条目，**再**按插入序砍到上限以内。
+   *
+   * 只清过期那条太乐观：5 分钟里被解析过 512 个不同域名（一堆短链接重定向
+   * 就够）时，条条都还新鲜，于是一条都删不掉，Map 只增不减。清完过期之后
+   * 若仍超限，就从最老的开始砍 —— Map 的迭代序是插入序，等价于一个粗 LRU。
+   */
+  if (hostCache.size > HOST_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, entry] of hostCache) if (now - entry.at >= HOST_TTL_MS) hostCache.delete(k);
+    for (const k of hostCache.keys()) {
+      if (hostCache.size <= HOST_CACHE_MAX) break;
+      hostCache.delete(k);
+    }
   }
   return verdict;
 }
@@ -244,7 +266,13 @@ function decodeBody(buf: Buffer, contentType: string, contentEncoding: string): 
     if (code === "ERR_BUFFER_TOO_LARGE" || code === "ERR_OUT_OF_RANGE") return "";
     raw = buf;
   }
-  const m = /charset="?([w-]+)/i.exec(contentType);
+  /*
+   * 这里曾经是 /charset="?([w-]+)/i —— 少了一个反斜杠，字符类变成字面量
+   * 「w」和「-」，于是 gbk/gb2312/big5 的页面一条都匹配不上，windows-1252
+   * 只会捕到 "w"，全都回落到 utf-8：中文整篇变乱码，而界面只会说「正文太短」。
+   * 另把 . 和 : 补进字符类（x-user-defined 这类带点的 name 也有）。
+   */
+  const m = /charset\s*=\s*"?([\w.:-]+)"?/i.exec(contentType);
   const charset = (m?.[1] ?? "utf-8").toLowerCase();
   try {
     return new TextDecoder(charset, { fatal: false }).decode(raw);
@@ -255,6 +283,9 @@ function decodeBody(buf: Buffer, contentType: string, contentEncoding: string): 
 
 export async function getDirect(url: string, opts: Options = {}): Promise<DirectReply> {
   const { timeoutMs = 8000, headers = {}, maxRedirects = 3, maxBytes = 2_000_000 } = opts;
+  // 整条链共用一份预算：入口定 deadline，重定向每跳只拿剩余。
+  const deadline = opts.deadline ?? Date.now() + timeoutMs;
+  const budgetMs = Math.max(1, Math.min(timeoutMs, deadline - Date.now()));
 
   let parsed: URL;
   try {
@@ -315,7 +346,13 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
             return;
           }
           // 下一跳由 getDirect 自己再验一次主机（hostAllowed 在函数入口）。
-          void getDirect(next.toString(), { ...opts, maxRedirects: maxRedirects - 1 }).then(resolve);
+          // deadline 一路带下去，跳数再多也不放大总时长。
+          void getDirect(next.toString(), {
+            ...opts,
+            timeoutMs,
+            deadline,
+            maxRedirects: maxRedirects - 1,
+          }).then(resolve);
           return;
         }
 
@@ -371,7 +408,7 @@ export async function getDirect(url: string, opts: Options = {}): Promise<Direct
       },
     );
 
-    req.setTimeout(timeoutMs, () => {
+    req.setTimeout(budgetMs, () => {
       timedOut = true;
       req.destroy(new Error("timeout"));
     });

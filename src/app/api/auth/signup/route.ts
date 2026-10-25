@@ -21,6 +21,17 @@ const perClient = createLimiter({
   limit: readPositiveInt("PROBE_SIGNUP_RATE_PER_MIN", 3),
 });
 
+/**
+ * 边输边验那条 GET 单独一组额度：注册页每敲几个字符就发一次，按 POST 的 3/min 会把自己卡死。
+ * 但它此前连一条限流都没有 —— 注册页是公开的，任何人可以拿它当「邀请码是否存在 / 是什么角色 /
+ * 还剩几个名额」的无限速查询接口。160 位码没法穷举，可一旦码从别处泄露，
+ * 这个接口就能把「哪个码还有名额」扫出来，让撞码的人只打活的那几个。
+ */
+const codeCheck = createLimiter({
+  name: "auth-invite-check",
+  limit: readPositiveInt("PROBE_INVITE_CHECK_RATE_PER_MIN", 40),
+});
+
 const MAX_BODY_BYTES = 4_000;
 
 function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -85,6 +96,13 @@ export async function POST(request: Request) {
 
 /** 邀请码是否可用（注册页边输边校验用）。不记账，只看。 */
 export async function GET(request: Request) {
+  if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
+  const per = codeCheck.check(clientKey(request));
+  if (!per.ok) {
+    return json({ ok: false, error: "rate_limited", message: "校验太频繁，请稍后再试。" }, 429, {
+      "retry-after": String(per.retryAfterSeconds),
+    });
+  }
   if (authMode() === "off") return json({ ok: true, valid: false, reason: "auth_off" });
   const code = new URL(request.url).searchParams.get("code") ?? "";
   if (!code) return json({ ok: true, valid: false, reason: "empty" });

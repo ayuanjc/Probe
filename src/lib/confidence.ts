@@ -11,6 +11,14 @@ import { hostOf, normalizeValue, titleSimilarity } from "./text";
 
 export const WEIGHTS = { firstHand: 0.4, independence: 0.35, consistency: 0.25 } as const;
 
+/**
+ * 没有交叉核对时的置信度上限。
+ *
+ * 导出成常量是因为它同时出现在三处文案里（术语表两条 + 置信度徽标的提示）。
+ * 这三处曾经各写「0.74」，而代码里一直是 0.64 —— 界面在解释一条不存在的规则。
+ */
+export const NO_CHECK_CONSISTENCY_CAP = 0.64;
+
 export function ownerOf(s: RawSource): string {
   return (s.owner || hostOf(s.url)).toLowerCase();
 }
@@ -240,7 +248,7 @@ export function computeConfidence(
    * 只有一致性这一维真正代表"核验过"，它空转时，置信度不该接近高档：
    * 封到 0.64，稳落 medium，且界面上会把这条限制写成一行口径说明。
    */
-  if (consistency.nChecked === 0) score = Math.min(score, 0.64);
+  if (consistency.nChecked === 0) score = Math.min(score, NO_CHECK_CONSISTENCY_CAP);
 
   /**
    * 演示样本封顶。fixture 的"多家在报道"是我们自己写进样本里的，

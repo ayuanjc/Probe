@@ -127,7 +127,7 @@ async function* runStages(
   run.stages.retrieve = Date.now() - stageAt;
 
   stageAt = Date.now();
-  const analysis = await analyze(intent, retrieved.sources, sink);
+  const analysis = await analyze(intent, retrieved.sources, sink, signal);
   if (gone()) return;
   run.stages.analyze = Date.now() - stageAt;
   run.sources = analysis.sources.length;

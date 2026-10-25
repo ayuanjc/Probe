@@ -66,6 +66,7 @@ const SYSTEM = [
 export async function extractSegmentClaims(
   seg: DocSegment,
   sink?: UsageSink,
+  signal?: AbortSignal,
 ): Promise<SegmentClaimResult> {
   const base: SegmentClaimResult = {
     segmentIdx: seg.idx,
@@ -85,6 +86,7 @@ export async function extractSegmentClaims(
         prompt: "段落：\n" + text,
       },
       sink,
+      signal,
     );
   } catch {
     return { ...base, degraded: ["claims:extract_failed_" + seg.idx] };
@@ -99,7 +101,7 @@ export async function extractSegmentClaims(
   for (const raw of out.claims) {
     if (claims.length >= MAX_CLAIMS_PER_SEGMENT) {
       rejected += 1;
-      codes.push("quote_short");
+      codes.push("over_cap");
       break;
     }
     // offset 用段的起点：坐标要落在全文坐标系里，前端才能滚到正确位置。

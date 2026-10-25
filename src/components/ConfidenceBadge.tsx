@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { Confidence } from "@/lib/schemas";
+import { NO_CHECK_CONSISTENCY_CAP } from "@/lib/confidence";
 import Term from "./Glossary";
 
 const BAND_TEXT: Record<Confidence["band"], string> = {
@@ -80,7 +81,7 @@ export default function ConfidenceBadge({ confidence }: { confidence: Confidence
                 <Term k="nChecked" align="left">
                   核对条数
                 </Term>{" "}
-                为 0：按 0.5 记，总分封顶 0.74
+                为 0：按 0.5 记，总分封顶 {NO_CHECK_CONSISTENCY_CAP}
               </>
             )
           }

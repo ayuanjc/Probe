@@ -11,7 +11,15 @@
 import { ClaimKindSchema, type ClaimKind } from "./schemas";
 
 /** 复核失败的原因码。界面与 degraded 都直接用它，不再翻译成第二套词。 */
-export type QuoteRejectCode = "quote_short" | "quote_miss" | "value_mismatch" | "kind_invalid" | "attr_empty";
+export type QuoteRejectCode =
+  | "quote_short"
+  | "quote_miss"
+  | "value_mismatch"
+  | "kind_invalid"
+  | "attr_empty"
+  // 超过单段条数上限。曾经把它记成 quote_short：模型多吐两条，
+  // 界面却说「引用太短」，排查的人会去改提示词而不是条数上限。
+  | "over_cap";
 
 /** quote 太短就没有复核价值：三五个字的片段在任何文章里都能命中，等于没有定位。 */
 export const MIN_QUOTE_CHARS = 6;

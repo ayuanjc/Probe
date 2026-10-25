@@ -92,9 +92,14 @@ export default function EntityGraphCard({
       };
     });
 
+    /*
+     * source/target 用节点 id，不用显示名：ECharts 按 name 归并同名节点，
+     * 而 labels 靠「同名加 ·2」去重 —— 恰好有个实体本身叫「X·2」时，
+     * 两个真节点会被并成一个，边也就连错了。id 是稳定的唯一键。
+     */
     const links = edges.map((e) => ({
-      source: labels.get(e.a) ?? e.a,
-      target: labels.get(e.b) ?? e.b,
+      source: e.a,
+      target: e.b,
       value: e.weight,
       lineStyle: {
         color: e.weight >= 2 ? STRONG_LINE : WEAK_LINE,

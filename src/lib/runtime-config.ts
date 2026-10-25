@@ -86,10 +86,49 @@ function cleanModel(v: string | null): string | undefined {
  */
 const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal", "metadata"]);
 
+/**
+ * 元数据 / 链路本地判定。**不能只做三个字符串精确比对**：
+ *   - http://metadata.google.internal./  （DNS 允许尾点，等价于不带点）
+ *   - http://[::ffff:169.254.169.254]/   （IPv4-mapped 字面量）
+ * 两种写法都能过掉 Set.has()，把服务端变成「带用户 key 访问元数据服务」的跳板。
+ * 这里只挡链路本地与已知元数据名字：10/8、192.168/16 属于用户自建模型
+ * （ollama 在局域网），那是正当用法，不该一起拦。
+ */
+/**
+ * 把 IPv4-mapped 的 IPv6 字面量还原成点分 IPv4。
+ *
+ * 必须两种写法都认：URL 会把手写的 ::ffff:169.254.169.254 规范化成
+ * ::ffff:a9fe:a9fe（十六进制压缩形式），只按点分形式匹配等于没挡。
+ */
+function mappedIpv4(h: string): string | null {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
+  if (dotted) return dotted[1];
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (!hex) return null;
+  const hi = parseInt(hex[1], 16);
+  const lo = parseInt(hex[2], 16);
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
+}
+
+function isMetadataHost(rawHost: string): boolean {
+  let h = rawHost.trim().toLowerCase();
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
+  h = h.replace(/\.+$/, "");
+  if (BLOCKED_HOSTS.has(h)) return true;
+  const ip = mappedIpv4(h) ?? h;
+  if (/^169\.254\./.test(ip)) return true; // IPv4 链路本地（含各云厂商元数据）
+  if (/^fe[89ab]/.test(h)) return true; // fe80::/10
+  return false;
+}
+
 export function cleanBaseUrl(v: string | null | undefined): string | undefined {
   if (!v) return undefined;
   const t = v.trim();
-  if (t.length < 12 || t.length > 300) return undefined;
+  /*
+   * 只留上限。下限 12 会把 http://llm / http://x.io 这种合法内网地址当成「没填」，
+   * 静默回落到官方地址 —— 用户填了自己的网关，请求却发去了 OpenAI。
+   */
+  if (t.length > 300) return undefined;
   if (/\s/.test(t)) return undefined;
   let url: URL;
   try {
@@ -99,7 +138,7 @@ export function cleanBaseUrl(v: string | null | undefined): string | undefined {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
   if (!url.hostname) return undefined;
-  if (BLOCKED_HOSTS.has(url.hostname.toLowerCase())) return undefined;
+  if (isMetadataHost(url.hostname)) return undefined;
   const path = url.pathname.replace(/\/+$/, "");
   return url.origin + path;
 }

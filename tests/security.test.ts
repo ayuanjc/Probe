@@ -263,6 +263,10 @@ test("cleanBaseUrl：合法地址规范化（去尾斜杠、去 query / userinfo
     ["https://api.openai.com/v1?debug=1", "https://api.openai.com/v1"],
     ["https://api.openai.com/v1#frag", "https://api.openai.com/v1"],
     ["http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1"],
+    // 短地址与单标签内网主机是合法配置：以前按「少于 12 字符」一律当没填，
+    // 把自建模型（http://llm:8000/v1）和内网网关直接静默丢弃了。
+    ["https://a.b", "https://a.b"],
+    ["http://llm:8000/v1", "http://llm:8000/v1"],
   ];
   for (const [input, want] of cases) assert.equal(cleanBaseUrl(input), want, input);
 });
@@ -277,7 +281,11 @@ test("cleanBaseUrl：非 http(s)、缺 scheme、带空白、元数据地址一�
     "https://a.co/v1 extra",
     "http://169.254.169.254/latest/meta-data",
     "https://metadata.google.internal/",
-    "https://a.b", // 少于 12 字符
+    // 元数据地址的几种绕过写法：尾点、IPv4 映射的 IPv6、链路本地段。
+    "https://metadata.google.internal./",
+    "https://169.254.169.254./latest/meta-data",
+    "http://[::ffff:169.254.169.254]/latest/meta-data",
+    "http://[fe80::1]/v1",
   ];
   for (const v of bad) assert.equal(cleanBaseUrl(v), undefined, v);
 });

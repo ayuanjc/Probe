@@ -164,6 +164,15 @@ export function useProbe() {
     const seq = ++seqRef.current;
     /** 本轮是否仍然是"当前轮"：换轮、重置、卸载都会让它为假。 */
     const current = () => seqRef.current === seq && abortRef.current === controller;
+    /**
+     * 这一轮到底有没有收到 done 事件。
+     *
+     * 流正常结束（reader 读到 done）与「这一轮真的跑完了」是两件事：代理超时、
+     * 连接被重置、服务端进程被 OOM 杀掉，都会让流**干净地**结束在 done 之前。
+     * 以前收尾无条件把 running 改成 done，于是界面显示一个「查完了但什么都没有」的
+     * 结果页 —— 不报错、不给重试、也没有任何线索，比直接报错更让人困惑。
+     */
+    let doneSeen = false;
 
     setState({ ...IDLE, status: "running", query: q });
 
@@ -217,7 +226,16 @@ export function useProbe() {
       }
       if (!current()) return;
       flushText();
-      setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
+      if (doneSeen) {
+        setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
+      } else {
+        // 已经收到 error 事件时 status 是 failed，别把它盖成「连接中断」。
+        setState((s) =>
+          s.status === "running"
+            ? { ...s, status: "failed", error: "连接中断，本轮结果不完整（可以重跑一次）" }
+            : s,
+        );
+      }
     } catch (err) {
       if (controller.signal.aborted || !current()) return;
       setState((s) => ({
@@ -235,6 +253,8 @@ export function useProbe() {
       }
       // 非文本事件要先落盘已攒的文本，否则摘要顺序会颠倒（例如 done 先于最后一段字）。
       flushText();
+      // 标记写在 updater 之外：updater 可能被 React 重复调用，副作用不能放在里面。
+      if (event.event === "done") doneSeen = true;
       setState((s) => {
         switch (event.event) {
           case "intent":
@@ -285,7 +305,16 @@ export function useProbe() {
                     },
                   ],
             };
-          case "module.error":
+          case "module.error": {
+            /*
+             * 这张卡可能不存在（plan 事件丢了、或用户在生成途中清空了网格）。
+             * 以前这里只 map：匹配不到就什么都不发生 —— 用户看不到任何理由。
+             * 找不到卡时把原因并进 degraded，至少让顶部那条说明里留下痕迹。
+             */
+            if (!s.modules.some((m) => m.id === event.data.id)) {
+              const code = "module:" + (event.data.reason ?? "failed");
+              return { ...s, degraded: s.degraded.includes(code) ? s.degraded : [...s.degraded, code] };
+            }
             return {
               ...s,
               modules: s.modules.map((m) =>
@@ -294,6 +323,7 @@ export function useProbe() {
                   : m,
               ),
             };
+          }
           case "sources":
             return { ...s, sources: event.data.sources, confidence: event.data.confidence };
           case "figures":

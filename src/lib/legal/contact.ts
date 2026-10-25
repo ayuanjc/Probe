@@ -13,7 +13,8 @@
 export const DEFAULT_CONTACT_EMAIL = "ayuanjc@stu.zcst.edu.cn";
 
 /** env 显式设成空串或纯空格时回落到默认值，避免页面上出现「未配置」这种半成品文案。 */
-export const CONTACT_EMAIL = (process.env.PROBE_CONTACT_EMAIL || DEFAULT_CONTACT_EMAIL).trim();
+export const CONTACT_EMAIL =
+  (process.env.PROBE_CONTACT_EMAIL ?? "").trim() || DEFAULT_CONTACT_EMAIL;
 
 /** 运营者署名；留空则由调用方决定如何显示（页脚回落为「探针 · Probe」）。 */
 export const OPERATOR_NAME = (process.env.PROBE_OPERATOR_NAME ?? "").trim();

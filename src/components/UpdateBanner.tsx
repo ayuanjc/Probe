@@ -11,6 +11,11 @@ import { appPath } from "@/lib/base-path";
 const POLL_MS = 60_000;
 /** 重建那段窗口里进程会短暂不可用：失败后别等满一分钟，10 秒后再问一次。 */
 const RETRY_MS = 10_000;
+/**
+ * 但「10 秒固定重试」在真离线时是每秒 0.1 次、永不停止的请求。
+ * 失败次数翻倍退避到一分钟封顶：重建往往十几秒就好了，长离线则自然降到常规节奏。
+ */
+const MAX_RETRY_MS = POLL_MS;
 
 type Payload = { buildId: string; startedAt: string };
 
@@ -19,6 +24,8 @@ export default function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
   const mine = useRef<string | null>(null);
   const retry = useRef<number | null>(null);
+  /** 连续失败次数：退避用，成功一次就清零。 */
+  const fails = useRef(0);
 
   /** 返回 false 表示这次没问到有效构建号（进程正在重启 / 网络抖动）。 */
   const check = useCallback(async (): Promise<boolean> => {
@@ -41,10 +48,17 @@ export default function UpdateBanner() {
 
   const schedule = useCallback(() => {
     if (retry.current !== null) return;
+    fails.current += 1;
+    // 10s → 20s → 40s → 60s 封顶：真离线时请求频率自然降下来。
+    const wait = Math.min(RETRY_MS * 2 ** (fails.current - 1), MAX_RETRY_MS);
     retry.current = window.setTimeout(async () => {
       retry.current = null;
-      if (!(await check())) schedule();
-    }, RETRY_MS);
+      if (await check()) {
+        fails.current = 0;
+        return;
+      }
+      schedule();
+    }, wait);
   }, [check]);
 
   useEffect(() => {

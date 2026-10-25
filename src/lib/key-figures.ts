@@ -230,9 +230,23 @@ export function extractKeyFigures(input: {
     const clean = (label ?? "").trim();
     if (clean.length >= 2 && clean.length < hit.label.length) hit.label = clean;
   };
-  const findSame = (normalized: string, unit: string | undefined) => {
+  /*
+   * 查重键里要带上 period。
+   *
+   * 只有 normalized + unit 时，「2024 年 12%」与「2025 年 12%」会被并成一行：
+   * 行里挂着两条信源，period/quote 取第一期，于是第二期的数字冒用第一期的口径 ——
+   * 这不是排版问题，是数据造假。
+   *
+   * 但两边都缺 period 时必须还能并：periodOf 靠正则抓 quote 里的时间词，
+   * 同一句话在不同信源的摘录里常常只有一处带得到，硬按 period 分组
+   * 会让表格被同一个数字刷屏。所以「任一方缺 period」视为同期。
+   */
+  const samePeriod = (a: string | undefined, b: string | undefined) => !a || !b || a === b;
+  const findSame = (normalized: string, unit: string | undefined, period?: string) => {
     const vKey = valueKey(normalized, unit);
-    return figures.find((f) => valueKey(f.normalized, f.unit) === vKey);
+    return figures.find(
+      (f) => valueKey(f.normalized, f.unit) === vKey && samePeriod(f.period, period),
+    );
   };
 
   // 路径一：模型抽到的断言。label 用 attr，quote 直接是原文片段。
@@ -261,7 +275,14 @@ export function extractKeyFigures(input: {
       const value = unit && /^[A-Za-z]/.test(unit) ? bareValue + " " + unit : bareValue + unit;
       const at = claim.quote.search(/\d/);
       const label = cleanLabel((claim.attr || "").trim() || (at >= 0 ? labelBefore(claim.quote, at) : ""));
-      const same = findSame(normalized, claim.unit);
+      /*
+       * unit 一定要用补全后的那个。
+       *
+       * 上面 :256 已经为「value 带 % 而 claim.unit 为空」补出 unit = "%"，
+       * 但查重与入库原本仍用 claim.unit：同一句话里「12%」先以 unit="%" 入表，
+       * 后一条同样的断言按 unit=undefined 再查一次，查不到 → 又来一行没有单位的。
+       */
+      const same = findSame(normalized, unit, periodOf(claim.quote));
       if (same) {
         mergeInto(same, ids, label);
         continue;
@@ -271,7 +292,7 @@ export function extractKeyFigures(input: {
         label,
         value,
         normalized,
-        unit: claim.unit,
+        unit,
         period: periodOf(claim.quote),
         quote: claim.quote,
         sourceIds: ids,
@@ -291,7 +312,7 @@ export function extractKeyFigures(input: {
       if (figures.length >= MAX_FIGURES) break;
       const normalized = normalizeValue(c.value);
       // 这个数已经在表里（claim 抽过，或前一条信源扫到过）：并信源、挑更短的指标名，不新建行。
-      const same = findSame(normalized, c.unit);
+      const same = findSame(normalized, c.unit, periodOf(c.quote));
       if (same) {
         mergeInto(same, [s.id], c.label);
         continue;

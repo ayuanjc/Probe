@@ -32,11 +32,13 @@ export default function AuditTab({ entries, loading }: { entries: AuditEntry[]; 
     return entries.filter((e) => {
       if (!rule.match(e.action)) return false;
       if (!q) return true;
+      // 字段可能缺失（旧记录），toLowerCase 直接调会抛，整页变白。
+      const safe = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : "");
       return (
-        e.actor.toLowerCase().includes(q) ||
-        e.action.toLowerCase().includes(q) ||
-        e.target.toLowerCase().includes(q) ||
-        e.detail.toLowerCase().includes(q)
+        safe(e.actor).includes(q) ||
+        safe(e.action).includes(q) ||
+        safe(e.target).includes(q) ||
+        safe(e.detail).includes(q)
       );
     });
   }, [entries, query, group]);

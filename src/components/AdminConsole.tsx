@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AuditTab from "./admin/AuditTab";
 import InvitesTab from "./admin/InvitesTab";
 import SessionsDrawer from "./admin/SessionsDrawer";
@@ -35,9 +35,25 @@ export default function AdminConsole({ me }: { me: { id: string; username: strin
   const [notice, setNotice] = useState<Notice | null>(null);
   const [sessionUser, setSessionUser] = useState<PublicUser | null>(null);
 
+  /** 提示条的自动消失计时器：连续两次操作时，前一个 timer 不能把后一条提示提前清掉。 */
+  const noticeTimer = useRef<number | null>(null);
+
   const say = useCallback((next: Notice) => {
     setNotice(next);
-    if (next.kind === "ok") window.setTimeout(() => setNotice(null), 4000);
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = null;
+    if (next.kind === "ok") {
+      noticeTimer.current = window.setTimeout(() => {
+        noticeTimer.current = null;
+        setNotice(null);
+      }, 4000);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    };
   }, []);
 
   const loadUsers = useCallback(async () => {

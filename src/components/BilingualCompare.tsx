@@ -75,7 +75,11 @@ export default function BilingualCompare({
   title: string;
   text?: string;
 }) {
-  const key = url + "\u0000" + title;
+  /*
+   * key 必须含 text：同一条信源在不同出处常带不同片段（SourceList 传的是 s.quote），
+   * 只按 url+title 记缓存会让后一个片段直接命中前一段的译文 —— 译的是别的话。
+   */
+  const key = url + "\u0000" + title + "\u0000" + (text ?? "");
   const [state, setState] = useState<{ status: "loading" | "ready" | "error"; data?: TranslateResponse }>(
     () => {
       const hit = cache.get(key);

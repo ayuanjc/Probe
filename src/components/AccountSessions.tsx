@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { appPath } from "@/lib/base-path";
-import { api, btnDanger, btnNeutral, deviceLabel, since, time, type PublicSession } from "./admin/shared";
+import { api, btnDanger, btnNeutral, deviceLabel, ipFingerprint, since, time, type PublicSession } from "./admin/shared";
 
 /**
  * 自己的登录设备（/account 页）。
@@ -123,7 +123,7 @@ export default function AccountSessions() {
                     {isCurrent && <span className="ml-1.5 text-[10px] text-blue-400">当前设备</span>}
                   </p>
                   <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
-                    IP 指纹 {s.ipHash.slice(0, 8)} · 最后活跃 {since(s.lastSeenAt)}
+                    IP 指纹 {ipFingerprint(s.ipHash)} · 最后活跃 {since(s.lastSeenAt)}
                   </p>
                   <p className="mt-0.5 font-mono text-[10px] text-neutral-700">
                     登录于 {time(s.createdAt)} · 到期 {time(s.expiresAt)}

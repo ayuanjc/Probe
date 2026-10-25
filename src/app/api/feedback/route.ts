@@ -4,6 +4,7 @@ import path from "node:path";
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody, stripControlChars } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
+import { hashAddress } from "@/lib/auth/crypto";
 
 /**
  * 反馈落在磁盘上，不进数据库：这台机器没有 DB，而反馈的价值是「别丢」，
@@ -27,6 +28,24 @@ const MAX_BODY_BYTES = 32_000;
  * 而不是悄悄丢掉或者无限轮转 —— 运维需要知道"该归档了"。
  */
 const MAX_FILE_BYTES = readPositiveInt("PROBE_FEEDBACK_MAX_BYTES", 8_000_000, { max: 200_000_000 });
+
+/**
+ * 写盘串行化。
+ *
+ * 原来的顺序是「stat 一次看有没有超限 → 再 append」，两步之间没有任何互斥：
+ * N 个并发请求同时看到 7.99MB 都会放行，各自 append 一条，实际写进去 N 条 ——
+ * 上限只对串行请求成立。这里用一条 Promise 链把「看一眼大小 + 追加」压成临界区，
+ * 进程内并发不再能越限。（多实例部署仍需文件锁，本服务是单进程 systemd 单元。）
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(fn, fn);
+  writeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 function clean(value: unknown, max: number): string {
   if (typeof value !== "string") return "";
@@ -63,20 +82,6 @@ export async function POST(request: NextRequest) {
   const dir = path.dirname(FILE());
   const file = FILE();
 
-  // 磁盘配额先判，再读内容 —— 写满了就不该继续收。
-  const stat = await fs.stat(file).catch(() => null);
-  if (stat && stat.size > MAX_FILE_BYTES) {
-    console.warn(`[feedback] ${file} 已达 ${stat.size} 字节上限（${MAX_FILE_BYTES}），停止接收。请归档后清空。`);
-    return Response.json(
-      {
-        ok: false,
-        error: "storage_full",
-        message: "反馈存储已满，暂时无法接收新反馈（请联系维护者归档 .cache/feedback.jsonl）。",
-      },
-      { status: 503 },
-    );
-  }
-
   const raw = body as Record<string, unknown>;
   const message = clean(raw.message, 2000);
   const contact = clean(raw.contact, 120);
@@ -97,14 +102,33 @@ export async function POST(request: NextRequest) {
     contact,
     query,
     page,
-    ip: clientKey(request),
+    // 地址指纹而不是明文 IP：隐私政策里写的就是这个口径，同意日志与安全日志也一致。
+    // 明文 IP 落在一份可以 `tail` 的 JSONL 里，等于把「谁提过什么」直接摊在运维终端上。
+    ip: hashAddress(clientKey(request)) ?? null,
     ua: clean(request.headers.get("user-agent"), 300),
   };
 
   try {
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    // mode 只在文件新建时生效：反馈里可能有联系方式，别让同机其他用户读到。
-    await fs.appendFile(file, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+    // 配额判定与追加在同一临界区里：并发请求不能各自看到「还没满」再一起写进去。
+    const outcome = await withWriteLock(async () => {
+      const stat = await fs.stat(file).catch(() => null);
+      if (stat && stat.size > MAX_FILE_BYTES) return { full: stat.size } as const;
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      // mode 只在文件新建时生效：反馈里可能有联系方式，别让同机其他用户读到。
+      await fs.appendFile(file, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+      return { full: null } as const;
+    });
+    if (outcome.full !== null) {
+      console.warn(`[feedback] ${file} 已达 ${outcome.full} 字节上限（${MAX_FILE_BYTES}），停止接收。请归档后清空。`);
+      return Response.json(
+        {
+          ok: false,
+          error: "storage_full",
+          message: "反馈存储已满，暂时无法接收新反馈（请联系维护者归档 .cache/feedback.jsonl）。",
+        },
+        { status: 503 },
+      );
+    }
   } catch (err) {
     console.warn("[feedback] write failed:", err instanceof Error ? err.message : err);
     return Response.json(

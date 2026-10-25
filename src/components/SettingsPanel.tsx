@@ -193,6 +193,18 @@ export default function SettingsPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   /** 打开前焦点在哪：关掉之后要还回去，否则焦点掉到 body 上，键盘用户等于被扔在原地。 */
   const returnFocus = useRef<HTMLElement | null>(null);
+  /**
+   * onClose 走 ref，不进 effect 依赖。
+   *
+   * 父组件（Workspace.tsx:903）传的是内联箭头 `() => setSettingsOpen(false)`，
+   * 每次重渲染都是新函数身份。而设置面板的每个输入框都是受控的：打一个字 →
+   * onChange → 父组件 setSettings → 重渲染 → 新 onClose → 下面这个 effect 整段重跑。
+   * cleanup 先把焦点还给打开前的元素，紧接着新的 rAF 又把焦点拽进抽屉里的第一个
+   * 可聚焦控件 —— 用户每敲一个字符就要重新点一次输入框，设置面板等于不能用。
+   * （以前没暴露是因为 rAF 里的选择器命中过输入框本身，一旦结构变化就会踩中按钮。）
+   */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) {
@@ -203,7 +215,7 @@ export default function SettingsPanel({
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       /**
@@ -229,10 +241,17 @@ export default function SettingsPanel({
     };
 
     document.addEventListener("keydown", onKey);
-    // 打开后先把焦点送进抽屉（用 rAF 等 DOM 挂上）。
+    /*
+     * 打开后把焦点送进抽屉（rAF 等 DOM 挂上）。
+     *
+     * 优先落第一个**输入控件**；原来写的是 "input, button"，按钮在 DOM 里靠前时
+     * 焦点会落到头部那个「关闭设置」上 —— 看着像焦点丢了，且回车就把面板关了。
+     */
     const raf = window.requestAnimationFrame(() => {
-      const firstInput = panelRef.current?.querySelector<HTMLElement>("input, button");
-      firstInput?.focus();
+      const root = panelRef.current;
+      if (!root) return;
+      const field = root.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled])");
+      (field ?? root.querySelector<HTMLElement>("button:not([disabled])"))?.focus();
     });
     return () => {
       document.removeEventListener("keydown", onKey);
@@ -241,7 +260,7 @@ export default function SettingsPanel({
       returnFocus.current = null;
       if (back && document.contains(back)) back.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -281,8 +300,13 @@ export default function SettingsPanel({
   }
 
   function doReset() {
-    resetLocalData();
+    /*
+     * 顺序是关键：onChange 会把默认值当成一次正常保存写回 probe:settings:v1，
+     * 先清后写等于刚擦干净又落一枚键，ConfigDocs 里「按 probe: 前缀全清」就成假话。
+     * 所以先让状态回到默认，再整体清一遍 —— 键不存在时 readSettings 也回默认值。
+     */
     onChange({ ...DEFAULT_SETTINGS });
+    resetLocalData();
     // 布局快照也清掉了，回到干净的首页比原地刷新更彻底。
     window.location.href = window.location.pathname;
   }

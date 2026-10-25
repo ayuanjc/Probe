@@ -72,7 +72,16 @@ type HnHit = {
 };
 
 function dayKeyOf(sec: number): string {
-  return new Date(sec * 1000).toISOString().slice(0, 10);
+  /*
+   * 上游少给一个字段就是 RangeError：new Date(NaN).toISOString() 直接抛，
+   * 而 collect() 里这个调用在 try 之外（try 只包了 fetchWindow），
+   * 于是**整份基线**因为一条脏数据构建失败，首页永远 pending。
+   * 返回空串，由调用方跳过这一条。
+   */
+  if (!Number.isFinite(sec)) return "";
+  const d = new Date(sec * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
 }
 
 function todayStartUtc(): number {
@@ -148,6 +157,7 @@ async function collect(ranges: { a: number; b: number }[]): Promise<Map<string, 
     if (title.length < 8) continue;
     if ((hit.points ?? 0) < MIN_POINTS) continue;
     const day = dayKeyOf(hit.created_at_i);
+    if (!day) continue;
     const link = hit.url ?? "hn:" + hit.objectID;
     const seen = seenByDay.get(day) ?? new Set<string>();
     if (seen.has(link)) continue;
@@ -190,7 +200,31 @@ function toHistory(byDay: Map<string, Record<string, number>>): History {
 function isHistory(v: unknown): v is History {
   if (!v || typeof v !== "object") return false;
   const h = v as Partial<History>;
-  return h.version === HISTORY_VERSION && typeof h.to === "string" && Array.isArray(h.days);
+  if (h.version !== HISTORY_VERSION) return false;
+  if (typeof h.from !== "string" || typeof h.to !== "string") return false;
+  if (!Array.isArray(h.days)) return false;
+  /*
+   * 缓存文件是本机产物，但也是**跨版本/跨手改**的输入，形状必须逐项验：
+   *   - to 解析不了（如 "2026-13-45"）→ extend() 里 daysBack 变 NaN →
+   *     窗口为空 → `b > start` 恒假 → 空基线原样写回，进入「永远 stale、永远重建」；
+   *   - 某个 day 缺 counts → dailySeries 读 d.counts[topic] 抛 TypeError，
+   *     被上层 catch 吞掉，首页永远 pending，日志里什么都没有。
+   * 这两种都表现为「页面一直转圈」，而原因在缓存文件里，最难查。
+   */
+  if (!Number.isFinite(Date.parse(h.from + "T00:00:00Z"))) return false;
+  if (!Number.isFinite(Date.parse(h.to + "T00:00:00Z"))) return false;
+  for (const d of h.days) {
+    if (!d || typeof d !== "object") return false;
+    const day = d as Partial<HistoryDay>;
+    if (typeof day.day !== "string") return false;
+    if (!Number.isFinite(Date.parse(day.day + "T00:00:00Z"))) return false;
+    const counts = day.counts;
+    if (!counts || typeof counts !== "object" || Array.isArray(counts)) return false;
+    for (const [topic, n] of Object.entries(counts)) {
+      if (typeof topic !== "string" || !Number.isFinite(n)) return false;
+    }
+  }
+  return true;
 }
 
 async function readCache(): Promise<History | null> {
@@ -293,6 +327,7 @@ export async function warmHistory(): Promise<History | null> {
 export function dailySeries(history: History, topic: string): { dates: string[]; counts: number[] } {
   return {
     dates: history.days.map((d) => d.day),
-    counts: history.days.map((d) => d.counts[topic] ?? 0),
+    // counts 可能缺（历史缓存来自旧版本），可选链兜住；index 侧已校验。
+    counts: history.days.map((d) => d.counts?.[topic] ?? 0),
   };
 }

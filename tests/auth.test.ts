@@ -273,6 +273,29 @@ test("邀请码：撤销 / 过期 / 不存在各自的原因码", async () => {
   assert.equal((list[0] as Record<string, unknown>).codeHash, undefined);
 });
 
+test("邀请码：非数字的 maxUses / expiresInHours 不会造出「无限次 + 永不过期」", async () => {
+  freshDir();
+  // NaN 参与比较永远为 false：maxUses=NaN 会让 uses >= maxUses 永不成立，
+  // expiresAt=NaN 经 JSON 序列化变成 null。两条都会把一张普通码变成永久码。
+  const bad = await createInvite({
+    maxUses: Number("abc"),
+    expiresInHours: Number("abc"),
+    createdBy: "test",
+  });
+  assert.equal(Number.isFinite(bad.invite.maxUses), true);
+  assert.equal(bad.invite.maxUses, 1);
+  assert.equal(bad.invite.expiresAt, null);
+
+  // 一张码只能换一个号：用完之后必须报 exhausted。
+  await commitInviteUse(bad.invite.id, "u1");
+  const after = await checkInvite(bad.code);
+  assert.equal(after.ok === false && after.reason, "exhausted");
+
+  // 明确的 null 仍然是「永不过期」，这是管理员的本意，不能被兜底改掉。
+  const forever = await createInvite({ maxUses: 2, expiresInHours: null, createdBy: "test" });
+  assert.equal(forever.invite.expiresAt, null);
+});
+
 /* -------------------------------- 其它 -------------------------------- */
 
 test("ensureAdminFromEnv：空库种一次，已有用户后不再覆盖", async () => {

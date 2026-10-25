@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LAYOUT_VERSION } from "@/lib/layout";
 import { KEY_PREFIX, SETTINGS_KEY } from "@/lib/settings";
@@ -155,6 +155,14 @@ function EnvName({ children }: { children: ReactNode }) {
 
 export default function ConfigDocs() {
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
+  /** 1.8 秒后复位标签的 timer：连点两次要重置计时，不能各留一个。 */
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    };
+  }, []);
 
   async function copyEnv() {
     try {
@@ -164,7 +172,11 @@ export default function ConfigDocs() {
       // 非 https / 未授权时 clipboard 会抛：如实说复制失败，别让按钮装作成功。
       setCopied("fail");
     }
-    window.setTimeout(() => setCopied("idle"), 1800);
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => {
+      resetTimer.current = null;
+      setCopied("idle");
+    }, 1800);
   }
 
   return (

@@ -22,6 +22,14 @@ export type VerifyDoc = {
   sourceUrl: string | null;
   /** 原文被上限截断过（不是分段截断）。 */
   truncated: boolean;
+  /**
+   * 截断前的段落总数。
+   *
+   * segments 只保留前 VERIFY_MAX_SEGMENTS 段，覆盖率却要「看了几段 / 一共几段」。
+   * 用 segments.length 当分母时它恒等于 24，segments:extracted_X_of_Y 永远不会触发，
+   * partial 结果会少报一条真实原因。
+   */
+  segmentsTotal: number;
 };
 
 export type DocLoadFail = {
@@ -126,7 +134,8 @@ export async function loadDoc(input: { text?: string; url?: string }): Promise<D
   let truncated = false;
 
   if (body.length === 0 && url) {
-    const got = await fetchArticle(url);
+    // 核验要完整正文：不传 VERIFY_MAX_CHARS 的话拿到的是 translate 的 6000 字上限。
+    const got = await fetchArticle(url, VERIFY_MAX_CHARS);
     if (!got.ok) {
       const code = got.reason === "url_blocked" ? "verify:url_blocked"
         : got.reason === "not_html" ? "verify:not_html"
@@ -158,7 +167,7 @@ export async function loadDoc(input: { text?: string; url?: string }): Promise<D
 
   return {
     ok: true,
-    doc: { docId: docIdOf(body), title, text: body, chars: body.length, sourceUrl, truncated },
+    doc: { docId: docIdOf(body), title, text: body, chars: body.length, sourceUrl, truncated, segmentsTotal: split.total },
     segments,
     degraded,
   };

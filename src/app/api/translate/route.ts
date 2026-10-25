@@ -2,6 +2,7 @@ import { translateDocument } from "@/lib/translate";
 import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
+import { requireUser } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,13 @@ function json(data: unknown, status = 200): Response {
 
 export async function POST(request: Request) {
   if (isCrossSite(request)) return json({ ok: false, error: "cross_site", message: "拒绝跨站调用。" }, 403);
+  /**
+   * 这是唯一一个此前没有 requireUser 的内容接口 ——
+   * 匿名就能让服务端拿自己的 key 打模型、并替任意人抓外链正文（20 次/分钟 × 换 IP）。
+   * 站内所有调用方（结果页的「对照原文」）本来都在登录态内，加闸门不影响任何正常用法。
+   */
+  const auth = await requireUser(request);
+  if (!auth.ok) return auth.response;
 
   const per = perClient.check(clientKey(request));
   if (!per.ok) {

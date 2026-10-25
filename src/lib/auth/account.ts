@@ -10,8 +10,8 @@ import {
   AuthStoreError,
   audit,
   checkInvite,
-  commitInviteUse,
   createUser,
+  createUserWithInvite,
   deleteUser,
   findUserById,
   findUserByUsername,
@@ -283,8 +283,10 @@ export type RegisterInput = {
 
 /**
  * 用邀请码注册。
- * 顺序是硬约束：**先建用户、后记名额** —— 反过来一旦建号失败（重名 / 密码不合规），
- * 邀请码就白吃一次，管理员得重新发一个码才能补救。
+ *
+ * 「建号」与「吃名额」现在是同一个原子操作（store.createUserWithInvite）：
+ * 老写法先 checkInvite 再 createUser 再 commitInviteUse，重名或密码不合规不会白吃名额，
+ * 但两个并发请求能同时通过校验、都建出号来，只有一个 commit 成功 —— 等于送了一个号。
  */
 export async function registerWithInvite(
   input: RegisterInput,
@@ -299,27 +301,18 @@ export async function registerWithInvite(
     await audit({ actor: "signup", action: "invite_rejected", detail: checked.reason, ip: input.ip });
     throw new AccountError(INVITE_BY_REASON[checked.reason] ?? "invite_not_found");
   }
+  // 先查一次重名只是为了给出更早、更便宜的失败（哈希密码要花 60ms+）。
+  // 真正的唯一性由 createUserWithInvite 在 mutate 内部再判一次。
   if (await findUserByUsername(username)) throw new AccountError("duplicate_username");
 
   let user: StoredUser;
   try {
-    user = await createUser({
+    user = await createUserWithInvite({
+      inviteId: checked.invite.id,
       username,
       passwordHash: await hashPassword(input.password),
-      role: checked.invite.role,
-      createdBy: "invite:" + checked.invite.id,
-      note: checked.invite.note,
-      inviteId: checked.invite.id,
-      // 注册的人自己设的密码，没有"初始密码"要改。
-      mustChangePassword: false,
     });
   } catch (err) {
-    throw storeError(err);
-  }
-  try {
-    await commitInviteUse(checked.invite.id, user.id);
-  } catch (err) {
-    // 名额在 checks 和 commit 之间被别人用完了：号已经建出来了，交给调用方决定怎么提示。
     throw storeError(err);
   }
   await audit({

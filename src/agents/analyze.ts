@@ -8,6 +8,7 @@ import {
   allowsAggregateNumbers,
   ownerOf,
 } from "@/lib/confidence";
+import { locateQuote, MIN_QUOTE_CHARS } from "@/lib/claim-extract";
 import { generateStructured, llmEnabled } from "@/lib/llm";
 import type { UsageSink } from "@/lib/metrics";
 import { toneBucket } from "@/lib/heat";
@@ -113,8 +114,14 @@ async function extractClaims(
   intent: Intent,
   sources: RawSource[],
   sink?: UsageSink,
-): Promise<{ claims: Claim[]; source: "llm" | "fixture" | "none" | "failed" }> {
-  if (sources.length === 0) return { claims: [], source: "none" };
+  signal?: AbortSignal,
+): Promise<{
+  claims: Claim[];
+  source: "llm" | "fixture" | "none" | "failed";
+  /** quote 复核没过的条数：要外发，不能让「模型编了几句」静默消失。 */
+  quoteMisses: number;
+}> {
+  if (sources.length === 0) return { claims: [], source: "none", quoteMisses: 0 };
 
   /**
    * 没有模型就不抽断言。这里曾经回落成模板生成的假 claim，
@@ -122,7 +129,7 @@ async function extractClaims(
    * 宁可这一栏空着，也不能凭空造出可以点开核对的证据。
    */
   if (!llmEnabled()) {
-    return { claims: [], source: "none" };
+    return { claims: [], source: "none", quoteMisses: 0 };
   }
 
   const bundle = sources.slice(0, 12).map((s) => ({
@@ -148,10 +155,10 @@ async function extractClaims(
       "带数字但含未来指向或因果的，分别记 prediction / causal，不要记 quantitative。",
     prompt:
       "查询：" + intent.query + "\n材料：\n" + JSON.stringify(bundle, null, 1),
-  }, sink);
+  }, sink, signal);
 
   // 调用失败不是「没配置模型」：两者在界面上该给出的下一步完全不同（一个去填 key，一个去看日志）。
-  if (!parsed) return { claims: [], source: "failed" };
+  if (!parsed) return { claims: [], source: "failed", quoteMisses: 0 };
 
   const validIds = new Set(sources.map((s) => s.id));
   /**
@@ -160,15 +167,37 @@ async function extractClaims(
    * 伪造的那条既查不到也不报错，等于悄悄污染了核验口径。
    * 先裁到合法 id，裁空就整条丢掉 —— 没有出处的事实不是事实。
    */
+  const byId = new Map(sources.map((s) => [s.id, s]));
   const claims: Claim[] = [];
+  let quoteMisses = 0;
   for (const c of parsed.claims) {
-    if (!c.quote || c.quote.trim().length < 4) continue;
+    // 门槛与文档核验链路（claim-extract.ts 的 MIN_QUOTE_CHARS）统一：三五个字的片段
+    // 在任何文章里都能命中，既定位不了也证明不了模型没编。
+    if (!c.quote || c.quote.trim().length < MIN_QUOTE_CHARS) continue;
     const ids = c.sourceIds.filter((id) => validIds.has(id));
     if (ids.length === 0) continue;
+    /*
+     * quote 必须真在它自称的出处里。
+     *
+     * 这条链路上原来只查「长度」和「id 合法」，从不碰原文 —— 而模型编 quote 是
+     * 最常见的失败模式，且编得极像：术语、量级、语气都对，只差一个百分号。
+     * 编出来的 quote 会直接进 done.claims、进关键数字清单，界面上还能「点击回到原文」
+     * 跳到一段对不上的文字。文档核验链路一直有这一步，检索链路漏了。
+     */
+    const hay = ids
+      .map((id) => {
+        const s = byId.get(id);
+        return s ? (s.title ?? "") + "。" + (s.snippet ?? "") : "";
+      })
+      .join("\n");
+    if (!locateQuote(hay, c.quote)) {
+      quoteMisses += 1;
+      continue;
+    }
     claims.push({ ...c, sourceIds: ids });
   }
 
-  return { claims, source: "llm" };
+  return { claims, source: "llm", quoteMisses };
 }
 
 /** 模型返回 { claims: [...] }，逐项过 ClaimSchema。 */
@@ -211,6 +240,7 @@ export async function analyze(
   intent: Intent,
   raw: RawSource[],
   sink?: UsageSink,
+  signal?: AbortSignal,
 ): Promise<AnalysisResult> {
   const notes: string[] = [];
   const degraded: string[] = [];
@@ -229,9 +259,13 @@ export async function analyze(
   const syndicatedSet = findSyndicatedIds(raw);
   for (const id of deduped.mergedIds) syndicatedSet.add(id);
   const syndicatedIds = [...syndicatedSet];
-  const { claims, source: claimSource } = await extractClaims(intent, sources, sink);
+  // signal 一路带到模型调用：客户端关页面后这次抽取要能立刻放弃，
+  // 而不是把 30 秒超时和额度一起跑完（检索已经被 signal 拦住，抽取却漏掉了）。
+  const { claims, source: claimSource, quoteMisses } = await extractClaims(intent, sources, sink, signal);
   if (claimSource === "none") degraded.push("claims:off");
   if (claimSource === "failed") degraded.push("claims:extract_failed");
+  // 编造的 quote 被丢掉这件事要让用户看得见：丢了几条、为什么丢。
+  if (quoteMisses > 0) degraded.push("claims:quote_miss_" + quoteMisses);
 
   const confidence = computeConfidence(sources, claims, {
     rawCount: raw.length,

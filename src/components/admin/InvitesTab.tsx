@@ -87,14 +87,32 @@ export default function InvitesTab({
 
   const createInvite = async () => {
     if (busy) return;
+    /*
+     * 次数与有效期必须显式校验，不能让 Number() 的宽容兜底。
+     *
+     * 原来写的是 `Number(uses) || 1` 与 `Number(hours) > 0 ? Number(hours) : null`：
+     * 填 abc → NaN → 悄悄变成「1 次」；填 1e999 → Infinity 通过了 > 0 判断，
+     * 而 JSON.stringify(Infinity) 就是 "null" —— 邀请码从「72 小时」变成**永不过期**。
+     * 这两条都是「界面明示 A、实际发的是 B」，比直接报错危险得多。
+     */
+    const usesNum = uses.trim() === "" ? 1 : Number(uses);
+    if (!Number.isFinite(usesNum) || !Number.isInteger(usesNum) || usesNum < 1 || usesNum > 100) {
+      onSay({ kind: "err", text: "可用次数要填 1–100 的整数。" });
+      return;
+    }
+    const hoursNum = hours.trim() === "" ? null : Number(hours);
+    if (hoursNum !== null && (!Number.isFinite(hoursNum) || hoursNum < 1 || hoursNum > 8760)) {
+      onSay({ kind: "err", text: "有效期要填 1–8760 小时（一年），留空表示不过期。" });
+      return;
+    }
     setBusy("create-invite");
     const r = await api<{ code: string }>("/api/admin/invites", {
       method: "POST",
       body: {
         note,
         role,
-        maxUses: Number(uses) || 1,
-        expiresInHours: Number(hours) > 0 ? Number(hours) : null,
+        maxUses: usesNum,
+        expiresInHours: hoursNum,
       },
     });
     setBusy("");
