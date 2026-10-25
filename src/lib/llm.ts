@@ -146,15 +146,31 @@ export function budgetUsed(): number {
  *
  * 只对服务端 env key 生效 —— 用户自带 key 花的是他自己的钱，没有理由拦。
  */
-type ScopeBudget = { day: string; used: number; warned: boolean };
+type ScopeBudget = { day: string; units: number; calls: number; warned: boolean; blocked: boolean };
 
 const scopeBudgets = new Map<string, ScopeBudget>();
 const SCOPE_BUDGET_MAX_KEYS = 2_048;
 
-export function perUserCallBudget(): number {
+/**
+ * 每个人的额度按**操作**记点，而不是按上游调用次数。
+ *
+ * 起因：一次文档核验最多 24 次上游调用（12 段抽取 + 12 条判定），一次提问 2 到 3 次。
+ * 按调用次数记意味着「一次核验 ≈ 两次提问的八倍」，而且核验经常跑到一半就被拦
+ * （界面标 llm:user_budget），看起来像故障。现在：提问 1 点、面板生成 1 点、
+ * 文档核验 3 点 —— 一个人的额度只跟他点了几次有关。
+ *
+ * 钱仍然由**全局**调用上限（PROBE_DAILY_LLM_CALLS）看着：那是真金白银，不能按感觉记。
+ */
+export const OP_UNITS = { search: 1, module: 1, verify: 3 } as const;
+
+export function perUserUnitBudget(): number {
   const fromUi = readOverrides().perUserCap;
   if (fromUi !== null) return fromUi;
-  return readPositiveInt("PROBE_DAILY_LLM_CALLS_PER_USER", 120, { max: 100_000 });
+  const units = readPositiveInt("PROBE_DAILY_LLM_UNITS_PER_USER", 0, { max: 100_000 });
+  // 兼容老配置：PROBE_DAILY_LLM_CALLS_PER_USER 现在被解释成「点」。
+  // 不读它的话，升级后线上那行 env 会静默失效、额度跳回默认值。
+  if (units > 0) return units;
+  return readPositiveInt("PROBE_DAILY_LLM_CALLS_PER_USER", 30, { max: 100_000 });
 }
 
 function scopeBudgetFor(key: string, day: string): ScopeBudget {
@@ -166,7 +182,7 @@ function scopeBudgetFor(key: string, day: string): ScopeBudget {
     for (const [k, v] of scopeBudgets) if (v.day !== day) scopeBudgets.delete(k);
     if (scopeBudgets.size >= SCOPE_BUDGET_MAX_KEYS) scopeBudgets.clear();
   }
-  const fresh: ScopeBudget = { day, used: 0, warned: false };
+  const fresh: ScopeBudget = { day, units: 0, calls: 0, warned: false, blocked: false };
   scopeBudgets.set(key, fresh);
   return fresh;
 }
@@ -178,13 +194,51 @@ export function scopeBudgetExhausted(): boolean {
   if (!scope) return false;
   const state = scopeBudgets.get(scope.key);
   if (!state || state.day !== today()) return false;
-  return state.used >= perUserCallBudget();
+  return state.blocked;
 }
 
-/** 当前请求所属用户今天用掉的次数（运维观测用）。 */
+/** 当前请求所属用户今天用掉的点数（判定依据，后台表格用）。 */
 export function scopeBudgetUsed(key: string): number {
   const state = scopeBudgets.get(key);
-  return state && state.day === today() ? state.used : 0;
+  return state && state.day === today() ? state.units : 0;
+}
+
+/** 当前请求所属用户今天实际打了多少次上游（只用于观测，不参与判定）。 */
+export function scopeCallUsed(key: string): number {
+  const state = scopeBudgets.get(key);
+  return state && state.day === today() ? state.calls : 0;
+}
+
+/**
+ * 一次操作开始时记点。返回是否还有余额（false = 这次已经是透支的那一次）。
+ *
+ * 为什么在操作开始时记、而不是每次上游调用时记：调用次数是实现细节，
+ * 用户点了一次核验就是一次核验。余额不足时**不拦这次操作**，让它照常跑完，
+ * 只是内部每次 takeBudget() 都返回 false，整条链路降级为本地模板并在界面标注 ——
+ * 半路砍断更让人困惑（结果一半是真模型、一半是模板）。
+ */
+export function chargeOperation(units: number): { ok: boolean; used: number; cap: number } {
+  const cap = perUserUnitBudget();
+  if (keySource() !== "env") return { ok: true, used: 0, cap };
+  const scope = currentCallScope();
+  if (!scope) return { ok: true, used: 0, cap };
+  const state = scopeBudgetFor(scope.key, today());
+  const add = Number.isFinite(units) && units > 0 ? Math.floor(units) : 1;
+
+  /**
+   * 余额已经用完：这次操作**放行但标记为降级**（blocked）。
+   *
+   * 为什么不直接拒掉这次请求：用户点的是「核验这篇文章」，
+   * 拒掉等于页面什么都没发生；标成降级则结果照出、界面明说「本轮用的是本地判定」。
+   * blocked 一旦置上就管到当天结束 —— 后面每一次 takeBudget() 都会返回 false。
+   */
+  if (state.units >= cap) {
+    state.blocked = true;
+    return { ok: false, used: state.units, cap };
+  }
+  // 允许把额度用满（用满的那一次照常跑），但点数不会涨过上限（后台进度条才好读）。
+  state.units = Math.min(state.units + add, cap);
+  return { ok: true, used: state.units, cap };
 }
 
 /* ---------------------- 运维可调的额度上限（落盘覆盖） ---------------------- */
@@ -247,7 +301,7 @@ export function quotaLimits(): {
   const o = readOverrides();
   return {
     globalCap: dailyCallBudget(),
-    perUserCap: perUserCallBudget(),
+    perUserCap: perUserUnitBudget(),
     globalFrom: o.globalCap === null ? "env" : "ui",
     perUserFrom: o.perUserCap === null ? "env" : "ui",
   };
@@ -273,10 +327,12 @@ export function setQuotaLimits(next: { globalCap: number | null; perUserCap: num
 }
 
 /** 今日各身份的模型调用次数（只含今天真有记录的身份），后台额度页用。 */
-export function scopeBudgetSnapshot(): { key: string; used: number }[] {
+export function scopeBudgetSnapshot(): { key: string; used: number; calls: number }[] {
   const day = today();
-  const out: { key: string; used: number }[] = [];
-  for (const [key, v] of scopeBudgets) if (v.day === day && v.used > 0) out.push({ key, used: v.used });
+  const out: { key: string; used: number; calls: number }[] = [];
+  // used = 点数（判定依据），calls = 实际上游调用（观测）——
+  // 两个都报，才看得出「额度少得可疑」到底是用户点得多，还是某条链路在偷偷多打上游。
+  for (const [key, v] of scopeBudgets) if (v.day === day && (v.units > 0 || v.calls > 0)) out.push({ key, used: v.units, calls: v.calls });
   out.sort((a, b) => b.used - a.used);
   return out;
 }
@@ -305,18 +361,19 @@ function takeBudget(): boolean {
   // 先判个人额度，再记全局：个人被拦时不该消耗别人的份。
   const scope = currentCallScope();
   if (scope) {
-    const perCap = perUserCallBudget();
+    const perCap = perUserUnitBudget();
     const state = scopeBudgetFor(scope.key, day);
-    if (state.used >= perCap) {
+    if (state.blocked) {
       if (!state.warned) {
         state.warned = true;
         console.warn(
-          `[llm] ${scope.label} 今日调用已达上限 ${perCap} 次（PROBE_DAILY_LLM_CALLS_PER_USER），本次降级为本地模板。`,
+          "[llm] " + scope.label + " 今日额度已用完（" + state.units + "/" + perCap +
+            " 点，提问记 1 点、核验记 3 点），本次降级为本地模板。",
         );
       }
       return false;
     }
-    state.used += 1;
+    state.calls += 1;
   }
 
   budgetState.used += 1;

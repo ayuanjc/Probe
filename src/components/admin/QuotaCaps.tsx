@@ -65,7 +65,7 @@ export default function QuotaCaps({
       return;
     }
     if (!Number.isInteger(p) || p < 1 || p > 100_000) {
-      onSay({ kind: "err", text: "每人日额度要是 1–100000 之间的整数。" });
+      onSay({ kind: "err", text: "每人日额度（点）要是 1–100000 之间的整数。" });
       return;
     }
     if (p > g) {
@@ -79,13 +79,14 @@ export default function QuotaCaps({
     <div>
       {hint ? (
         <p className="text-[11px] leading-relaxed text-neutral-500">
+          全局按上游调用次数算（钱），每人按操作点数算（提问 1 / 面板 1 / 核验 3）。
           保存后立刻生效，并写入 <code className="text-neutral-400">.data/ops/limits.json</code>（优先于环境变量）。
           「清除覆盖」= 回到服务器 <code className="text-neutral-400">probe.env</code> 里的值。
         </p>
       ) : null}
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="block w-32">
-          <span className={labelClass}>全局日额度</span>
+          <span className={labelClass}>全局日额度（次）</span>
           <input
             className={inputClass}
             inputMode="numeric"
@@ -98,7 +99,7 @@ export default function QuotaCaps({
           />
         </label>
         <label className="block w-32">
-          <span className={labelClass}>每人日额度</span>
+          <span className={labelClass}>每人日额度（点）</span>
           <input
             className={inputClass}
             inputMode="numeric"

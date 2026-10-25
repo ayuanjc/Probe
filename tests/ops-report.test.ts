@@ -9,7 +9,7 @@ import {
   __testReloadQuotaOverrides,
   __testResetGlobalBudget,
   dailyCallBudget,
-  perUserCallBudget,
+  perUserUnitBudget,
   quotaLimits,
   setQuotaLimits,
 } from "@/lib/llm";
@@ -131,7 +131,7 @@ test("额度覆盖：后台设的上限优先于环境变量，并写进 .data/o
     const before = quotaLimits();
     setQuotaLimits({ globalCap: 40, perUserCap: 7 });
     assert.equal(dailyCallBudget(), 40);
-    assert.equal(perUserCallBudget(), 7);
+    assert.equal(perUserUnitBudget(), 7);
     const after = quotaLimits();
     assert.equal(after.globalFrom, "ui");
     assert.equal(after.perUserFrom, "ui");
@@ -145,7 +145,7 @@ test("额度覆盖：后台设的上限优先于环境变量，并写进 .data/o
     setQuotaLimits({ globalCap: null, perUserCap: null });
     const cleared = quotaLimits();
     assert.equal(cleared.globalFrom, "env");
-    assert.equal(cleared.perUserCap, before.perUserCap === 7 ? 120 : before.perUserCap);
+    assert.equal(cleared.perUserCap, before.perUserCap);
   });
 });
 
@@ -155,7 +155,7 @@ test("额度覆盖：0 / 负数 / 小数 / 超界一律当没设，额度不会�
     assert.equal(quotaLimits().globalFrom, "env");
     setQuotaLimits({ globalCap: 3.5, perUserCap: 10 ** 9 });
     assert.equal(quotaLimits().perUserFrom, "env");
-    assert.ok(perUserCallBudget() >= 1);
+    assert.ok(perUserUnitBudget() >= 1);
   });
 });
 
@@ -182,7 +182,7 @@ test("额度覆盖：只改其中一条时，另一条不会被顺手清掉", ()
       perUserCap: current.perUserFrom === "ui" ? current.perUserCap : null,
     });
     assert.equal(dailyCallBudget(), 400);
-    assert.equal(perUserCallBudget(), 30);
+    assert.equal(perUserUnitBudget(), 30);
     setQuotaLimits({ globalCap: null, perUserCap: null });
     __testResetGlobalBudget();
   });

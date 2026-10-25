@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ModuleKind, type Field, type ModuleSpec } from "@/lib/schemas";
-import { generateStructured, llmEnabled, modelId } from "@/lib/llm";
+import { chargeOperation, generateStructured, llmEnabled, modelId, OP_UNITS } from "@/lib/llm";
 import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import {
@@ -145,6 +145,11 @@ export async function POST(request: Request) {
 }
 
 async function generateFor(request: Request): Promise<Response> {
+  // 生成面板也是一次操作：记 1 点（提问 1 点、核验 3 点）。
+  const charged = chargeOperation(OP_UNITS.module);
+  if (!charged.ok) {
+    console.info("[quota] 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），面板生成降级为本地方案。");
+  }
   const per = perClient.check(clientKey(request));
   if (!per.ok) {
     return new Response(

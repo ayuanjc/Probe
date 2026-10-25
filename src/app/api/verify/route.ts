@@ -7,6 +7,7 @@ import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJson
 import { requireUser } from "@/lib/auth/guard";
 import { usageAccumulator } from "@/lib/metrics";
 import { runWithCallScope, type CallScope } from "@/lib/call-scope";
+import { chargeOperation, OP_UNITS } from "@/lib/llm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -207,6 +208,12 @@ async function guarded(
 
   try {
     return await runWithCallScope(scope, async () => {
+      // 一次核验记 3 点，而不是按它内部那二三十次上游调用记 ——
+      // 否则用户会觉得「核验一次就吃掉八次提问的额度」，而且经常跑到一半被拦。
+      const charged = chargeOperation(OP_UNITS.verify);
+      if (!charged.ok) {
+        console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮核验降级为本地判定。");
+      }
       const cfg = await prepareRuntimeConfig(request);
       if (format === "json") {
         try {

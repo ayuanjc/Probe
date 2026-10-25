@@ -26,7 +26,10 @@ export type RetrievalRow = {
 export type OpsQuotaUser = {
   id: string;
   username: string;
+  /** 今天用掉的**点数**（提问 1 点、面板 1 点、核验 3 点）—— 判定依据。 */
   used: number;
+  /** 今天实际打出去的上游调用次数 —— 只用于观测，和 used 不是一回事。 */
+  calls: number;
   remaining: number;
   /** 0–1，给进度条用；上限为 0 时按 1 算（已经不能再调了）。 */
   ratio: number;
@@ -89,8 +92,8 @@ export function buildOpsReport(input: {
     modelEnabled: boolean;
   };
   users: { id: string; username: string }[];
-  /** scopeBudgetSnapshot() 的原样输出：key 形如 u:<id>。 */
-  scopes: { key: string; used: number }[];
+  /** scopeBudgetSnapshot() 的原样输出：key 形如 u:<id>；used 是点数，calls 是上游调用数。 */
+  scopes: { key: string; used: number; calls?: number }[];
   model: { id: string; host: string; mode: "allowed" | "switched" | "blocked"; explicit: boolean };
   region: { value: Region; source: string; fallback: Region; retrieval: readonly string[] };
   retrieval: RetrievalRow[];
@@ -102,15 +105,18 @@ export function buildOpsReport(input: {
   const perUserCap = safeCount(input.quota.perUserCap);
 
   const byId = new Map<string, number>();
+  const callsById = new Map<string, number>();
   let unassigned = 0;
   for (const row of input.scopes) {
     // key 的构造只有一处（search/verify/module 三处都用 "u:" + user.id），
     // 这里按前缀切开；不是这个形状的（老版本、脚本直调）一律记到 unassigned，
     // 不要硬塞给第一个用户 —— 那会让某个人平白多出一截用量。
     const used = safeCount(row.used);
+    const calls = safeCount(row.calls);
     if (row.key.startsWith("u:")) {
       const id = row.key.slice(2);
       byId.set(id, (byId.get(id) ?? 0) + used);
+      callsById.set(id, (callsById.get(id) ?? 0) + calls);
     } else {
       unassigned += used;
     }
@@ -123,6 +129,7 @@ export function buildOpsReport(input: {
         id: u.id,
         username: u.username,
         used,
+        calls: callsById.get(u.id) ?? 0,
         remaining: Math.max(0, perUserCap - used),
         ratio: clampRatio(used, perUserCap),
       };

@@ -182,4 +182,22 @@ test("robots.txt 与 sitemap 由代码生成，规则与站点真实可见面一
   assert.doesNotMatch(sitemapSrc, /"\/account"/);
   assert.doesNotMatch(sitemapSrc, /"\/metrics"/);
 });
+test("按人额度按「操作」记点：三处入口都在操作开始时记点，界面文案说的是点", () => {
+  const llmSrc = readFileSync("src/lib/llm.ts", "utf8");
+  // 点数定义只有一处；提问 1 / 面板 1 / 核验 3 是产品口径，改了要同步 doc 与界面。
+  assert.match(llmSrc, /OP_UNITS = \{ search: 1, module: 1, verify: 3 \} as const/);
+  assert.match(llmSrc, /export function chargeOperation/);
+  // 余额不足时「放行但标记降级」：直接在此处 return false 会让页面什么都没发生。
+  assert.match(llmSrc, /state\.blocked = true/);
+  assert.match(llmSrc, /return state\.blocked/);
+  // 三个入口各自记一次点：漏掉任何一个，那条链路的用量就不进个人的账。
+  assert.match(readFileSync("src/app/api/search/route.ts", "utf8"), /chargeOperation\(OP_UNITS\.search\)/);
+  assert.match(readFileSync("src/app/api/module/route.ts", "utf8"), /chargeOperation\(OP_UNITS\.module\)/);
+  assert.match(readFileSync("src/app/api/verify/route.ts", "utf8"), /chargeOperation\(OP_UNITS\.verify\)/);
+  // 后台表格两种口径都要露出来：只给点数会让人以为「上游调用数 = 点数」，只给调用数则对不上判定。
+  const quotaTab = readFileSync("src/components/admin/QuotaTab.tsx", "utf8");
+  assert.match(quotaTab, /今日额度（点）/);
+  assert.match(quotaTab, /上游调用/);
+  assert.match(quotaTab, /PROBE_DAILY_LLM_UNITS_PER_USER/);
+});
 

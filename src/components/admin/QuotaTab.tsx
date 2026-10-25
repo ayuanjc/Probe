@@ -40,11 +40,14 @@ export default function QuotaTab({
   return (
     <div className="flex flex-col gap-4">
       <div className={cardClass}>
-        <h2 className="text-sm font-semibold text-white">今天的模型调用额度</h2>
+        <h2 className="text-sm font-semibold text-white">今天的额度</h2>
         <p className="mt-1 max-w-[76ch] text-[11px] leading-relaxed text-neutral-500">
-          两个计数器都只统计服务端 key 的调用：用户自带 key 花的是他自己的钱，不占这里。
+          两道闸口径不同：<strong className="text-neutral-400">全局按上游调用次数</strong>（那是真金白银），
+          <strong className="text-neutral-400">每人按操作记点</strong> —— 提问 1 点、生成面板 1 点、文档核验 3 点。
+          按调用记的话，一次核验内部的二三十次调用会让用户觉得「核验一次吃掉八次提问的额度」。
+          两个数都只统计服务端 key：用户自带 key 花的是他自己的钱，不占这里。
           计数在进程内存里，服务重启后归零（上限本身落盘，不会丢）。
-          额度用完不会报错，只是整条链路降级成本地模板 —— 界面上会显示"已用完"。
+          额度用完不会报错，只是整条链路降级成本地模板 —— 界面上会显示「已用完」。
         </p>
 
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -67,10 +70,10 @@ export default function QuotaTab({
           </div>
 
           <div className="rounded border border-neutral-800 bg-black p-3">
-            <p className={labelClass}>每人 · 每日上限</p>
+            <p className={labelClass}>每人 · 每日上限（点）</p>
             <p className="font-mono text-xl tabular-nums text-white">{perUser.cap}</p>
             <p className="mt-2 font-mono text-[10px] text-neutral-500">
-              {perUser.from === "ui" ? "后台覆盖值" : "环境变量 PROBE_DAILY_LLM_CALLS_PER_USER"}
+              {perUser.from === "ui" ? "后台覆盖值" : "环境变量 PROBE_DAILY_LLM_UNITS_PER_USER"}
             </p>
             <p className="mt-1 font-mono text-[10px] text-neutral-500">
               服务端 key：{keySource === "none" ? "未配置（全站走本地模板）" : "已配置"}
@@ -93,9 +96,10 @@ export default function QuotaTab({
           <thead className={tableHeadClass}>
             <tr>
               <th className={thClass}>账号</th>
-              <th className={thClass}>今日模型调用</th>
+              <th className={thClass}>今日额度（点）</th>
+              <th className={thClass}>上游调用</th>
               <th className={thClass}>剩余</th>
-              <th className={thClass + " w-[30%]"}>用量</th>
+              <th className={thClass + " w-[26%]"}>用量</th>
             </tr>
           </thead>
           <tbody>
@@ -103,6 +107,8 @@ export default function QuotaTab({
               <tr key={u.id} className={rowClass}>
                 <td className="py-2 pr-2 font-mono text-neutral-300">{u.username}</td>
                 <td className="py-2 pr-2 font-mono tabular-nums text-neutral-300">{u.used}</td>
+                {/* 上游调用数只做参照：它比点数大得多，是「这条链路上游打了几次」的实况。 */}
+                <td className="py-2 pr-2 font-mono tabular-nums text-neutral-500">{u.calls}</td>
                 <td
                   className={
                     "py-2 pr-2 font-mono tabular-nums " + (u.remaining === 0 ? "text-red-400" : "text-neutral-500")
@@ -122,7 +128,7 @@ export default function QuotaTab({
             ))}
             {users.length === 0 ? (
               <tr>
-                <td colSpan={4} className={emptyClass}>
+                <td colSpan={5} className={emptyClass}>
                   还没有账号。
                 </td>
               </tr>
@@ -131,7 +137,7 @@ export default function QuotaTab({
         </table>
         {unassigned > 0 ? (
           <p className="mt-2 font-mono text-[10px] text-neutral-500">
-            另有 {unassigned} 次调用没有绑定账号（定时任务 / 内部自检），没有并进任何人的账。
+            另有 {unassigned} 点没有绑定账号（定时任务 / 内部自检），没有并进任何人的账。
           </p>
         ) : null}
       </div>

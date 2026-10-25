@@ -5,6 +5,7 @@ import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { runWithCallScope, type CallScope } from "@/lib/call-scope";
+import { chargeOperation, OP_UNITS } from "@/lib/llm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,12 @@ function sseResponse(query: string, request: Request, release: () => void, scope
         // 流的 start() 可能在路由函数返回之后才跑，请求上下文已经不在了：
         // 额度计数必须在这里重新绑一次用户，否则这一轮的调用会算到「无主」头上。
         await runWithCallScope(scope, async () => {
+          // 一次提问记 1 点（核验记 3 点）：额度按「用户点了几次」算，不按上游调用次数算。
+          // 余额不足也照常跑完，只是内部会降级为本地模板并在界面上标注 —— 半路砍断更难看。
+          const charged = chargeOperation(OP_UNITS.search);
+          if (!charged.ok) {
+            console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮降级为本地模板。");
+          }
           await withRuntimeConfig(cfg, async () => {
             for await (const event of runPipeline(query, signal)) {
               // 客户端关掉标签页后继续往下跑没有任何意义：

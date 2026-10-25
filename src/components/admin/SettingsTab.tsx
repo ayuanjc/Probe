@@ -150,9 +150,9 @@ export default function SettingsTab({
         "PROBE_OPERATOR_NAME=" + (report.site.operator ?? ""),
         "PROBE_CONTACT_EMAIL=" + (report.site.contact ?? ""),
         "",
-        "# 模型额度（进程级 / 按人）",
+        "# 模型额度（全局按上游调用次数 / 每人按操作点数）",
         "PROBE_DAILY_LLM_CALLS=" + report.quota.global.cap,
-        "PROBE_DAILY_LLM_CALLS_PER_USER=" + report.quota.perUser.cap,
+        "PROBE_DAILY_LLM_UNITS_PER_USER=" + report.quota.perUser.cap,
       ].join("\n")
     : "";
 
