@@ -92,3 +92,31 @@ test("检索链路抽出的引文要回原文核对", () => {
   assert.match(analyzeSrc, /locateQuote\(hay, c\.quote\)/);
   assert.match(analyzeSrc, /claims:quote_miss_/);
 });
+
+/* --------------------------- 首屏说明 --------------------------- */
+
+const loginPage = readFileSync("src/app/login/page.tsx", "utf8");
+const signupPage = readFileSync("src/app/signup/page.tsx", "utf8");
+const whatIsThis = readFileSync("src/components/WhatIsThis.tsx", "utf8");
+
+test("登录页与注册页都把「这是什么」摆在表单旁边", () => {
+  // 陌生人落在 /login 时眼前只有一个密码框和「仅限受邀用户使用」——
+  // 他没法判断值不值得去要一个邀请码。这段说明被删掉不会有任何报错，所以钉在这里。
+  for (const [name, src] of [
+    ["login", loginPage],
+    ["signup", signupPage],
+  ] as const) {
+    assert.match(src, /WhatIsThis/, name + " 没有引入说明组件");
+    assert.match(src, /一次提问，回一组/, name + " 首屏缺少一句话定位");
+  }
+});
+
+test("说明里必须写清三件事，且保留 AI 生成标识", () => {
+  // 产品唯一的诚实卖点：证据、三态判定、数字可回溯。少一条就变成营销文案。
+  assert.match(whatIsThis, /每条断言都挂着证据/);
+  assert.match(whatIsThis, /支持 \/ 矛盾 \/ 无法判定/);
+  assert.match(whatIsThis, /点得回原文/);
+  // 备案口径：页面必须显著标识 AI 生成内容（生成式 AI 办法第 12 条）。
+  assert.match(whatIsThis, /由模型生成/);
+  assert.match(whatIsThis, /以原始信源为准/);
+});

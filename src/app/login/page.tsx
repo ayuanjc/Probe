@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import ProbeLogo from "@/components/ProbeLogo";
 import { LoginPanel } from "@/components/AuthPanels";
+import WhatIsThis from "@/components/WhatIsThis";
 import { pageUserOrNull } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +31,17 @@ export default async function LoginPage({
         <p className="font-mono text-[11px] text-neutral-500">仅限受邀用户使用</p>
       </header>
 
+      {/* 首屏一句话讲清这是什么：陌生人只有这一屏可以判断值不值得申请邀请码。 */}
+      <p className="-mb-1 text-center text-[12px] leading-relaxed text-neutral-400">
+        一次提问，回一组<span className="text-neutral-200">可核验</span>的数据面板。
+      </p>
+
       <div className="rounded-md border border-neutral-800 bg-[#0f0f0f] p-5">
         <h1 className="mb-4 text-[15px] font-semibold text-white">登录</h1>
         <LoginPanel nextPath={nextPath} />
       </div>
+
+      <WhatIsThis />
 
       <p className="text-center font-mono text-[10px] leading-relaxed text-neutral-700">
         本站是测试实例，账号由管理员发放。
