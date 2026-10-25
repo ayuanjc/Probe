@@ -18,8 +18,11 @@ export type EvidenceView =
   | {
       status: "done";
       result: DossierResult;
-      /** 额外一种：本机没配留出集检索器，压根没法核（不是「核了没找到」）。 */
-      blocked: "no_evidence" | "all_unverifiable" | "no_heldout_retriever" | null;
+      /**
+       * 额外两种：本机缺留出集检索器（找不了证据）、缺判定模型（找到了没人判）。
+       * 都不是「核了没找到」，界面别把两者说成一回事。
+       */
+      blocked: "no_evidence" | "all_unverifiable" | "no_heldout_retriever" | "no_judge" | null;
       message: string | null;
       notJudged: number;
       kept: number;
@@ -62,7 +65,12 @@ export function useEvidence() {
         | {
             ok?: boolean;
             message?: string | null;
-            blocked?: EvidenceView extends never ? never : "no_evidence" | "all_unverifiable" | "no_heldout_retriever" | null;
+            blocked?:
+        | "no_evidence"
+        | "all_unverifiable"
+        | "no_heldout_retriever"
+        | "no_judge"
+        | null;
             result?: DossierResult;
             gate?: { kept: number; skipped: number };
             sampleId?: string | null;

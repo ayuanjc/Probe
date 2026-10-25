@@ -12,7 +12,8 @@ import {
 } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { llmJudge, verifyClaims } from "@/agents/verify";
-import { makeHeldoutDeps } from "@/agents/heldout";
+import { makeHeldoutDeps, tavilyHeldoutSearch } from "@/agents/heldout";
+import { llmEnabled } from "@/lib/llm";
 import { selectVerifiable } from "@/lib/check-worthy";
 import { recordSample } from "@/lib/calibration-store";
 
@@ -107,25 +108,36 @@ export async function POST(request: Request) {
      * 而那 N 条可能条条都合格。数字要对得上它自己的解释。
      */
     const gateRes = selectVerifiable(body.claims);
+    /**
+     * 两半各有各的缺法，必须分开报：
+     * - 没有检索器 → 找不到「本文没引用过的材料」，分母是零；
+     * - 没有判定器 → 找到了证据也没人读，每条都会落成 unverified。
+     * 合起来说一句「缺 key」会让用户以为填哪一个都行。
+     */
+    const search = tavilyHeldoutSearch();
+    const canJudge = llmEnabled();
     const deps = makeHeldoutDeps({
-      search: undefined,
+      search,
       judge: llmJudge(),
       citedOwners: body.citedOwners,
     });
-    // makeHeldoutDeps 里 search 为空会直接返回 null —— 那正好是「没有留出集检索器」。
-    if (!deps) {
+    if (!deps || !canJudge) {
       const empty = buildDossier({ claims: [], verdicts: [], evidence: [], citedOwners: body.citedOwners });
+      const missing = [
+        search ? null : "留出集检索（TAVILY_API_KEY，或设置面板里的「检索 key」）",
+        canJudge ? null : "判定模型（OPENAI_API_KEY，或设置面板里的模型 key）",
+      ].filter((x): x is string => x !== null);
       return json({
         ok: true,
-        blocked: "no_heldout_retriever",
+        blocked: search ? "no_judge" : "no_heldout_retriever",
         message:
-          "本机没有配置留出集检索（TAVILY_API_KEY 或设置里的检索 key），" +
-          "所以这一轮找不到「本文没引用过的材料」。没有留出集就没有吻合度 —— 不给数字。",
+          "本机缺" + missing.join("，也缺") + "。" +
+          "没有留出集就没有吻合度 —— 找到证据却没人判也一样，这类情况一律不给数字。",
         result: empty,
         gate: { kept: gateRes.kept.length, skipped: gateRes.skipped.length },
-        // 过了闸门但没检索器 → 一条都没核；没过闸门的那些本来就不该核。
+        // 过了闸门但缺一半 → 一条都没核；没过闸门的那些本来就不该核。
         notJudged: gateRes.kept.length,
-        degraded: ["evidence:no_retriever"],
+        degraded: [search ? "evidence:no_judge" : "evidence:no_retriever"],
         elapsedMs: Date.now() - started,
       });
     }
