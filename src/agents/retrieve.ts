@@ -5,7 +5,7 @@ import { searchTermFor } from "@/lib/entities";
 import { fixtureSources } from "@/lib/fixtures";
 import { resolvedBochaKey, resolvedRegion, resolvedTavilyKey } from "@/lib/runtime-config";
 import { regionPolicy, type RetrievalProvider } from "@/lib/region-policy";
-import { partitionByWindow, windowBoundsMs } from "@/lib/time-window";
+import { partitionByWindow, toIsoInstant, windowBoundsMs } from "@/lib/time-window";
 import { failureCode } from "@/lib/provider-errors";
 import { dateFromUrl } from "@/lib/date-from-url";
 
@@ -336,7 +336,7 @@ async function fetchTavily(intent: Intent, outer?: AbortSignal): Promise<RawSour
       snippet: r.content.slice(0, 400),
       lang: "unknown",
       // 没日期就是没日期。这里曾写成 ?? new Date().toISOString()，后果见 time-window.ts 头注释。
-      publishedAt: r.published_date ?? "",
+      publishedAt: toIsoInstant(r.published_date),
       provider: "tavily" as const,
     };
   });
@@ -402,7 +402,7 @@ async function fetchBocha(intent: Intent, outer?: AbortSignal): Promise<RawSourc
       title: r.name ?? r.title ?? "(untitled)",
       snippet: (r.summary ?? r.snippet ?? "").slice(0, 400),
       lang: "zh",
-      publishedAt: r.datePublished ?? r.dateLastCrawled ?? "",
+      publishedAt: toIsoInstant(r.datePublished ?? r.dateLastCrawled),
       provider: "bocha" as const,
     };
   });

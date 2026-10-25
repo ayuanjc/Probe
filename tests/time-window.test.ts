@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseInstant, partitionByWindow, windowBoundsMs } from "@/lib/time-window";
+import { parseInstant, partitionByWindow, toIsoInstant, windowBoundsMs } from "@/lib/time-window";
 
 const FROM = Date.parse("2026-09-25T00:00:00.000Z");
 const TO = Date.parse("2026-10-25T00:00:00.000Z");
@@ -60,4 +60,15 @@ test("只有日精度的日期按「整天」算在窗口内", () => {
   assert.deepEqual(p.kept.map((s) => s.id), ["day-in"]);
   assert.deepEqual(p.dropped.map((s) => s.id), ["day-out"]);
   assert.equal(p.undated.length, 0);
+});
+test("上游的 RFC-822 日期归一成 ISO，解析不了仍是空串", () => {
+  // Tavily 的 news topic 就长这样。原样透传会一路脏到界面与 bin 统计里。
+  assert.equal(
+    toIsoInstant("Wed, 09 Sep 2026 01:21:59 GMT"),
+    "2026-09-09T01:21:59.000Z",
+  );
+  assert.equal(toIsoInstant("2026-09-09"), "2026-09-09T00:00:00.000Z");
+  assert.equal(toIsoInstant(""), "");
+  assert.equal(toIsoInstant(null), "");
+  assert.equal(toIsoInstant("not a date"), "");
 });

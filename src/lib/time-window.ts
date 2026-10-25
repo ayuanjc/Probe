@@ -28,6 +28,20 @@ export function parseInstant(iso: string | null | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+/**
+ * 把上游各种日期写法统一成 ISO。
+ *
+ * 不是为了好看：Tavily 的 news topic 回的是 RFC-822（"Wed, 09 Sep 2026 01:21:59 GMT"），
+ * 界面按原样打印会是一串英文星期；而窗口比对虽然 Date.parse 也吃得下，
+ * 但同一批数据里混着两种格式，排查时没法一眼对齐。
+ * 解析不了仍返回空串 —— 那是「不知道」，不是「现在」。
+ */
+export function toIsoInstant(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const t = parseInstant(raw);
+  return t === null ? "" : new Date(t).toISOString();
+}
+
 export function windowBoundsMs(
   from: string,
   to: string,
