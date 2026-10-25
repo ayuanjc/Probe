@@ -133,3 +133,34 @@ test("文档核验页也有说明，且说的是「区间」不是「真假判�
   assert.match(whatIsThis, /points\?: WhatIsThisPoint\[\]/);
   assert.match(whatIsThis, /points = DEFAULT_POINTS/);
 });
+/* --------------------------- 后台设置的可写面 --------------------------- */
+
+const settingsTab = readFileSync("src/components/admin/SettingsTab.tsx", "utf8");
+const quotaTab = readFileSync("src/components/admin/QuotaTab.tsx", "utf8");
+const quotaCaps = readFileSync("src/components/admin/QuotaCaps.tsx", "utf8");
+
+test("设置页能改密码，且走的是 admin PATCH 而不是自己拼请求", () => {
+  // 这条链路曾被误以为「后台只能重置密码、不能改」；真正的约束是：密码规则、
+  // 强制改密、撤销全部会话、审计都必须由 src/lib/auth/account.ts 裁决。
+  assert.match(settingsTab, /api\("\/api\/admin\/users"/);
+  assert.match(settingsTab, /newPassword: pwdValue/);
+  assert.match(settingsTab, /mustChangePassword: pwdMust/);
+  // 失败不能清空输入：管理员输了 20 位、服务端拒了，输入框一空他只会以为改成功了。
+  assert.match(settingsTab, /if \(!r\.ok\) \{[\s\S]{0,120}onSay\(\{ kind: "err"/);
+});
+
+test("额度编辑只有一份实现，两个页面共用", () => {
+  // 两处各写一份输入框 → 迟早一边校验 1–1000000、另一边忘了上限。
+  assert.match(settingsTab, /<QuotaCaps /);
+  assert.match(quotaTab, /<QuotaCaps /);
+  assert.match(quotaCaps, /\/api\/admin\/ops/);
+  // 整体覆盖写：只改一个字段时另一个要带上当前生效值，否则等于把另一条清掉。
+  assert.match(quotaCaps, /void save\(\{ globalCap: g, perUserCap: p \}/);
+});
+
+test("部署态那半仍是只读，页面也明说了为什么", () => {
+  // 给浏览器一个「改自己启动参数」的写入口 = 拿到 admin 会话就能关掉鉴权、换模型端点。
+  assert.match(settingsTab, /部署态配置（只读）/);
+  assert.match(settingsTab, /systemctl restart probe-web/);
+  assert.doesNotMatch(settingsTab, /process\.env/);
+});

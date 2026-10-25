@@ -168,9 +168,10 @@ npx next build && node scripts/size-report.mjs
 | 闸 | 环境变量 | 默认 | **生产现值** | 单位 |
 | --- | --- | --- | --- | --- |
 | 全局 | `PROBE_DAILY_LLM_CALLS` | 2000 | **800** | 整个进程 / 天 |
-| 按人 | `PROBE_DAILY_LLM_CALLS_PER_USER` | 120 | **20** | 每个账号 / 天（未登录按 IP） |
+| 按人 | `PROBE_DAILY_LLM_CALLS_PER_USER` | 120 | **60** | 每个账号 / 天（未登录按 IP） |
 
-> 2026-10-25 起按 YG 要求调成 800 / 20（写在 `/opt/probe/probe.env`，`chmod 600`）。
+> 2026-10-25 起按 YG 要求调成 800 / 60（写在 `/opt/probe/probe.env`，`chmod 600`）。
+> 60 这个数不是随手取的：一次文档核验最多 24 次上游调用，20 会让第一轮核验就中途降级。
 > 后台「额度设置」页写出的 `.data/ops/limits.json` **优先于** env —— 在界面上改过之后，
 > 改 env 不再生效，要先删掉那个文件（`rm -rf /opt/probe/app/.data/ops`）并重启。
 
@@ -179,8 +180,8 @@ npx next build && node scripts/size-report.mjs
 `/api/verify` 的上限是 12 段抽取 + 12 条判定（`MAX_SEGMENTS_EXTRACT` /
 `MAX_CLAIMS_VERIFIED`，见 `src/agents/verify-pipeline.ts`），也就是**一次核验最多 ~24 次上游调用**。
 按人额度 20 时，**第一轮文档核验就会在中途撞上个人上限**，后半段降级成本地模板，
-界面会标 `llm:user_budget`。所以要放开核验，得把按人额度提到 60 以上，
-或者改成按操作计权（核验记 3、提问记 1）—— 后者需要改 `takeBudget()`，尚未做。
+界面会标 `llm:user_budget`。现在按人 60，正好够一轮完整核验 + 十几次提问；
+再往下压就要改成按操作计权（核验记 3、提问记 1）—— 那需要改 `takeBudget()`，尚未做。
 
 关键在**顺序**：先判全局，再判个人；**个人被拦时不消耗全局额度**（否则一个人狂点
 会让全站提前降级）。两者都通过才各 +1。
@@ -208,8 +209,18 @@ npx next build && node scripts/size-report.mjs
 - 每次改动记一条审计：`quota.update`（`global=… perUser=…`）
 - 面板上的用量是**进程内存**里的计数，服务重启归零；上限不会
 
-同一页签的「设置」是部署态只读视图（模型端点、区域判定、检索源配没配、备案号、鉴权模式）。
-故意只读：能从浏览器改这些，等于拿到 admin 就能关掉鉴权、换掉模型端点。
+同一页签的「设置」分两半：
+
+**能写的两件**（都不碰进程环境，改完立刻生效）：
+
+- 账号密码：选账号 → 输新密码 → 勾不勾「要求他下次登录时改掉」。
+  走 `PATCH /api/admin/users` 的 `newPassword`，规则/强制改密/撤销该账号全部会话/审计
+  都在 `src/lib/auth/account.ts`；改自己会把自己踢下线。
+- 额度上限：与「额度设置」页**共用同一个组件**（`QuotaCaps.tsx`）与同一个
+  `POST /api/admin/ops`。两处各写一份输入框迟早出现一边忘了夹上限。
+
+**只读的一半**：模型端点、区域判定、检索源配没配、备案号、鉴权模式 —— 这些是进程启动时
+读到的环境变量。故意只读：能从浏览器改这些，等于拿到 admin 就能关掉鉴权、换掉模型端点。
 要改就编辑 `/opt/probe/probe.env` 再 `systemctl restart probe-web`。
 ---
 

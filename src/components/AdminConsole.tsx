@@ -174,7 +174,17 @@ export default function AdminConsole({ me }: { me: { id: string; username: strin
 
           {tab === "quota" && <QuotaTab report={ops} loading={loading} onReport={setOps} onSay={say} />}
 
-          {tab === "settings" && <SettingsTab report={ops} loading={loading} />}
+          {tab === "settings" && (
+            <SettingsTab
+              report={ops}
+              loading={loading}
+              users={users}
+              me={me}
+              onSay={say}
+              onReport={setOps}
+              onChanged={reloadAfterMutation}
+            />
+          )}
         </div>
       </AdminShell>
 

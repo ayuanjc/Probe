@@ -1,20 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { OpsReport } from "@/lib/ops-report";
-import {
-  api,
-  btnNeutral,
-  btnPrimary,
-  cardClass,
-  emptyClass,
-  inputClass,
-  labelClass,
-  rowClass,
-  tableHeadClass,
-  thClass,
-  type Notice,
-} from "./shared";
+import QuotaCaps from "./QuotaCaps";
+import { cardClass, emptyClass, labelClass, rowClass, tableHeadClass, thClass, type Notice } from "./shared";
 
 /**
  * 额度设置。
@@ -38,51 +26,6 @@ export default function QuotaTab({
   onReport: (next: OpsReport) => void;
   onSay: (next: Notice) => void;
 }) {
-  const [globalCap, setGlobalCap] = useState("");
-  const [perUserCap, setPerUserCap] = useState("");
-  const [busy, setBusy] = useState(false);
-  /** 用户动过输入框就别再被刷新覆盖 —— 边看数字边被改写是最难受的一种交互。 */
-  const [dirty, setDirty] = useState(false);
-
-  useEffect(() => {
-    if (!report || dirty) return;
-    setGlobalCap(String(report.quota.global.cap));
-    setPerUserCap(String(report.quota.perUser.cap));
-  }, [report, dirty]);
-
-  async function save(next: { globalCap?: number | null; perUserCap?: number | null }, label: string) {
-    if (busy) return;
-    setBusy(true);
-    // api() 自己会 stringify，这里传对象；传字符串会被再包一层引号。
-    const r = await api<{ ok: boolean; report?: OpsReport }>("/api/admin/ops", { method: "POST", body: next });
-    setBusy(false);
-    if (!r.ok || !r.data?.report) {
-      onSay({ kind: "err", text: r.message });
-      return;
-    }
-    onReport(r.data.report);
-    setDirty(false);
-    onSay({ kind: "ok", text: label });
-  }
-
-  function submit() {
-    const g = Number(globalCap.trim());
-    const p = Number(perUserCap.trim());
-    if (!Number.isInteger(g) || g < 1 || g > 1_000_000) {
-      onSay({ kind: "err", text: "全局日额度要是 1–1000000 之间的整数。" });
-      return;
-    }
-    if (!Number.isInteger(p) || p < 1 || p > 100_000) {
-      onSay({ kind: "err", text: "每人日额度要是 1–100000 之间的整数。" });
-      return;
-    }
-    if (p > g) {
-      onSay({ kind: "err", text: "每人额度不该大于全局额度 —— 那样没有人会真正被个人闸拦住。" });
-      return;
-    }
-    void save({ globalCap: g, perUserCap: p }, "额度已保存，立即生效。");
-  }
-
   if (!report) {
     return (
       <div className={cardClass}>
@@ -139,48 +82,8 @@ export default function QuotaTab({
 
       <div className={cardClass}>
         <h3 className="text-xs font-semibold text-white">改上限</h3>
-        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-          保存后立刻生效，并写入 <code className="text-neutral-400">.data/ops/limits.json</code>（优先于环境变量）。
-          「清除覆盖」= 回到服务器 <code className="text-neutral-400">probe.env</code> 里的值。
-        </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="block w-32">
-            <span className={labelClass}>全局日额度</span>
-            <input
-              className={inputClass}
-              inputMode="numeric"
-              value={globalCap}
-              disabled={busy}
-              onChange={(e) => {
-                setDirty(true);
-                setGlobalCap(e.target.value);
-              }}
-            />
-          </label>
-          <label className="block w-32">
-            <span className={labelClass}>每人日额度</span>
-            <input
-              className={inputClass}
-              inputMode="numeric"
-              value={perUserCap}
-              disabled={busy}
-              onChange={(e) => {
-                setDirty(true);
-                setPerUserCap(e.target.value);
-              }}
-            />
-          </label>
-          <button type="button" className={btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "保存中…" : "保存"}
-          </button>
-          <button
-            type="button"
-            className={btnNeutral}
-            disabled={busy}
-            onClick={() => void save({ globalCap: null, perUserCap: null }, "已清除覆盖，回落到环境变量。")}
-          >
-            清除覆盖
-          </button>
+        <div className="mt-1">
+          <QuotaCaps report={report} onReport={onReport} onSay={onSay} />
         </div>
       </div>
 
