@@ -1,6 +1,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { CONFIG_HEADERS } from "@/lib/config-headers";
+import { DEFAULT_MODEL_ID } from "@/lib/model-presets";
 
 /**
  * 单次请求的运行时配置。
@@ -112,8 +113,11 @@ export function resolvedModelId(): string {
   return currentConfig().model || process.env.PROBE_MODEL || DEFAULT_MODEL_ID;
 }
 
-/** 面板空着、env 也没配时用的模型；设置面板的 placeholder 也读它，免得两处对不上。 */
-export const DEFAULT_MODEL_ID = "gpt-6-luna";
+/**
+ * 面板空着、env 也没配时用的模型。真值在 src/lib/model-presets.ts（同一份数据还喂设置面板的
+ * placeholder 与下拉候选），这里只是转出去，留给调用方的 import 路径不变。
+ */
+export { DEFAULT_MODEL_ID };
 
 /** 用户是不是明确指定了模型（面板或 env 都算），界面据此显示「已指定」。 */
 export function modelIsExplicit(): boolean {

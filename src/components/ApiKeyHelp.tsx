@@ -2,100 +2,28 @@
 
 import type { ReactNode } from "react";
 
+import {
+  DEFAULT_MODEL_ID,
+  PRESET_MODELS,
+  PROVIDERS,
+  type ProviderPreset,
+} from "@/lib/model-presets";
+
 /**
  * 「如何配置」—— 设置面板里 key 输入框下面的操作说明。
  *
  * 为什么单独一个文件：这段是给人看的步骤（去哪注册、点哪里、粘什么），跟组件逻辑无关；
  * 塞进 SettingsPanel 会把那个文件从「布局」变成「文档」。
  *
- * PROVIDERS 是预设：点一下把接口地址与模型一起填好。里面的 model 是照各家文档抄的
- * 示例名，不是白名单 —— 模型名本来就能手填，填错了上游返回 400，面板里有提示。
- *
- * 抄写日期：2026-10-25。这份表会过时，过时了就把 id 换成当天的旗舰/廉价档；
- * 别指望它自己跟上（各家改名比发版还勤：OpenAI 的 mini/nano 已经换成 luna/terra/sol，
- * DeepSeek 的 deepseek-chat 已经不接受）。
+ * 预设表（各家接口地址 + 示例模型名）在 src/lib/model-presets.ts —— 那个文件同时喂给
+ * runtime-config 的默认模型，两边不再各存一份靠注释对齐。
  */
 
-export type ProviderPreset = {
-  id: string;
-  name: string;
-  /** 空串 = 官方地址（SDK 默认 https://api.openai.com/v1）。 */
-  baseUrl: string;
-  model: string;
-  /** 去哪拿 key。 */
-  keyUrl: string;
-  note: string;
-};
+/** 面板 placeholder 用的兜底模型名。与 runtime-config 同一个来源，不会再对不上。 */
+export const DEFAULT_MODEL = DEFAULT_MODEL_ID;
 
-export const PROVIDERS: ProviderPreset[] = [
-  {
-    id: "openai",
-    name: "OpenAI 官方",
-    baseUrl: "",
-    model: "gpt-6-luna",
-    keyUrl: "https://platform.openai.com/api-keys",
-    note: "接口地址留空即官方",
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-flash",
-    keyUrl: "https://platform.deepseek.com/api_keys",
-    note: "便宜、中文稳，key 也是 sk- 开头",
-  },
-  {
-    id: "moonshot",
-    name: "Kimi（月之暗面）",
-    baseUrl: "https://api.moonshot.cn/v1",
-    model: "kimi-k3.1-pro",
-    keyUrl: "https://platform.moonshot.cn/console/api-keys",
-    note: "长上下文友好",
-  },
-  {
-    id: "zhipu",
-    name: "智谱 GLM",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    model: "glm-5.3",
-    keyUrl: "https://bigmodel.cn/usercenter/apikeys",
-    note: "有免费额度；路径是 /api/paas/v4",
-  },
-  {
-    id: "dashscope",
-    name: "阿里百炼（Qwen）",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3.8-flash",
-    keyUrl: "https://bailian.console.aliyun.com/",
-    note: "必须走 compatible-mode 兼容路径",
-  },
-  {
-    id: "siliconflow",
-    name: "硅基流动",
-    baseUrl: "https://api.siliconflow.cn/v1",
-    model: "deepseek-ai/DeepSeek-V4-Flash",
-    keyUrl: "https://cloud.siliconflow.cn/account/ak",
-    note: "一个 key 转多家开源模型",
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    model: "openai/gpt-6-luna",
-    keyUrl: "https://openrouter.ai/keys",
-    note: "聚合一堆厂商，模型名带 厂商/ 前缀",
-  },
-  {
-    id: "ollama",
-    name: "本地 Ollama",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    model: "qwen3.8:latest",
-    keyUrl: "https://ollama.com/download",
-    note: "不用注册，key 随便填 8 位（如 ollama-local）",
-  },
-];
-
-/** 面板 placeholder 用的兜底模型名，必须和 runtime-config 的 DEFAULT_MODEL_ID 一致。 */
-export const DEFAULT_MODEL = "gpt-6-luna";
+export { DEFAULT_MODEL_ID, PRESET_MODELS, PROVIDERS };
+export type { ProviderPreset };
 
 function Code({ children }: { children: ReactNode }) {
   return (

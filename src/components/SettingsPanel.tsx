@@ -4,12 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_SETTINGS, isCustomized, resetLocalData, type Settings } from "@/lib/settings";
 import ConfigDocs from "./ConfigDocs";
-import {
-  DEFAULT_MODEL,
-  OpenAiKeyHelp,
-  PROVIDERS,
-  TavilyKeyHelp,
-} from "./ApiKeyHelp";
+import { OpenAiKeyHelp, TavilyKeyHelp } from "./ApiKeyHelp";
+import { DEFAULT_MODEL_ID, PRESET_MODELS, PROVIDERS } from "@/lib/model-presets";
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -36,8 +32,8 @@ function Label({ children }: { children: ReactNode }) {
  */
 const MODEL_OPTIONS: string[] = Array.from(
   new Set([
-    DEFAULT_MODEL,
-    ...PROVIDERS.map((p) => p.model),
+    DEFAULT_MODEL_ID,
+    ...PRESET_MODELS,
     /** 2026-10 当下的档位：贵的一档、便宜的一档各留几个，换服务商时不至于只会写老名字。 */
     "gpt-6.1-sol",
     "gpt-5.6-luna",
@@ -334,7 +330,7 @@ export default function SettingsPanel({
               list="probe-model-options"
               value={settings.model}
               onChange={(e) => patch({ model: e.target.value })}
-              placeholder={DEFAULT_MODEL}
+              placeholder={DEFAULT_MODEL_ID}
               spellCheck={false}
               autoComplete="off"
               className={INPUT_CLASS}
@@ -347,7 +343,7 @@ export default function SettingsPanel({
             <p className="font-mono text-[10px] leading-relaxed text-neutral-600">
               {settings.model.trim()
                 ? "这一轮指定：" + settings.model.trim()
-                : "留空 = " + DEFAULT_MODEL + "（或服务端 PROBE_MODEL）"}
+                : "留空 = " + DEFAULT_MODEL_ID + "（或服务端 PROBE_MODEL）"}
             </p>
           </div>
 
