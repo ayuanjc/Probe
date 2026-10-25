@@ -27,6 +27,8 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/opt/probe/update.sh` | 自动更新脚本 |
 | `/opt/probe/stage` | 解压临时目录（更新完即删） |
 | `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次） |
+| `/etc/nginx/geoip/dbip-country-lite.mmdb` | 区域判定用的国家库（8.0 MB，每月换一份） |
+| `/root/nginx-backup/` | nginx 配置改动前的原件（带时间戳） |
 | `/var/log/probe-update.log` | 更新日志（含构建输出） |
 | `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
 | `/opt/probe/app/.cache/feedback.jsonl` | 页脚反馈，一行一条（`.cache` 不在自动更新的覆盖范围内） |
@@ -42,7 +44,14 @@ PROBE_TRANSLATE_RATE_LIMIT_PER_MIN=40
 PROBE_MODULE_RATE_LIMIT_PER_MIN=20
 PROBE_CRON_SECRET=<32 位 hex>       # 热榜定时任务的钥匙；不配 /api/cron/heat 直接 503
 PROBE_SITE_URL=http://106.52.116.164 # 分享卡 og:url / og:image 的绝对前缀（不带 NEXT_PUBLIC_，部署时读）
-# OPENAI_API_KEY=               # 接上就换成模型摘要，字段名见 .env.example
+# OPENAI_API_KEY=               # 境外这一路（不配也能跑，只是没有模型摘要）
+# 区域分流：不配 PROBE_REGION_MODE 时，判不出来一律按境内（兜底理由见 BEIAN.md 第十一节）
+PROBE_DEFAULT_REGION=cn
+PROBE_CN_MODEL_KEY=             # 境内这一路：DeepSeek 的 key
+PROBE_CN_MODEL_BASE_URL=https://api.deepseek.com/v1
+PROBE_CN_MODEL_ID=deepseek-flash
+BOCHA_API_KEY=                  # 境内唯一可用的检索源（api.bochaai.com），没配就退回本地样本
+# TAVILY_API_KEY=               # 境外这一路，境内会被 region_blocked 挡住，配了也不会被调用
 
 # 邀请制授权（docs/AUTH.md）。只在库为空时种管理员，之后改这里没有效果。
 PROBE_ADMIN_USER=admin
@@ -205,6 +214,19 @@ location /probe {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Connection "";
+
+    # 区域判定的国家头只能由本机注入。客户端自带的一律清掉：
+    # 实测访客发一句 x-probe-country: SG 就能给自己开出境通道（数据直接发到境外）
+    proxy_set_header x-probe-region "";
+    proxy_set_header x-probe-country "";
+    proxy_set_header eo-client-ipcountry "";
+    proxy_set_header cf-ipcountry "";
+    proxy_set_header x-vercel-ip-country "";
+    proxy_set_header x-country-code "";
+    proxy_set_header x-geo-country "";
+    proxy_set_header x-real-ip-country "";
+    # 上面那行「清空」之后，用 geoip2 库按来访 IP 算真实国家码
+    proxy_set_header x-probe-country $geoip2_data_country_code;
     proxy_buffering off;       # SSE：不关缓冲，事件会被攒成一坨再吐
     proxy_cache off;
     proxy_read_timeout 300s;
@@ -222,6 +244,25 @@ location /probe {
     limit_conn_log_level info;
 }
 ```
+
+### 区域分流要的两个前提（geoip2 + 清头）
+
+`http{}` 层：
+
+```nginx
+proxy_headers_hash_max_size 2048;      # 加了 8 条清头之后默认 512 放不下，nginx -t 会 warn
+proxy_headers_hash_bucket_size 128;
+
+# DB-IP Lite，无需账号：apt install -y libnginx-mod-http-geoip2
+geoip2 /etc/nginx/geoip/dbip-country-lite.mmdb {
+    auto_reload 30d;
+    $geoip2_data_country_code country iso_code;
+}
+```
+
+库每个月更一份：`https://download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`，
+gunzip 到 `/etc/nginx/geoip/dbip-country-lite.mmdb`（8.0 MB），nginx 会自动重载。
+判定顺序、白名单、实测记录见 [BEIAN.md](./BEIAN.md) 第十一节。
 
 取值理由（都踩过）：
 

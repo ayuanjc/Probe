@@ -398,26 +398,56 @@ sudo journalctl -u probe-web.service -n 80 --no-pager | grep -iE 'llm|401|403|co
 proxy_set_header eo-client-ipcountry $http_eo_client_ipcountry;
 ```
 
-**B. nginx 自带 GeoIP2 模块**（Debian 12 的 `nginx` 包**不带** geoip2，需要 `libnginx-mod-http-geoip2`）：
+**B. nginx 自带 GeoIP2 模块 —— 线上就是这么做的（2026-10-25 落地）**
+Debian 12 的 `nginx` 包**不带** geoip2，装模块就行；数据库用 DB-IP Lite，
+**不需要注册账号**（MaxMind GeoLite2 要账号，能用但不必要）：
 
 ```bash
-sudo apt install -y libnginx-mod-http-geoip2 geoip-database
-# 国内库用 MaxMind GeoLite2-Country.mmdb（需注册免费账号下载），放到 /etc/nginx/geoip/
+apt-get install -y libnginx-mod-http-geoip2                 # 装完 modules-enabled/ 自动多一个 50-mod-http-geoip2.conf
+mkdir -p /etc/nginx/geoip
+# 每月一份，换月份就能续：dbip-country-lite-YYYY-MM.mmdb.gz
+curl -fsSL https://download.db-ip.com/free/dbip-country-lite-2026-10.mmdb.gz \
+  -o /tmp/dbip.mmdb.gz
+gunzip -c /tmp/dbip.mmdb.gz > /etc/nginx/geoip/dbip-country-lite.mmdb   # 8.0 MB
 ```
 
 ```nginx
-# 放在 server{} 之前（http 级）
-geoip2 /etc/nginx/geoip/GeoLite2-Country.mmdb {
-    auto_reload 5m;
+# /etc/nginx/nginx.conf 的 http{} 里（顶层，"http {" 之后）
+# 加了下面那 8 条清头之后默认 512 的哈希放不下，nginx -t 会 warn，一起调大
+proxy_headers_hash_max_size 2048;
+proxy_headers_hash_bucket_size 128;
+
+geoip2 /etc/nginx/geoip/dbip-country-lite.mmdb {
+    auto_reload 30d;
     $geoip2_data_country_code country iso_code;
 }
 ```
 
-然后在 `location /probe/` 里注入：
+然后在 `location /probe` 里**先清掉客户端自带的头，再注入自己算出来的**（顺序有意义）：
 
 ```nginx
+proxy_set_header x-probe-region "";
+proxy_set_header x-probe-country "";
+proxy_set_header eo-client-ipcountry "";
+proxy_set_header cf-ipcountry "";
+proxy_set_header x-vercel-ip-country "";
+proxy_set_header x-country-code "";
+proxy_set_header x-geo-country "";
+proxy_set_header x-real-ip-country "";
+# 真实来源国：本机按来访 IP 查库得出，替掉上面那行「清空」
 proxy_set_header x-probe-country $geoip2_data_country_code;
 ```
+
+> **这 8 条清头不是洁癖，是补一个实测出来的洞。** 2026-10-25 上线区域分流后，
+> `curl -H 'x-probe-country: SG' https://…/probe/api/region` 直接返回
+> `region:intl / modelHost:api.openai.com` —— 境内访客发一句话就能给自己开出境通道。
+> 加上清头之后，同样的请求返回 `region:cn / source:header / country:CN`（跟着真实 IP 走），
+> `x-probe-region`、`cf-ipcountry`、`x-country-code` 一起试过，全部无效。
+
+> **库本身的验证**（不经过站点，直接看变量）：临时开一个只监听 127.0.0.1 的 server
+> 配 `set_real_ip_from 127.0.0.1; real_ip_header X-Forwarded-For;` 再 `return 200 "$geoip2_data_country_code"`，
+> 实测 `8.8.8.8→US`、`1.1.1.1→AU`、`202.96.128.86→CN`、`133.242.0.1→JP`，
+> 而 TEST-NET 段（`203.0.113.9`）返回空 —— 空值正好落回兜底 `cn`。验证完记得删掉那个临时 server。
 
 > 代码优先读 `x-probe-region`，其次才是一串国家码头（`eo-client-ipcountry`、`cf-ipcountry`、
 > `x-vercel-ip-country`、`x-country-code`、`x-geo-country`、`x-real-ip-country`、`x-probe-country`）。
