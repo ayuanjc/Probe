@@ -1,5 +1,7 @@
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { currentCallScope } from "./call-scope";
 import { generateObject, generateText, streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -115,6 +117,8 @@ function today(): string {
 }
 
 export function dailyCallBudget(): number {
+  const fromUi = readOverrides().globalCap;
+  if (fromUi !== null) return fromUi;
   return readPositiveInt("PROBE_DAILY_LLM_CALLS", 2_000, { max: 1_000_000 });
 }
 
@@ -148,6 +152,8 @@ const scopeBudgets = new Map<string, ScopeBudget>();
 const SCOPE_BUDGET_MAX_KEYS = 2_048;
 
 export function perUserCallBudget(): number {
+  const fromUi = readOverrides().perUserCap;
+  if (fromUi !== null) return fromUi;
   return readPositiveInt("PROBE_DAILY_LLM_CALLS_PER_USER", 120, { max: 100_000 });
 }
 
@@ -181,6 +187,104 @@ export function scopeBudgetUsed(key: string): number {
   return state && state.day === today() ? state.used : 0;
 }
 
+/* ---------------------- 运维可调的额度上限（落盘覆盖） ---------------------- */
+
+/**
+ * 后台「额度设置」写下的上限，优先于环境变量。
+ *
+ * 为什么不直接改 env：环境变量在 systemd 单元里，改它要动服务器上的文件再重启；
+ * 而这个开关是从浏览器点的。也不该让一次手滑把 PROBE_DAILY_LLM_CALLS 从 2000 变成 0。
+ * 所以覆盖值单独落一个小文件（.data/ops/limits.json，0600），三条约束：
+ *   1. 只有文件里显式写了合法正整数才算覆盖；null / 缺失 / 文件坏掉 = 继续用 env
+ *      （额度是限制，不该因为读不到配置就变成 0，那等于全站降级）；
+ *   2. 上下界在这里再夹一次，路由层校验被绕过也写不出「0 次/天」；
+ *   3. 读一次就缓存 —— 额度判定在每次模型调用前都问一遍，不能每次都摸磁盘。
+ */
+export type QuotaOverrides = { globalCap: number | null; perUserCap: number | null };
+
+const GLOBAL_CAP_MAX = 1_000_000;
+const PER_USER_CAP_MAX = 100_000;
+
+let overridesCache: QuotaOverrides | null = null;
+
+function overridesFile(): string {
+  const base = process.env.PROBE_DATA_DIR?.trim() || path.join(process.cwd(), ".data");
+  return path.join(base, "ops", "limits.json");
+}
+
+function capOrNull(v: unknown, max: number): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  if (n < 1 || n > max) return null;
+  return n;
+}
+
+function readOverrides(): QuotaOverrides {
+  if (overridesCache) return overridesCache;
+  const empty: QuotaOverrides = { globalCap: null, perUserCap: null };
+  let out = empty;
+  try {
+    const json = JSON.parse(fs.readFileSync(overridesFile(), "utf8")) as Record<string, unknown>;
+    out = {
+      globalCap: capOrNull(json.globalCap, GLOBAL_CAP_MAX),
+      perUserCap: capOrNull(json.perUserCap, PER_USER_CAP_MAX),
+    };
+  } catch {
+    // 文件不存在 / 没权限 / 被手改坏 —— 一律按「没覆盖」，回落到 env。
+    out = empty;
+  }
+  overridesCache = out;
+  return out;
+}
+
+/** 当前生效的上限与来源（后台「额度设置」页展示用）。 */
+export function quotaLimits(): {
+  globalCap: number;
+  perUserCap: number;
+  globalFrom: "ui" | "env";
+  perUserFrom: "ui" | "env";
+} {
+  const o = readOverrides();
+  return {
+    globalCap: dailyCallBudget(),
+    perUserCap: perUserCallBudget(),
+    globalFrom: o.globalCap === null ? "env" : "ui",
+    perUserFrom: o.perUserCap === null ? "env" : "ui",
+  };
+}
+
+/**
+ * 写覆盖值。传 null = 清掉这条覆盖，回到 env。
+ *
+ * 落盘用 tmp + rename：中途崩掉不会留下半个 JSON（读的时候会当坏文件，等于悄悄改回 env）。
+ */
+export function setQuotaLimits(next: { globalCap: number | null; perUserCap: number | null }): QuotaOverrides {
+  const clean: QuotaOverrides = {
+    globalCap: capOrNull(next.globalCap, GLOBAL_CAP_MAX),
+    perUserCap: capOrNull(next.perUserCap, PER_USER_CAP_MAX),
+  };
+  const file = overridesFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = file + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, ...clean, updatedAt: Date.now() }, null, 2) + "\n", { mode: 0o600 });
+  fs.renameSync(tmp, file);
+  overridesCache = clean;
+  return clean;
+}
+
+/** 今日各身份的模型调用次数（只含今天真有记录的身份），后台额度页用。 */
+export function scopeBudgetSnapshot(): { key: string; used: number }[] {
+  const day = today();
+  const out: { key: string; used: number }[] = [];
+  for (const [key, v] of scopeBudgets) if (v.day === day && v.used > 0) out.push({ key, used: v.used });
+  out.sort((a, b) => b.used - a.used);
+  return out;
+}
+
+/** 只给测试用：丢掉缓存，下次读取重新读盘。 */
+export function __testReloadQuotaOverrides(): void {
+  overridesCache = null;
+}
 function takeBudget(): boolean {
   if (keySource() !== "env") return true;
   const day = today();
