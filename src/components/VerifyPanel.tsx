@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { appPath } from "@/lib/base-path";
-import type { VerifyScoresEvent } from "@/lib/verify-events";
+import { coverageGapText, type VerifyScoresEvent } from "@/lib/verify-events";
 import { N_A_LABEL } from "@/lib/grade";
 import { STATUS_LABEL, type ClaimStatus } from "@/lib/dossier";
 
@@ -227,9 +227,16 @@ export default function VerifyPanel() {
             </div>
           </dl>
 
-          {scores.partial ? (
+          {scores.partialReasons.length > 0 ? (
             <p className="mt-2 rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-1 font-mono text-[10px] text-yellow-500">
-              本轮没跑完：正文被截断、断言超出预算，或中途中断。数字只覆盖已经核过的那部分。
+              只覆盖了一部分：
+              {scores.partialReasons.map((g) => coverageGapText(g)).join("；")}。
+              字母档代表的是核过的那部分，不是整篇。
+            </p>
+          ) : null}
+          {scores.aborted ? (
+            <p className="mt-2 rounded border border-neutral-700 bg-neutral-900/60 px-2 py-1 font-mono text-[10px] text-neutral-400">
+              你在跑完前取消了 —— 上面是停下那一刻的结果，不是这篇的定论。
             </p>
           ) : null}
         </section>

@@ -8,6 +8,13 @@
 >
 > **Phase 2 落点（2026-10-24）**：`src/agents/verify-pipeline.ts` 的 `runVerify` 已从「切段 + 空分数」接到真链路 —— 逐段 `extractSegmentClaims` → `selectVerifiable` 闸门 → 逐条 `verifyOne`（推 `evidence.retrieved` / `nli.verdict`）→ `buildDossier` → `scoresFrom` 出 `doc.scored`。`hasHighAuthorityConflict()` 实现铁律 10 的下限 F / 上限 B；`src/lib/authority.ts` 用结构事实（gov/mil/int、edu/ac、白名单、UGC）给证据分档，`HIGH_AUTHORITY = 0.7`。`/api/verify` 增 `format: "json"`（脚本可断言）与 `/verify` 页；验收脚 `scripts/verify-api.mjs`（`npm run verify:api`，本轮 14 pass / 0 fail / 3 honest skip）。测试 121 条全绿。
 
+> **`partial` 口径收紧（2026-10-25）**：原来把「正文被截 / 断言超预算 / 段落超上限 / 中途取消 / 检索或判定失败」
+> 混成一个布尔，界面上一半文章都顶着「本轮没跑完」的黄条 —— 而其中大多数只是闸门跳过了几条观点句，
+> 或某条断言的检索失败了，字母档代表的仍然是整篇。现在只有三件「系统真的少看了东西」的事算 `partial`，
+> 且理由逐条列进 `VerifyScoresEvent.partialReasons`（`doc:truncated` / `segments:extracted_12_of_24` /
+> `claims:capped_12_of_31`，`coverageGapText()` 翻中文）；取消单开 `aborted: boolean`，文案与 `partial` 分开写。
+> 判定本身是纯函数 `coverageGaps()`（`src/agents/verify-pipeline.ts`），`tests/coverage-gaps.test.ts` 钉住。
+
 ## 0. 交付边界与三条已裁决
 
 交付物是一篇可评审的方案，不是代码。三条已拍：

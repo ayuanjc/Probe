@@ -58,8 +58,16 @@ export type VerifyScoresEvent = {
   nEff: number;
   counts: VerifyCounts;
   coverage: number | null;
-  /** 本轮没跑完（中断 / 预算顶到）。与 N/A 是两件事，界面别混。 */
+  /**
+   * 本轮只覆盖了文档的一部分（正文被截、段落或断言顶到上限）。由 partialReasons 派生，别手填。
+   * 它说的是「系统没看全」，不包含「用户取消」与「闸门跳过了观点类断言」—— 那两种情况下
+   * 字母档仍然是完整的。与 N/A 是两件事，界面别混。
+   */
   partial: boolean;
+  /** 为什么没看全，机器码（doc:truncated / segments:extracted_12_of_24 / claims:capped_12_of_31）。 */
+  partialReasons: string[];
+  /** 请求中途被取消：覆盖不全但不是系统截的，文案要和 partial 分开写。 */
+  aborted: boolean;
   /** 非 null 时 agreement 一定为 null：本轮没有做外部核验。 */
   blocked: "no_evidence" | "all_unverifiable" | "no_claims" | null;
   rows: { claimIndex: number; quote: string; status: ClaimStatus; label: string; reason: string; weight: number }[];
@@ -99,4 +107,22 @@ export const VERIFY_EVENT_NAMES = [
 /** 与 sse.ts:80 同一套语法，独立实现是为了让两边的联合类型互不牵连。 */
 export function encodeVerifyEvent(e: VerifyEvent): string {
   return `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`;
+}
+
+/**
+ * partial 的机器码翻成人话。放在契约文件里，是因为它是事件字段的一部分：
+ * 文案与 reasons 的生成处必须成对（tests/coverage-gaps.test.ts 两边都钉）。
+ */
+const GAP_TEXT: Record<string, string> = {
+  "doc:truncated": "正文超过 4 万字，后半篇没读",
+};
+
+export function coverageGapText(code: string): string {
+  const fixed = GAP_TEXT[code];
+  if (fixed) return fixed;
+  const seg = /^segments:extracted_(\d+)_of_(\d+)$/.exec(code);
+  if (seg) return "全文 " + seg[2] + " 段里只从 " + seg[1] + " 段抽了断言";
+  const cap = /^claims:capped_(\d+)_of_(\d+)$/.exec(code);
+  if (cap) return "过闸 " + cap[2] + " 条断言，只核了前 " + cap[1] + " 条";
+  return code;
 }

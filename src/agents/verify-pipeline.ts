@@ -52,8 +52,45 @@ function emptyCounts(): VerifyScoresEvent["counts"] {
   return { supported: 0, contradicted: 0, unverified: 0, unverifiable: 0, judged: 0, verifiable: 0 };
 }
 
+/** scoresFrom / emptyScores 的可选口径。拆成对象是因为「为什么没看全」本身就是复数个理由。 */
+type ScoresOpts = {
+  /** 覆盖不全的理由，机器码；空数组 = 全文全断言都过了。 */
+  gaps?: string[];
+  /** 请求中途被取消（不是系统截的）。 */
+  aborted?: boolean;
+  /** ≥2 家权威来源顶了同一条结论，评级压到 B。 */
+  highAuthorityConflict?: boolean;
+};
+
+/**
+ * 把「本轮没看全」的理由列出来 —— 空数组就是全文全断言都过了。
+ *
+ * 为什么不是布尔：原来 partial 把四种情况混成一句「正文被截断、断言超出预算，或中途中断」，
+ * 界面上一半文章都顶着这条黄条，而其中大多数只是「闸门跳过了几条观点句」或「某条断言的检索
+ * 失败了」—— 那两种情况下字母档代表的仍然是整篇文章，黄条等于给一个不存在的问题道歉。
+ * 现在只有三件「系统真的少看了东西」的事算 partial：正文被截、段落超上限、断言超预算。
+ */
+export function coverageGaps(input: {
+  truncated: boolean;
+  segmentsTotal: number;
+  segmentsExtracted: number;
+  claimsGated: number;
+  claimsPicked: number;
+}): string[] {
+  const gaps: string[] = [];
+  if (input.truncated) gaps.push("doc:truncated");
+  if (input.segmentsTotal > input.segmentsExtracted) {
+    gaps.push("segments:extracted_" + input.segmentsExtracted + "_of_" + input.segmentsTotal);
+  }
+  if (input.claimsGated > input.claimsPicked) {
+    gaps.push("claims:capped_" + input.claimsPicked + "_of_" + input.claimsGated);
+  }
+  return gaps;
+}
+
 /** 零断言时的稳定输出：评级 N/A，理由码交给界面翻译（见 grade.ts 的 N_A_LABEL）。 */
-function emptyScores(partial: boolean, blocked: VerifyScoresEvent["blocked"]): VerifyScoresEvent {
+function emptyScores(blocked: VerifyScoresEvent["blocked"], opts: ScoresOpts = {}): VerifyScoresEvent {
+  const gaps = opts.gaps ?? [];
   const counts = emptyCounts();
   const g = gradeOf({
     agreement: null,
@@ -71,7 +108,9 @@ function emptyScores(partial: boolean, blocked: VerifyScoresEvent["blocked"]): V
     nEff: 0,
     counts,
     coverage: coverageOf(counts.verifiable, counts.unverifiable),
-    partial,
+    partial: gaps.length > 0,
+    partialReasons: gaps,
+    aborted: opts.aborted === true,
     blocked,
     rows: [],
   };
@@ -110,11 +149,8 @@ export function hasHighAuthorityConflict(
 
 /** 把 dossier 的组装结果翻成 SSE 的 scores 事件。唯一一处「数字变事件」的地方。 */
 /** 导出只为单测：这是「数字 → 事件」的唯一一处翻译，写错了整页都跟着错。 */
-export function scoresFrom(
-  dossier: DossierResult,
-  partial: boolean,
-  highAuthorityConflict: boolean,
-): VerifyScoresEvent {
+export function scoresFrom(dossier: DossierResult, opts: ScoresOpts = {}): VerifyScoresEvent {
+  const gaps = opts.gaps ?? [];
   const c = dossier.counts;
   const view = dossier.view;
   const g = gradeOf({
@@ -123,7 +159,7 @@ export function scoresFrom(
     contradicted: c.contradicted,
     verifiable: c.verifiable,
     unverifiable: c.unverifiable,
-    highAuthorityConflict,
+    highAuthorityConflict: opts.highAuthorityConflict === true,
   });
   return {
     grade: g.grade,
@@ -141,7 +177,9 @@ export function scoresFrom(
       verifiable: c.verifiable,
     },
     coverage: view.tooltip.coverage,
-    partial,
+    partial: gaps.length > 0,
+    partialReasons: gaps,
+    aborted: opts.aborted === true,
     blocked: dossier.blocked,
     rows: dossier.rows.map((row) => ({
       claimIndex: row.claimIndex,
@@ -197,7 +235,15 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
   // 后者是我们的问题，混成一句会让用户以为自己的文章没救。
   if (!llmEnabled()) {
     notes.push("claims:unavailable");
-    const scores = emptyScores(false, "no_claims");
+    const scores = emptyScores("no_claims", {
+      gaps: coverageGaps({
+        truncated: doc.truncated,
+        segmentsTotal: segments.length,
+        segmentsExtracted: segments.length,
+        claimsGated: 0,
+        claimsPicked: 0,
+      }),
+    });
     yield { event: "doc.scored", data: scores };
     if (signal?.aborted) return;
     yield {
@@ -244,7 +290,7 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
 
   if (claims.length === 0) {
     notes.push("claims:none");
-    const scores = emptyScores(signal?.aborted === true, "no_claims");
+    const scores = emptyScores("no_claims", { aborted: signal?.aborted === true });
     yield { event: "doc.scored", data: scores };
     if (signal?.aborted) return;
     yield {
@@ -339,13 +385,21 @@ export async function* runVerify(input: VerifyInput, signal?: AbortSignal): Asyn
   });
   degraded.push(...dossier.degraded);
 
-  const partial =
-    aborted ||
-    doc.truncated ||
-    claims.length > picked.length ||
-    segments.length > extractFrom.length ||
-    (deps !== null && verdicts.length < picked.length);
-  const scores = scoresFrom(dossier, partial, hasHighAuthorityConflict(verdicts, authById));
+  // 只数「系统真的少看了东西」的三件事：正文被截、段落超上限、断言超预算。
+  // 闸门跳过（观点/预测/模糊断言）与检索/判定失败都不算 —— 那些都在 degraded 与 rows 的 reason 里，
+  // 把它们混进 partial 会让一条本可以完整的字母档顶着「没跑完」的黄条。
+  const gaps = coverageGaps({
+    truncated: doc.truncated,
+    segmentsTotal: segments.length,
+    segmentsExtracted: extractFrom.length,
+    claimsGated: gate.kept.length,
+    claimsPicked: picked.length,
+  });
+  const scores = scoresFrom(dossier, {
+    gaps,
+    aborted,
+    highAuthorityConflict: hasHighAuthorityConflict(verdicts, authById),
+  });
 
   yield { event: "doc.scored", data: scores };
   if (signal?.aborted) return;

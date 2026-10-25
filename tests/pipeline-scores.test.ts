@@ -16,7 +16,7 @@ function verdict(i: number, v: ClaimVerdict["verdict"], ids: string[] = []): Cla
 
 test("scoresFrom：零判定时评级 N/A，agreement 必须是 null 而不是 0.5", () => {
   const dossier = buildDossier({ claims: [claim("营收", "32 亿")], verdicts: [] });
-  const scores = scoresFrom(dossier, false, false);
+  const scores = scoresFrom(dossier);
   assert.equal(scores.grade, "N/A");
   assert.equal(scores.agreement, null);
   assert.equal(scores.nEff, 0);
@@ -40,7 +40,9 @@ test("scoresFrom：三支持一反对 → 吻合度 0.75、judged 4、评级有�
     verdict(3, "contradict", ["e4"]),
   ];
   const dossier = buildDossier({ claims, verdicts, evidence });
-  const scores = scoresFrom(dossier, false, hasHighAuthorityConflict(verdicts, new Map(evidence.map((e) => [e.id, e]))));
+  const scores = scoresFrom(dossier, {
+    highAuthorityConflict: hasHighAuthorityConflict(verdicts, new Map(evidence.map((e) => [e.id, e]))),
+  });
   assert.equal(scores.counts.judged, 4);
   assert.equal(scores.counts.supported, 3);
   assert.equal(scores.counts.contradicted, 1);
@@ -52,10 +54,21 @@ test("scoresFrom：三支持一反对 → 吻合度 0.75、judged 4、评级有�
   assert.equal(scores.capped, false);
 });
 
-test("scoresFrom：partial 原样透传（中断与 N/A 是两件事）", () => {
+test("scoresFrom：partial 由 reasons 派生，取消另开一个字段", () => {
   const dossier = buildDossier({ claims: [claim("a", "1")], verdicts: [] });
-  assert.equal(scoresFrom(dossier, true, false).partial, true);
-  assert.equal(scoresFrom(dossier, false, false).partial, false);
+  const gapped = scoresFrom(dossier, { gaps: ["doc:truncated"] });
+  assert.equal(gapped.partial, true);
+  assert.deepEqual(gapped.partialReasons, ["doc:truncated"]);
+
+  const clean = scoresFrom(dossier);
+  assert.equal(clean.partial, false);
+  assert.deepEqual(clean.partialReasons, []);
+  assert.equal(clean.aborted, false);
+
+  // 取消不是「没看全」：aborted 单独一个字段，partial 仍是 false，界面文案也不一样。
+  const cancelled = scoresFrom(dossier, { aborted: true });
+  assert.equal(cancelled.aborted, true);
+  assert.equal(cancelled.partial, false);
 });
 
 test("hasHighAuthorityConflict：两家 0.7+ 独立 owner 反对同一条才算", () => {
