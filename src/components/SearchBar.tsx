@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { ArrowRight, Search } from "lucide-react";
+import VisitorRegion from "@/components/VisitorRegion";
 
 const EXAMPLES = [
   "英伟达最近三个月的舆情变化",
@@ -134,6 +135,10 @@ export default function SearchBar({
           </button>
         ))}
       </div>}
+
+      {/* 属地说明挂在「试试」下面、整块右对齐：只在首页那一版出现，
+          结果页顶栏保持一行干净控件。 */}
+      {lg && <VisitorRegion />}
     </div>
   );
 }

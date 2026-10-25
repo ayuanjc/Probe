@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeChunk, type ProbeEvent, type SourceRef } from "@/lib/sse";
 import type { Claim, Confidence, Field, Intent, ModuleSpec } from "@/lib/schemas";
 import type { EntityGraph } from "@/lib/entity-graph";
+import type { KeyFigure, KeyFiguresResult } from "@/lib/key-figures";
 import type { ClarifyPayload } from "@/lib/polysemy";
 import { MODULE_SIZE } from "@/lib/module-catalog";
 import { appPath } from "@/lib/base-path";
@@ -48,6 +49,13 @@ export type ProbeState = {
    * 所以只在用户点了「核验这一轮」时才发，不跟着首屏跑。
    */
   claims: Claim[];
+  /**
+   * 本轮出现过的数字（面板网格正下方那张表）。
+   * 每行都带 quote 与 sourceIds —— 它不是结论，是"谁在什么语境下说过这个数"。
+   */
+  figures: KeyFigure[];
+  /** 这批数字的来路：claims（模型抽取）/ snippets（正则扫原文，未交叉核对）/ none。 */
+  figureMode: KeyFiguresResult["mode"] | null;
   elapsedMs: number | null;
   error: string | null;
 };
@@ -65,6 +73,8 @@ const IDLE: ProbeState = {
   degraded: [],
   notes: [],
   claims: [],
+  figures: [],
+  figureMode: null,
   elapsedMs: null,
   error: null,
 };
@@ -286,6 +296,9 @@ export function useProbe() {
             };
           case "sources":
             return { ...s, sources: event.data.sources, confidence: event.data.confidence };
+          case "figures":
+            // 只存不合并：这批数字来自本轮，换一轮就整批换掉，不做历史累加。
+            return { ...s, figures: event.data.figures, figureMode: event.data.mode };
           case "intent.clarify":
             return { ...s, clarify: event.data };
           case "entity.graph":

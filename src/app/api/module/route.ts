@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ModuleKind, type Field, type ModuleSpec } from "@/lib/schemas";
 import { generateStructured, llmEnabled, modelId } from "@/lib/llm";
-import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
@@ -182,7 +182,7 @@ export async function POST(request: Request) {
   // 注意：key 的判断必须放进 withRuntimeConfig 里面。设置面板填的 key 是随请求头进来的，
   // 在外面读运行时配置等于读空 —— 之前就因为这个，用户自带 key 时这里永远走规则方案，
   // 面板填了 OpenAI key 却「没生效」，且没有任何提示。
-  const cfg = configFromRequest(request);
+  const cfg = await prepareRuntimeConfig(request);
 
   const prompt =
     "可用数据集：\n" +

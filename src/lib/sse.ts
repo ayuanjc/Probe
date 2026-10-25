@@ -1,5 +1,6 @@
 
 import type { EntityGraph } from "./entity-graph";
+import type { KeyFigure, KeyFiguresResult } from "./key-figures";
 import type { ClarifyPayload } from "./polysemy";
 import type { Claim, Confidence, Field, Intent, ModuleSpec } from "./schemas";
 
@@ -55,6 +56,12 @@ export type ProbeEvent =
       data: { id: string; reason: ModuleErrorReason; fallback: "table" | "none"; detail?: string };
     }
   | { event: "sources"; data: { sources: SourceRef[]; confidence: Confidence } }
+  /**
+   * 「这轮出现了哪些数字」。放在 sources 之后：每行都要带上信源 id 与原文句子，
+   * 前端拿 id 去刚收到的 SourceRef 里换标题与链接 —— 先有信源，才谈得上"哪个数是谁说的"。
+   * 它的 mode 必须外发：snippets 路径的数是正则从原文搬的，没做交叉核对。
+   */
+  | { event: "figures"; data: { figures: KeyFigure[]; mode: KeyFiguresResult["mode"]; notes: string[] } }
   /**
    * 实体共现图。放在 sources 之后、done 之前：它带着每条边的信源 id，
    * 前端的「证据来源」要拿这些 id 去 sources 里查标题与链接。

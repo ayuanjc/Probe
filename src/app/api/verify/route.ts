@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { encodeVerifyEvent, type VerifyEvent } from "@/lib/verify-events";
 import { runVerify } from "@/agents/verify-pipeline";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
@@ -192,7 +192,7 @@ async function guarded(
   }
 
   try {
-    const cfg = configFromRequest(request);
+    const cfg = await prepareRuntimeConfig(request);
     if (format === "json") {
       try {
         return await withRuntimeConfig(cfg, () => jsonResponse(input, request.signal));

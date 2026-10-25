@@ -1,5 +1,5 @@
 import { translateDocument } from "@/lib/translate";
-import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, publicMessage, readJsonBody } from "@/lib/request-guard";
 
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
 
   try {
     // 带上用户自带的 key：有 key 时翻译走模型，没 key 才落到 MyMemory。
-    const result = await withRuntimeConfig(configFromRequest(request), () =>
+    const result = await withRuntimeConfig(await prepareRuntimeConfig(request), () =>
       translateDocument({ url, title, text }),
     );
     return json(result, result.ok ? 200 : 422);

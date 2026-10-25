@@ -49,7 +49,16 @@ const CONFIG_ROWS: { label: string; store: string; header: string; env: string; 
 const ENV_ROWS: [string, string, string][] = [
   ["OPENAI_API_KEY", "意图精修 / 断言抽取 / 摘要 / 段落翻译", "空"],
   ["OPENAI_BASE_URL", "OpenAI 兼容接口地址（网关 / DeepSeek / 本地 Ollama）", "空 = 官方"],
-  ["TAVILY_API_KEY", "网页检索（Tavily 搜索层）", "空"],
+  ["TAVILY_API_KEY", "网页检索（Tavily，境外；境内请求不会用到）", "空"],
+  ["BOCHA_API_KEY", "网页检索（博查，境内；境内请求只走它）", "空 → 境内退回本地样本"],
+  ["PROBE_CN_MODEL_KEY", "境内模型兜底端点的 key（判定为境内且当前端点不在白名单时启用）", "空 → 境内无模型可用"],
+  ["PROBE_CN_MODEL_BASE_URL", "境内模型兜底地址", "https://api.deepseek.com/v1"],
+  ["PROBE_CN_MODEL_ID", "境内模型 id", "deepseek-flash"],
+  ["PROBE_REGION_MODE", "固定区域：cn / intl（只服务一个区域时最省心）", "空 → 按来源判定"],
+  ["PROBE_DEFAULT_REGION", "来源判不出来时的兜底区域", "cn"],
+  ["PROBE_REGION_LOOKUP_URL", "IP 归属反查地址（含 {ip} 占位或作前缀）", "空 → 只信 CDN 国家头"],
+  ["PROBE_REGION_CN_RETRIEVAL", "境内允许的检索源，逗号分隔", "bocha"],
+  ["PROBE_CN_EXTRA_MODEL_HOSTS", "境内额外信任的模型域名（自建网关）", "空"],
   ["PROBE_MODEL", "模型 id", "gpt-6-luna"],
   ["PROBE_RATE_LIMIT_PER_MIN", "/api/search 每 IP 每分钟检索次数", "3"],
   ["PROBE_TRANSLATE_RATE_LIMIT_PER_MIN", "/api/translate 每 IP 每分钟", "20"],
@@ -76,11 +85,24 @@ const ROUTES: [string, string, string][] = [
 
 const ENV_SAMPLE = [
   "# .env.local（仓库根目录，改完要重启 dev / start）",
+  "",
+  "# 境外这一路：判定为境外的请求才用（OpenAI 或任意 OpenAI 兼容网关）",
   "OPENAI_API_KEY=sk-…",
-  "# 走别家 / 自建网关时才需要（含 /v1，例如 DeepSeek 是 https://api.deepseek.com/v1）",
-  "# OPENAI_BASE_URL=https://api.deepseek.com/v1",
-  "TAVILY_API_KEY=tvly-…",
+  "OPENAI_BASE_URL=",
   "PROBE_MODEL=gpt-6-luna",
+  "TAVILY_API_KEY=tvly-…",
+  "",
+  "# 境内这一路：判定为境内的请求只走这两家（模型 + 检索都不出境）",
+  "PROBE_CN_MODEL_KEY=sk-…",
+  "PROBE_CN_MODEL_BASE_URL=https://api.deepseek.com/v1",
+  "PROBE_CN_MODEL_ID=deepseek-flash",
+  "BOCHA_API_KEY=sk-…",
+  "",
+  "# 区域判定：留空即按来源判定；只服务一个区域可以直接钉死 cn 或 intl",
+  "PROBE_REGION_MODE=",
+  "PROBE_DEFAULT_REGION=cn",
+  "# 没接 CDN 时可填 IP 归属反查地址，例如 https://ipapi.example.com/{ip}",
+  "PROBE_REGION_LOOKUP_URL=",
   "",
   "# 限流：默认值很紧，本地压测时调高",
   "PROBE_RATE_LIMIT_PER_MIN=3",
@@ -172,7 +194,7 @@ export default function ConfigDocs() {
         <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-500">
           脏值一律当没填：key 要 8–400 字符且不含空白，模型要匹配 {" "}
           <span className="font-mono text-[10px] text-neutral-400">
-            [A-Za-z0-9._:-]{"{"}2,64{"}"}
+            [A-Za-z0-9._:/@-]{"{"}2,80{"}"}
           </span>
           。填错不会报错，只会静默回落到服务端配置 —— 所以「填了没生效」先回来对一遍格式。
         </p>
@@ -216,6 +238,35 @@ export default function ConfigDocs() {
           （<span className="font-mono text-[10px] text-neutral-400">OPENAI_BASE_URL</span> 已经从这份名单里摘掉了：
           它现在是真读的，见上表「接口地址」。）
         </p>
+      </Section>
+
+      <Section
+        title="区域分流：数据出境闸门"
+        hint="同一次检索，境内请求与境外请求用完全不同的服务商。判定顺序、兜底与拒绝方式都在 src/lib/region.ts 与 src/lib/region-policy.ts。"
+        defaultOpen
+      >
+        <div className="space-y-1.5 text-[11px] leading-relaxed text-neutral-500">
+          <p>
+            <span className="text-neutral-300">判定顺序</span>：PROBE_REGION_MODE 显式固定 →
+            CDN 边缘国家头（EdgeOne / Cloudflare / Vercel）→ IP 归属反查 → PROBE_DEFAULT_REGION（默认 cn）。
+            IP 只按 PROBE_TRUSTED_PROXY_HOPS 的跳数从 X-Forwarded-For 里取，伪造头换不来「境外身份」。
+          </p>
+          <p>
+            <span className="text-neutral-300">兜底为什么是 cn</span>：判错的代价不对称 ——
+            把境内用户当成境外，查询词已经发出去了，收不回来；把境外用户当成境内，只是少几个源，可以重试。
+          </p>
+          <p>
+            <span className="text-neutral-300">模型</span>：境内只允许白名单域名（DeepSeek / Kimi / 智谱 /
+            百炼 / 硅基流动 / 方舟 / 千帆 …，外加 PROBE_CN_EXTRA_MODEL_HOSTS）。当前端点不在白名单时，
+            若配了 PROBE_CN_MODEL_* 就换成兜底端点并在界面上说明；没配就直接拦下 ——
+            不会拿境外 key 去撞境内端点换一个语焉不详的 401。
+          </p>
+          <p>
+            <span className="text-neutral-300">检索</span>：境内只跑博查；境外四家（Tavily / GDELT /
+            Wikipedia / HN）在这一路一律不发起请求，连集外核验用的 Tavily key 也返回空。
+            界面上会显示「当前区域不使用」，与「请求失败」区分开。
+          </p>
+        </div>
       </Section>
 
       <Section title="本机存储键" hint="全在这台浏览器的 localStorage 里；一键还原会按 probe: 前缀全清。">

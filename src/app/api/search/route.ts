@@ -1,6 +1,6 @@
 import { encodeEvent } from "@/lib/sse";
 import { runPipeline } from "@/agents/pipeline";
-import { configFromRequest, withRuntimeConfig } from "@/lib/runtime-config";
+import { prepareRuntimeConfig, withRuntimeConfig } from "@/lib/runtime-config";
 import { createGate, createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
@@ -69,7 +69,7 @@ function sseResponse(query: string, request: Request, release: () => void): Resp
 
       try {
         // key 只活在这段上下文里：不落盘、不写日志、不跨请求共享。
-        const cfg = configFromRequest(request);
+        const cfg = await prepareRuntimeConfig(request);
         await withRuntimeConfig(cfg, async () => {
           for await (const event of runPipeline(query, signal)) {
             // 客户端关掉标签页后继续往下跑没有任何意义：

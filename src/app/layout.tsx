@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import SessionBar from "@/components/SessionBar";
 import UpdateBanner from "@/components/UpdateBanner";
+import SiteFooter from "@/components/SiteFooter";
 import { BASE_PATH } from "@/lib/base-path";
 
 /**
@@ -60,6 +61,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <SessionBar />
         <UpdateBanner />
+        {/* 法律信息（备案号 / 隐私政策 / 用户协议）挂在 layout，每一页都在；产品页脚仍在 Workspace 里。 */}
+        <SiteFooter />
       </body>
     </html>
   );

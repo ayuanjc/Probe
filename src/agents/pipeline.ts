@@ -2,10 +2,12 @@
 import type { ProbeEvent, SourceRef } from "@/lib/sse";
 import type { Intent } from "@/lib/schemas";
 import { llmEnabled, modelId, streamSummary } from "@/lib/llm";
+import { regionNotes, resolvedRegion } from "@/lib/runtime-config";
 import { endRun, startRun, usageSink } from "@/lib/metrics";
 import type { RunRecord, UsageSink } from "@/lib/metrics";
 import { isDemoOnly } from "@/lib/confidence";
 import { buildEntityGraph } from "@/lib/entity-graph";
+import { extractKeyFigures } from "@/lib/key-figures";
 import { routeQuery } from "./route";
 import { retrieve } from "./retrieve";
 import { buildClarify } from "@/lib/polysemy";
@@ -133,7 +135,11 @@ async function* runStages(
   run.confidence = analysis.confidence.score;
   run.band = analysis.confidence.band;
   run.notes = analysis.notes.length;
-  const degraded = [...retrieved.degraded, ...analysis.degraded];
+  /**
+   * 区域说明也并进来：境内请求会少几个源，界面必须说清是"被规则拦下"而不是"源挂了"。
+   * 放在 analyze 之后取，是因为模型调用本身也可能追加一条（endpoint 被换或被拦）。
+   */
+  const degraded = [...retrieved.degraded, ...analysis.degraded, ...regionNotes()];
 
   // 全部源都挂了才会走到这里。此时页面仍然有内容，但那些内容是我们自己写的样本。
   // 只把颜色调灰不够——必须用一句话说清楚"这不是事实"，否则这个界面就在骗人。
@@ -226,7 +232,10 @@ async function* runStages(
           (names || "全部内容") +
           "全部来自本地演示样本，是渲染链路的占位数据。它们不构成对「" +
           intent.query +
-          "」的任何判断，也不能被引用。要拿到真实结果，请稍后重试，或在 .env 中配置 TAVILY_API_KEY 以提高命中率。\n",
+          "」的任何判断，也不能被引用。要拿到真实结果，请稍后重试；" +
+          (resolvedRegion() === "cn"
+            ? "境内访问走的是境内检索，请在 .env 中配置 BOCHA_API_KEY 以提高命中率。\n"
+            : "或在 .env 中配置 TAVILY_API_KEY 以提高命中率。\n"),
       },
     };
   } else {
@@ -278,6 +287,20 @@ async function* runStages(
   }));
 
   yield { event: "sources", data: { sources: sourceRefs, confidence: analysis.confidence } };
+
+  /**
+   * 关键数字清单：结果页放在面板网格正下方。
+   *
+   * 它只搬原文，不下结论 —— 每行是「一个数 + 它的原句 + 说过它的信源」。
+   * 模型在线时优先用 claim（指标名干净）；不在线就正则扫 snippet，并在 notes 里说明
+   * 这批数字没有经过交叉核对。低置信时再加一条，绝不默默端上一张看起来权威的表。
+   */
+  const keyFigures = extractKeyFigures({
+    sources: analysis.sources,
+    claims: analysis.claims,
+    confidence: analysis.confidence,
+  });
+  yield { event: "figures", data: keyFigures };
 
   /**
    * 共现图要在 sources 之后发：节点里存的是信源 id，前端拿它去刚收到的

@@ -18,7 +18,9 @@ import ModuleGrid from "./ModuleGrid";
 import EntityGraphCard from "./EntityGraphCard";
 import ClarifyCard from "./ClarifyCard";
 import SourceList from "./SourceList";
+import KeyFiguresTable from "./KeyFiguresTable";
 import ConfidenceBadge from "./ConfidenceBadge";
+import AiNotice from "./AiNotice";
 import ProbeLogo from "./ProbeLogo";
 import TrendingBoard from "./TrendingBoard";
 import Term from "./Glossary";
@@ -51,6 +53,7 @@ const KIND_TEXT: Record<string, string> = {
  * 这里翻成人话，并保留"为什么没有"这一层信息。
  */
 const PROVIDER_TEXT: Record<string, string> = {
+  bocha: "博查网页检索（境内）",
   gdelt: "GDELT 新闻索引",
   hn: "Hacker News",
   wiki: "Wikipedia 浏览统计",
@@ -94,7 +97,31 @@ function datasetsFromModules(modules: ModuleState[]): Dataset[] {
   return out;
 }
 
+/**
+ * 区域相关的条目形如 region:model_switched:api.openai.com->api.deepseek.com，
+ * 比普通的「源:原因」多一段，所以先单独判掉，再走通用的两段式解析。
+ */
+function regionText(item: string): string {
+  const body = item.slice("region:".length);
+  const i = body.indexOf(":");
+  const kind = i === -1 ? body : body.slice(0, i);
+  const rest = i === -1 ? "" : body.slice(i + 1);
+  if (kind === "model_switched") {
+    const [from, to] = rest.split("->");
+    return "模型端点按访问区域切换：" + (from || "?") + " → " + (to || "?");
+  }
+  if (kind === "model_blocked") {
+    return "模型端点被区域规则拦下（" + rest + "）：本区域不使用该服务商，且未配置境内替代端点";
+  }
+  return "访问区域：" + body;
+}
+
 function degradeText(item: string): string {
+  if (item.startsWith("region:")) return regionText(item);
+  // 时间窗的两条码必须说清「为什么少」，否则界面只剩一句「本轮无命中」。
+  if (item === "window:empty") return "时间窗（本轮命中全在窗外）";
+  const undated = /^window:undated_(\d+)$/.exec(item);
+  if (undated) return "时间窗（" + undated[1] + " 条没有发布时间，按未知保留）";
   const i = item.indexOf(":");
   const base = i === -1 ? item : item.slice(0, i);
   const suffix = i === -1 ? "" : item.slice(i + 1);
@@ -102,7 +129,13 @@ function degradeText(item: string): string {
   if (suffix === "empty") return name + "（本轮无命中）";
   if (suffix === "off") return name + "（未启用：缺少模型或密钥）";
   if (suffix === "failed") return name + "（请求失败）";
-  if (suffix === "not_configured") return name + "（未接入）";
+  // 失败分四类：下一步各不一样（充值 / 换 key / 等一会儿 / 重试），别都写「请求失败」。
+  if (suffix === "quota") return name + "（额度用尽或未充值）";
+  if (suffix === "auth") return name + "（密钥无效或权限不足）";
+  if (suffix === "rate_limited") return name + "（被上游限流）";
+  if (suffix === "timeout") return name + "（上游超时）";
+  if (suffix === "not_configured") return name + "（未配置密钥）";
+  if (suffix === "region_blocked") return name + "（当前区域不使用）";
   if (suffix === "dropped") return name + "（已丢弃）";
   if (suffix === "fixture") return name + "（已启用）";
   return name;
@@ -652,6 +685,8 @@ export default function Workspace({
                   id="sec-summary"
                   className="panel scroll-mt-16 p-6"
                 >
+                  {/* 生成内容必须先标识再阅读：角标在正文之上，不是页脚免责。 */}
+                  <AiNotice />
                   <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-300">
                     {state.text}
                     {running && <span className="caret" />}
@@ -678,6 +713,23 @@ export default function Workspace({
                   gap={settings.density === "compact" ? GRID_GAP.compact : GRID_GAP.normal}
                   onCollapseAll={setGraphCollapsed}
                 />
+                </div>
+              )}
+
+              {/*
+                关键数字紧贴面板网格之下：读完「有哪些面板」的下一个问题就是
+                「具体是哪些数」，而数字本身又要靠下方的信源兜底。
+                所以它在阅读顺序上占面板与共现图之间这一格。
+              */}
+              {(state.figures.length > 0 || state.figureMode === "none") && (
+                <div id="sec-figures" className="scroll-mt-16">
+                  <section className="panel scroll-mt-16 overflow-hidden">
+                    <KeyFiguresTable
+                      figures={state.figures}
+                      sources={state.sources}
+                      mode={state.figureMode}
+                    />
+                  </section>
                 </div>
               )}
 

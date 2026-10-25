@@ -57,7 +57,8 @@ export type Entity = z.infer<typeof EntitySchema>;
  * RawSource — Retriever 的归一化输出（PRD 2.2）
  * ------------------------------------------------------------------ */
 
-export const ProviderName = z.enum(["tavily", "gdelt", "wiki", "hn", "fixture"]);
+/** bocha = 境内的博查检索，只在"请求来自境内"时才会出现（见 src/lib/region-policy.ts）。 */
+export const ProviderName = z.enum(["bocha", "tavily", "gdelt", "wiki", "hn", "fixture"]);
 
 export const RawSourceSchema = z.object({
   id: z.string(),

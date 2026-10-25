@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { makeHeldoutDeps, tavilyHeldoutSearch } from "@/agents/heldout";
+import { withRuntimeConfig } from "@/lib/runtime-config";
 
 /**
  * 这道测试守的是一行「接线」而不是一个算法：/api/evidence 曾经把 makeHeldoutDeps 的 search
@@ -28,13 +29,30 @@ test("断言核验接口自己造检索器，不把 search 写死", () => {
   );
 });
 
-test("配了 TAVILY_API_KEY 才有检索器", () => {
+/**
+ * 现在有两道闸：有没有 key，以及这个区域能不能用境外检索。
+ * 少了第二道，境内请求会把查询词发给 Tavily —— 那是数据出境，测试必须钉住。
+ */
+test("配了 TAVILY_API_KEY 且区域允许，才有检索器", () => {
   const saved = process.env.TAVILY_API_KEY;
   try {
     delete process.env.TAVILY_API_KEY;
-    assert.equal(tavilyHeldoutSearch(), null, "没有 key 时必须返回 null，不能假装能搜");
+    assert.equal(
+      withRuntimeConfig({ region: "intl" }, () => tavilyHeldoutSearch()),
+      null,
+      "没有 key 时必须返回 null，不能假装能搜",
+    );
     process.env.TAVILY_API_KEY = "tvly-test-only";
-    assert.equal(typeof tavilyHeldoutSearch(), "function");
+    // 区域闸门：境内即使有 key 也不给检索器（数据不出境）
+    assert.equal(
+      withRuntimeConfig({ region: "cn" }, () => tavilyHeldoutSearch()),
+      null,
+      "境内不该拿得到 Tavily 检索器",
+    );
+    assert.equal(
+      typeof withRuntimeConfig({ region: "intl" }, () => tavilyHeldoutSearch()),
+      "function",
+    );
   } finally {
     if (saved === undefined) delete process.env.TAVILY_API_KEY;
     else process.env.TAVILY_API_KEY = saved;
