@@ -1,6 +1,10 @@
 # 部署：预览站 runbook
 
-一台机器上同时跑两个项目，80 端口归原来的项目。预览站不抢端口、不抢域名，
+> **2026-10-25 起拓扑变了（备案整改 A 方案）**：预览站挪到域名根 `/`，原有项目（云影图鉴）已下线。
+> 下面的 `location /probe` 描述保留作历史参考，当前生效的站点文件是 `/etc/nginx/sites-available/probe-root`，
+> 备案期用 `probe-closed`（全 444）。迁移步骤与回滚见本文最后「站点从 /probe 挪到域名根」。
+
+一台机器上同时跑两个项目（历史形态），80 端口归原来的项目。预览站不抢端口、不抢域名，
 只用 nginx 的一个 `location /probe`。
 
 ## 拓扑
@@ -29,6 +33,9 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次） |
 | `/etc/nginx/geoip/dbip-country-lite.mmdb` | 区域判定用的国家库（8.0 MB，每月换一份） |
 | `/root/nginx-backup/` | nginx 配置改动前的原件（带时间戳） |
+| `/etc/nginx/sites-available/probe-root` | 当前生效站点：域名根跑探针，未匹配 Host → 444 |
+| `/etc/nginx/sites-available/probe-closed` | 备案期站点：所有 Host、所有路径 → 444 |
+| `/root/probe-backup/` | `probe.env` / `update.sh` 改动前的备份（带时间戳） |
 | `/var/log/probe-update.log` | 更新日志（含构建输出） |
 | `/var/log/probe-heat.log` | 热榜 Cron 日志（每行 `日期 try=N http=CODE BODY`） |
 | `/opt/probe/app/.cache/feedback.jsonl` | 页脚反馈，一行一条（`.cache` 不在自动更新的覆盖范围内） |
@@ -324,3 +331,75 @@ net.ipv4.tcp_fastopen = 3
 - **npm registry**：这台机器到 `registry.npmjs.org` 要 14 秒，`registry.npmmirror.com` 1.7 秒。`npm config set registry https://registry.npmmirror.com` 之后 `npm ci` 15 秒装完。
 - **热榜 Cron 偶发 `topics:0`**：同一条 HN 请求一次通、一次 `aborted due to timeout`。端点里已给抓取一次重试（800ms 后），失败快照只缓存 60 秒。看到日志里 `hn:failed` 先确认是不是单次抖动，不用急着查服务。
 - **别把 `curl` 直接管道给 `grep -m1`**：`update.sh` 里那样写会让 curl 收 SIGPIPE 报 `curl: (23) Failure writing output to destination` 并退出非零。先 `-o` 落文件再 grep。
+
+---
+
+## 站点从 /probe 挪到域名根（2026-10-25，A 方案）
+
+背景：备案要求「网站名称与备案表一致、仅一个站点」，原有云影图鉴占用域名根，探针缩在 `/probe`。
+整改做法是**探针独占域名根**，原项目下线。
+
+### 服务器上的四步（已执行，可复现）
+
+```bash
+# 1) 去掉 basePath（.env 里注释掉两行）
+vi /opt/probe/probe.env
+#   # PROBE_BASE_PATH=/probe
+#   # NEXT_PUBLIC_PROBE_BASE_PATH=/probe
+#   PROBE_SITE_URL=http://ayuanjc.online
+
+# 2) update.sh 里的构建变量同步（第 12 行）
+sed -i 's|^BASE_PATH=/probe$|BASE_PATH=""|' /opt/probe/update.sh
+
+# 3) 手工重建（basePath 变了必须全量 build，不能复用 .next）
+cd /opt/probe/app
+rm -rf .next-staging .next/types
+PROBE_BASE_PATH= NEXT_PUBLIC_PROBE_BASE_PATH= PROBE_DIST_DIR=.next-staging npx next build
+mv .next .next-old && mv .next-staging .next
+systemctl restart probe-web
+
+# 4) nginx 换站点：启用 probe-root，摘掉旧站点
+ln -sfn /etc/nginx/sites-available/probe-root /etc/nginx/sites-enabled/probe-root
+rm -f /etc/nginx/sites-enabled/yunying
+nginx -t && systemctl reload nginx
+systemctl stop yunying-demo.service && systemctl disable yunying-demo.service
+```
+
+### 验证（必须带 Host 头，域名从外网打会被腾讯云阻断页吃掉）
+
+```bash
+H='Host: ayuanjc.online'
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H "$H" http://127.0.0.1/          # 307 → /login
+curl -s -o /dev/null -w '%{http_code}\n' -H "$H" http://127.0.0.1/login                # 200
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H "$H" http://127.0.0.1/probe  # 301 → /
+curl -s -o /dev/null -w '%{http_code}\n' -H "$H" http://127.0.0.1/nope-xyz              # 404
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/                              # 000/被掐（兜底 444）
+curl -s -H "$H" http://127.0.0.1/api/version                                            # {"version":...}
+```
+
+### 回滚（30 秒内能回到 /probe）
+
+```bash
+cd /opt/probe/app && mv .next .next-root-broken && mv .next-old .next
+sed -i 's|^BASE_PATH=""$|BASE_PATH=/probe|' /opt/probe/update.sh
+# probe.env 里把两行 PROBE_BASE_PATH 取消注释，PROBE_SITE_URL 改回带 /probe
+systemctl restart probe-web
+rm -f /etc/nginx/sites-enabled/probe-root
+ln -sfn /etc/nginx/sites-available/yunying /etc/nginx/sites-enabled/yunying
+nginx -t && systemctl reload nginx
+```
+
+> `.next-old` 只留一份，确认稳定后删掉；`.next` 是 Next 的构建产物，更新脚本会整体替换它。
+
+### 备案提交期间的开关
+
+备案材料提交后、审核未通过前，把站点切到「全 444」最安全：
+
+```bash
+ln -sfn /etc/nginx/sites-available/probe-closed /etc/nginx/sites-enabled/probe-closed
+rm -f /etc/nginx/sites-enabled/probe-root
+nginx -t && systemctl reload nginx
+# 通过后换回来：ln -sfn .../probe-root .../probe-root && rm -f .../probe-closed && reload
+```
+
+服务本身不用停 —— `probe-web.service` 只听 `127.0.0.1:3215`，nginx 关掉 80 之后外部到不了它。

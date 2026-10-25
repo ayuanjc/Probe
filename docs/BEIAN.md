@@ -9,15 +9,61 @@
 | --- | --- |
 | 公网 IP | `106.52.116.164`（腾讯云广州，2C4G / 5Mbps） |
 | 系统 | Debian 12，nginx 1.22，未装 certbot |
-| 80 端口 | 站点 `/etc/nginx/sites-enabled/yunying`（**带 default_server**），根目录 `/opt/yunying/web` |
-| 探针 | `/probe` → `127.0.0.1:3215`（Next.js，`basePath=/probe`） |
+| 80 端口 | 站点 `/etc/nginx/sites-enabled/probe-root`（2026-10-25 起），未匹配 Host 一律 444 |
+| 探针 | **域名根** `/` → `127.0.0.1:3215`（Next.js，已去掉 `basePath`；旧 `/probe/*` 301 到根） |
+| 云影图鉴 | **已下线**（`yunying-demo.service` stopped + disabled，文件仍在 `/opt/yunying`） |
 | 443 端口 | **未监听** |
 | 域名 | `ayuanjc.online` 已 A 记录指向该 IP |
 | 模型 | DeepSeek `deepseek-flash`（`api.deepseek.com/v1`，境内处理） |
 
 ---
 
-## 一、先修三个必被驳回的问题
+## 零、进度台账
+
+| 日期 | 事项 | 状态 |
+| --- | --- | --- |
+| 2026-10-25 | 日志留存 `rotate 14` → `180`（网络安全法第 21 条 ≥6 个月）；journald 加 `SystemMaxUse=2G` 落盘 | ✅ 已做 |
+| 2026-10-25 | 未匹配 Host / 裸 IP 返回 200 → 改为 `return 444`（`sites-available/probe-root` 的兜底 server） | ✅ 已做 |
+| 2026-10-25 | 任意路径返回 200（单页兜底）→ 全部代理给 Next，未知路径返回真 404 | ✅ 已做 |
+| 2026-10-25 | A 方案落地：探针从 `/probe` 挪到域名根，云影图鉴下线 | ✅ 已做 |
+| — | 443 / HTTPS（阶段 C） | ⏳ 备案通过后 |
+| — | 页脚注备案号（`PROBE_ICP_LICENSE`） | ⏳ 号下来后 |
+| — | 公安联网备案 / 算法备案 | ⏳ 备案通过后 |
+
+### 域名侧核验（2026-10-25，RDAP 实测）
+
+| 项 | 实测 | 结论 |
+| --- | --- | --- |
+| 注册商 | DNSPod, Inc.（RDAP handle 1697，北京海淀，`domain_notice@tencent.com`） | ✅ 境内有资质，无需转入 |
+| 注册 / 到期 | 2026-10-19 / 2027-10-19 | ✅ 有效期内，剩 12 个月 |
+| 状态 | `active`，未启用 DNSSEC | ✅ 无 serverHold 类锁定 |
+| NS | `equuleus.dnspod.net` / `near.dnspod.net` | ✅ DNSPod 解析 |
+| 后缀 `.online` | 注册局 Radix / Tucows Registry | ⚠️ 提交时由备案系统校验：控制台域名栏能自动带出实名主体即通过 |
+
+### 云侧阻断已经生效（别搞错排查方向）
+
+访客访问 `http://ayuanjc.online/` 现在拿到的是腾讯云自己的提示页：
+
+```
+302 → https://dnspod.qcloud.com/static/webblock.html?d=ayuanjc.online
+文案：网站暂时无法访问 / 您的网站未完成备案
+```
+
+含义有两层：
+
+1. 备案是硬前置——不备案，域名永远打不开，不是"优化项"；
+2. 阶段 A（本机全 444）在外部已经等价实现，但本机仍要配好，避免阻断失效或换接入商时裸奔。
+
+验证服务本身只能用**本机回环 + Host 头**，别从外网用域名试（会被云侧阻断吃掉）：
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Host: ayuanjc.online' http://127.0.0.1/
+# 期望：307 http://ayuanjc.online/login
+```
+
+---
+
+## 一、先修三个必被驳回的问题（1、2 已修，3 待 HTTPS）
 
 备案审核会做两件事：查主体材料，以及**探测 80 端口**。以下三点是实测出来的硬伤：
 
