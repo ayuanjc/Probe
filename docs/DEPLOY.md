@@ -158,33 +158,81 @@ cd /tmp/old && PROBE_BASE_PATH=/probe NEXT_PUBLIC_PROBE_BASE_PATH=/probe PROBE_D
 真要"一键回滚"的话，把 `.next-old` 保留一轮（下一段更新时才删）即可 —— 现在没做，因为预览站出问题时
 直接 `git revert` + 5 分钟自动更新更快，也更不容易把磁盘塞满。
 
-## nginx 片段（在 `server {}` 里）
+## nginx 片段
+
+下面这段是**线上实跑的那一版**（`/etc/nginx/conf.d/probe-upstream.conf` + 站点文件的
+`location`），不是示意：静态资源走缓存、动态请求限流、SSE 单独放行。
 
 ```nginx
+# conf.d/probe-upstream.conf —— http{} 层
+proxy_cache_path /var/cache/nginx/probe-static levels=1:2
+                 keys_zone=probe_static:20m max_size=512m inactive=7d use_temp_path=off;
+
+upstream probe_next {
+    server 127.0.0.1:3215;
+    keepalive 32;              # 复用连接，别让 nginx 每个请求都新建一条到 Node
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
+limit_req_zone  $binary_remote_addr zone=probe_rl:10m   rate=10r/s;
+limit_conn_zone $binary_remote_addr zone=probe_conn:10m;
+```
+
+```nginx
+# 站点文件 server{} 层：静态资源单独一个 location，直接从缓存走
+location /probe/_next/static/ {
+    proxy_pass http://probe_next;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering on;
+    proxy_cache probe_static;
+    proxy_cache_key "$scheme$request_uri";
+    proxy_cache_valid 200 7d;
+    proxy_cache_lock on;
+    proxy_cache_use_stale error timeout updating;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header X-Cache-Status $upstream_cache_status always;
+    access_log off;
+}
+
 location /probe {
-    proxy_pass http://127.0.0.1:3215;
+    proxy_pass http://probe_next;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_buffering off;      # SSE：不关缓冲，事件会被攒成一坨再吐
+    proxy_set_header Connection "";
+    proxy_buffering off;       # SSE：不关缓冲，事件会被攒成一坨再吐
     proxy_cache off;
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
 
-    # 安全加固（详见 docs/SECURITY.md）：应用层已按分钟限流，这里再兜一层
-    limit_req zone=probe_rl burst=20 nodelay;
+    # 反馈附件上限 8MB，nginx 默认 1m 会先 413
+    client_max_body_size 10m;
+
+    # 粗闸（应用层还有一套更紧的每分钟额度，见 docs/AUTH.md 第 7 节）
+    limit_req zone=probe_rl burst=40 nodelay;
     limit_req_status 429;
-    client_max_body_size 1m;
+    limit_conn probe_conn 12;  # SSE 会长期占连接，按 IP 限并发
+    limit_conn_status 429;
+    limit_req_log_level info;  # 不进 error.log；拒绝仍记在 access.log 的 429
+    limit_conn_log_level info;
 }
 ```
 
-`limit_req_zone` 要写在 `http {}` 里（`nginx.conf` 或 `conf.d` 的顶层）：
+取值理由（都踩过）：
 
-```nginx
-limit_req_zone $binary_remote_addr zone=probe_rl:10m rate=5r/s;
-```
+- **`rate=10r/s` + `burst=40`，不是更小的 5r/s / 20**。一次页面导航除 HTML 还带若干
+  `?_rsc=` 预取，同一出口 IP 后面还可能坐几个人；实测 5r/s 在正常使用下就会偶发 429。
+- **限流只盖 `location /probe`**。静态资源在独立 location 里，不吃这个桶 —— 否则一次
+  加载十几个 chunk 就把额度烧掉一半。
+- **`client_max_body_size 10m`**：不是 1m。反馈附件上限是 8MB，1m 会先把它拦成 413，
+  而这个 413 是 nginx 回的，应用日志里什么都不会留下，很难查。
+- **`limit_*_log_level info`**：这台机器的 `error_log` 是 `warn` 级，设 info 等于不写。
+  洪泛时按请求写 error.log 本身就是放大器；要看拒绝记录，去 access.log 里 `grep ' 429 '`。
 
 **上面那两行 `proxy_set_header X-Real-IP / X-Forwarded-For` 不能删**：
 应用层按「XFF 右起第 1 跳」还原客户端 IP 来分桶。缺了它们所有请求都落进共享桶，
@@ -194,6 +242,37 @@ limit_req_zone $binary_remote_addr zone=probe_rl:10m rate=5r/s;
 
 `proxy_pass` 后面**不要**带 URI（不要写 `proxy_pass http://127.0.0.1:3215/;`）：
 带了会把 `/probe` 前缀剥掉，而 Next 的 basePath 正等着这个前缀。
+
+## 性能：静态资源不该经过 Node
+
+Next 的 chunk 动辄 200KB 以上，而这些文件的 hash 就在文件名里、内容永不变。原来
+`location /probe` 整段是 `proxy_buffering off`（SSE 必须），等于每个 chunk 都穿透到 Node
+进程里走一遍。上面那段把 `/_next/static/` 单独拆出来做 nginx 缓存之后：
+
+| 场景（本机 loopback，keep-alive） | 直连 Node:3215 | 经 nginx |
+| --- | --- | --- |
+| 静态 chunk，20 并发 × 500 | 945 rps / p50 18.8ms | **3650 rps / p50 4.6ms** |
+| SSR `/probe/login`，10 并发 × 200 | 164 rps / p50 56.6ms | 183 rps / p50 51.2ms |
+
+HIT 的静态请求完全不进 Node。SSR 那两列持平 = nginx 没引入额外开销；它仍是单进程瓶颈
+（2 vCPU 跑满就是这个数）。
+
+另外两处进程/内核层面的调整（改动与回滚记录在服务器上的 `/opt/probe/PERF.md`）：
+
+```ini
+# /etc/systemd/system/probe-web.service.d/perf.conf
+[Service]
+Environment=NODE_OPTIONS=--max-old-space-size=1024
+Environment=UV_THREADPOOL_SIZE=8
+```
+
+```ini
+# /etc/sysctl.d/99-probe-net.conf
+net.ipv4.tcp_fastopen = 3
+```
+
+`max-old-space-size` 是给堆一个明确上限（别拖到 `MemoryMax=1200M` 才被 OOM 杀）；
+`UV_THREADPOOL_SIZE` 是异步 fs（store.json 落盘、日志 append）与 zlib 共用的池。
 
 ## 踩过的坑
 
