@@ -7,6 +7,7 @@ import { resolvedBochaKey, resolvedRegion, resolvedTavilyKey } from "@/lib/runti
 import { regionPolicy, type RetrievalProvider } from "@/lib/region-policy";
 import { partitionByWindow, windowBoundsMs } from "@/lib/time-window";
 import { failureCode } from "@/lib/provider-errors";
+import { dateFromUrl } from "@/lib/date-from-url";
 
 /**
  * 检索层。四个 provider 之间完全隔离：任何一个失败只记入 degraded，
@@ -475,6 +476,22 @@ export async function retrieve(intent: Intent, signal?: AbortSignal): Promise<Re
       console.warn("[retrieve] " + code + " " + String((s.reason as Error | undefined)?.message ?? s.reason).slice(0, 200));
     }
   });
+
+  // 上游不给日期时，从 URL 里能唯一确定的那段取出来（日精度），并标成「推导」。
+  // 这一步必须排在时间窗过滤之前：拿到了能证明的日期，才谈得上按窗口筛。
+  let derivedDates = 0;
+  for (const s of out) {
+    if (s.publishedAt) continue;
+    const day = dateFromUrl(s.url);
+    if (day) {
+      s.publishedAt = day;
+      derivedDates += 1;
+    }
+  }
+  if (derivedDates > 0) {
+    stats["dated:from_url"] = derivedDates;
+    degraded.push("dated:from_url_" + derivedDates);
+  }
 
   // 各 provider 已经带上服务端时间过滤，这里再兜一层：
   // 有的源（尤其是 Wiki 这种派生条目、Tavily 的 basic depth 根本不回日期）会忽略参数。

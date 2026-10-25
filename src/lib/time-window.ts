@@ -41,6 +41,10 @@ export function windowBoundsMs(
   };
 }
 
+const DAY = 86_400_000;
+/** 只有日精度的发布日期（URL 推导出来的那种）。 */
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 export function partitionByWindow<T extends Windowed>(
   items: T[],
   fromMs: number,
@@ -58,7 +62,10 @@ export function partitionByWindow<T extends Windowed>(
       undated.push(item);
       continue;
     }
-    if (t >= fromMs && t <= toMs) {
+    // 日精度：这一天整天都算在窗口里。否则「窗口从 9/25 01:42 起」会把 9/25 当天
+    // 零点的稿子判成窗外 —— 我们只知道日期，没资格替它决定是几点。
+    const end = DAY_ONLY.test(item.publishedAt) ? t + DAY - 1 : t;
+    if (end >= fromMs && t <= toMs) {
       kept.push(item);
       continue;
     }

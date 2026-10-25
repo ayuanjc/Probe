@@ -52,3 +52,12 @@ test("窗口上界解析不出来时才退化成「现在之后一天」，下�
   assert.equal(bad.fromMs, 0);
   assert.equal(bad.toMs, now + 86_400_000);
 });
+test("只有日精度的日期按「整天」算在窗口内", () => {
+  // 窗口下界是 9/25 01:42，URL 推导出的 9/25 发生在零点 —— 那一条必须留着。
+  const items = [src("day-in", "2026-09-25", "tavily"), src("day-out", "2026-09-24", "tavily")];
+  const fromMs = Date.parse("2026-09-25T01:42:11.556Z");
+  const p = partitionByWindow(items, fromMs, TO);
+  assert.deepEqual(p.kept.map((s) => s.id), ["day-in"]);
+  assert.deepEqual(p.dropped.map((s) => s.id), ["day-out"]);
+  assert.equal(p.undated.length, 0);
+});
