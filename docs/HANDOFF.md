@@ -162,6 +162,17 @@ curl -s http://127.0.0.1:3215/probe/api/version   # buildId 变了就是新版�
 - 事件：新增 `POST /api/verify`，SSE 事件 `doc.parsed → claim.extracted → evidence.retrieved → nli.verdict → doc.scored → done`，与现有 `/api/search` 同构，前端复用 `useProbe` 的写法。
 - 前端：左原文右证据的对照视图，段落左边框三色（支持=蓝 / 反驳=红 / 无证据=中性灰虚线），Tooltip 复用现有 `Glossary` 的 portal 定位（`src/lib/placement.ts`）。
 
+### 10.1b 已交付：关键数字清单（2026-10-25）
+
+> 需求原话：「在搜索之后下面列出来相关数据」。位置定在**模块网格正下方、实体图卡片之上**，跟同一轮搜索一起出，不额外点一次。
+
+> - 契约：SSE 在 `sources` 之后新增 `figures` 事件（`src/lib/sse.ts`），payload `{ figures: KeyFigure[], mode: "claims"|"snippets"|"claims+snippets"|"none", notes }`。字段 `{id,label,value,normalized,unit?,period?,quote,sourceIds,kind}`，`KeyFigureKind = percent|amount|quantity|ratio|temporal`。上限 24 行。
+> - 抽取 `src/lib/key-figures.ts` 两条路：①已有 claims 里值本身是纯数字且带 unit 的优先；②正则扫信源句子里「数字 + 单位 + 量词/分母」兜底。**mode 由实际入表的行推导**，不用「有没有 claims」判断 —— claim 可能因信源对不上被全丢，那应报 snippets。
+> - 三条口径：同一数字**合并成一行**（去重键 = 归一值 + 单位，**不含 label**，label 取最短那条）；时间窗（「2025年第三季度」）单独占 period 列，必须先从 label 里剥掉，否则同一指标合并不上；`confidence.band === "low"` 时表上明说「未交叉核对」（notes 里 `figures:low_confidence_uncrossed`）。
+> - 空表不摆空壳：`mode === "none"` 只渲染一行「这轮命中的原文里没有出现带单位的数值。」
+> - 数字口径的坑：`magnitudeOf()` 返回**乘数**不是数值，比较大小必须走 `Number(figure.normalized)`；「1200万辆」「0.68元/W」的单位必须带上尾随量词与分母，否则两个不同口径的数看起来一样。
+> - 断言：`tests/key-figures.test.ts` 12 条；`npx tsc --noEmit` 干净；Playwright `.probe-qa/figures-ui.py` 在 1280 / 390 / 360 三档无横向溢出。
+
 ### 10.2 明确不做的两处（已在 `docs/CODE-REVIEW.md` 写清取舍）
 
 - `#32` 网格跨 720px 重挂载：窄屏与网格是两棵树，收益小于风险。
@@ -169,7 +180,7 @@ curl -s http://127.0.0.1:3215/probe/api/version   # buildId 变了就是新版�
 
 ### 10.3 环境依赖缺口
 
-- 本机没有 `.env.local` → 无 `OPENAI_API_KEY`：摘要走本地模板，`llmEnabled() === false`。想验证模型链路要临时起进程带 key。
+- 本机 `.env` 已配 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `PROBE_MODEL`（2026-10-25 核实），所以 `llmEnabled() === true`：意图路由、claim 抽取、NLI 都走真模型。之前的「本机没有 key、摘要走模板」说法作废。**副作用**：路由由模型判 `kind`，`Rust` 这类单词会被判成 `no-panel`（事件只剩 `intent → text.delta → done`），`full-api.mjs` 的「事件序列 / 模块数≥3」两项因此红 —— 是路由行为问题，不是前端或 figures 的回归。
 - MyMemory 公共翻译接口有每日配额，用尽当天 `engine: none`（UI 已如实提示，不是回归）。
 - GDELT DOC API 本机与服务器都 429，争议态与 tone 相关功能一律不做。
 
