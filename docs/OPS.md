@@ -563,8 +563,39 @@ sqlite3 /opt/probe/app/.data/probe.db 'select user_id, count(*) c from queries g
 ### 还没做（写在这里免得当成忘了）
 
 - 异地备份：和 store.json 一样，备份包目前只在同机 `/root/backups`（见第一节「还差什么」）。
-- 全站关停时的数据删除流程：现在只有按人删、按时间过期两条路。
-- 账号注销清空历史：auth 侧没有注销入口，所以没有对应清理。
+- 账号注销清空历史：auth 侧没有注销入口（自助注销要动密码复核 + 会话吊销，属产品决定），
+  所以现在走隐私政策里写的那条人工路径。
+
+### 全站关停 / 彻底清空（第三条删除路：整台机器不要了）
+
+按人删、按时间过期之外，还有第三种情况：**这个站不做了**。顺序不能乱，乱的后果是
+「服务器停了但备份还活着」—— 用户被承诺的删除只做了一半。
+
+```bash
+# 0) 先停写入，再谈删。cron 还在跑的时候删库等于边写边删。
+systemctl stop probe-heat.timer probe-update.timer
+systemctl stop probe-web
+
+# 1) 库与缓存（历史、关注、命中、中文源基线、反馈）
+rm -f /opt/probe/app/.data/probe.db /opt/probe/app/.data/probe.db-wal /opt/probe/app/.data/probe.db-shm
+rm -f /opt/probe/app/.cache/cn-history.json /opt/probe/app/.cache/hn-history.json
+rm -f /opt/probe/app/.cache/feedback.jsonl
+
+# 2) 账号与会话（store.json 里是 scrypt 哈希 + 会话/邀请码的 SHA-256，仍然是个人数据）
+rm -f /opt/probe/app/.data/auth/store.json
+
+# 3) 备份包：**这一步最容易被忘**，忘了前面全白做
+rm -rf /root/backups/probe
+
+# 4) 核验：删干净了没有
+ls -l /opt/probe/app/.data /opt/probe/app/.cache /root/backups 2>&1
+```
+
+停站但**保留**数据（备案整改、临时下线）别走这条路：那是 `systemctl stop probe-web` 就够，
+数据原地不动，起回来还是原来那份。
+
+> 口诀：**停机不等于删除。** 只有确定不再提供服务时才执行上面的 rm，而且第 3 步必须做 ——
+> 备份是唯一一份「删了还能活过来」的副本，它留着，删除就没有发生。
 
 ## 十一、关注实体（watches / watch_hits）
 
