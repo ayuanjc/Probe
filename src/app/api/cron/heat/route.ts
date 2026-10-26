@@ -5,6 +5,7 @@ import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, constantTimeEqual, publicMessage } from "@/lib/request-guard";
 import { historyEnabled, pruneExpired } from "@/lib/history-store";
 import { pruneHits, recordHits, watchEnabled, type StoryLite } from "@/lib/watch-store";
+import { getHotLists, hotStories } from "@/lib/hotlist";
 
 /**
  * 后台热点计算（PRD Phase 3 第 1 项）。
@@ -123,6 +124,25 @@ async function run(request: Request) {
       }
     }
 
+    /**
+     * 国内榜单（百度热搜 / 掘金）：与热榜并行、互不依赖。
+     * 刻意不带 force —— 这层缓存就是上游的风控闸门，15 分钟一轮，
+     * 让每分钟都可能被触发的 cron 不至于把百度打成 DDos。
+     */
+    let hot = { lists: 0, entries: 0, inserted: 0, degraded: [] as string[] };
+    try {
+      const snapshotHot = await getHotLists();
+      const hotList = hotStories(snapshotHot);
+      hot.lists = snapshotHot.lists.length;
+      hot.entries = hotList.length;
+      hot.degraded = snapshotHot.degraded;
+      if (watchEnabled() && hotList.length > 0) {
+        hot.inserted = recordHits(hotList).inserted;
+      }
+    } catch (err) {
+      console.warn("[hotlist] 定时抓取失败：" + (err instanceof Error ? err.message : String(err)));
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -136,6 +156,7 @@ async function run(request: Request) {
         },
         historyPruned: pruned,
         watch,
+        hot,
         trending: {
           topics: snapshot.topics.length,
           considered: snapshot.consideredStories,

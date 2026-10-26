@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
+import type { HotListsSnapshot } from "@/lib/hotlist";
 import SearchBar from "./SearchBar";
 import FeedbackButton from "./FeedbackButton";
 import { VERSION_LABEL } from "@/lib/version";
@@ -23,6 +24,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import AiNotice from "./AiNotice";
 import ProbeLogo from "./ProbeLogo";
 import TrendingBoard from "./TrendingBoard";
+import HotListBoard from "./HotListBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
@@ -161,9 +163,12 @@ function degradeText(item: string): string {
 export default function Workspace({
   initialQuery = "",
   trending = null,
+  hot = null,
 }: {
   initialQuery?: string;
   trending?: TrendingSnapshot | null;
+  /** 国内榜单（百度热搜 / 掘金）；与热榜并行取，取不到就是 null，不挡首屏 */
+  hot?: HotListsSnapshot | null;
 }) {
   const { state, run, reset, addModule } = useProbe();
   /**
@@ -907,6 +912,15 @@ export default function Workspace({
               本轮没有取到热榜数据 —— 在上面输入一个问题就能开始。
             </p>
           )}
+          {/*
+            国内热议：榜单轨。与上面的热榜之间画一条分隔线，是因为两者口径不同 ——
+            上块有 30 天基线，这块只有上游给的顺序与热度值。
+          */}
+          {hot ? (
+            <div className="mt-10 border-t border-neutral-800 pt-8">
+              <HotListBoard snapshot={hot} />
+            </div>
+          ) : null}
         </section>
       )}
 

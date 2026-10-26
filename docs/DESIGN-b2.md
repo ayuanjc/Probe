@@ -695,6 +695,50 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 - 端到端实测（本地 3311，auth off）：加关注「台积电」→ 种一条含 TSMC 的假条目 → `hits:1 / unread:1` → 再种一次 `inserted:0` → 点开 `changed:1 / unread:0`。设计验收全过。
 - 已知取舍：`recordHits` 只吃 `topics[].stories`（热榜里进了统计的那批），没过统计的噪音不触发命中；每关注最多留 50 条、总保留 30 天，超了删最旧（`pruneHits` 在 cron 里顺带跑）。
 
+### C 期 · B 阶段：国内热议榜单（已实施 · 2026-10-26）
+
+用户拍板的 C = 「两条轨并存」：热榜轨（HN + 30 天基线，不动）与榜单轨（国内公开榜单，**不进热度公式**）。
+这一版只做 B 阶段（榜单轨）；A 阶段（把 IT之家/少数派接进热度公式）压后，因为中文源要单独建 14 天基线，
+在那之前所有状态标签都不可信。
+
+```
+新增  src/lib/hotlist.ts                  parseBaiduBoard / parseJuejinRank / getHotLists / hotStories
+新增  src/components/HotListBoard.tsx     两块榜单 + 口径说明（客户端组件，无请求）
+新增  tests/hotlist.test.ts               10 条
+改    src/app/page.tsx                    与 getTrending 并行取（Promise.all），拿不到就是 null
+改    src/components/Workspace.tsx        props 加 hot，TrendingBoard 之后渲染，中间画一条分隔线
+改    src/app/api/cron/heat/route.ts      getHotLists()（不带 force）→ hotStories → recordHits，响应加 hot 字段
+```
+
+**为什么是并行取**：两块互不依赖，串行等于让首屏多等一次网络往返。榜单那侧自带 6s 超时 + 15 分钟缓存，
+最坏情况是首屏慢 6 秒、少一块；不做成客户端懒加载是因为它就在首屏、懒加载等于让页面先空一块再跳。
+
+**为什么榜单不进 `heat.ts`**：站立的承诺是「每个数字都能点回原文」。HN 那套数字背后是 30 天基线 + MAD 离群判断，
+是国内源没有的东西。把百度的 hotScore 混进同一个公式，等于让一个没有基线检验的数字冒充我们的判断。
+所以榜单上每个数字都标了它是谁给的（「百度热度」/「阅读 1204」），页面上也直接写「榜单原样 · 不参与热度公式」。
+
+**上游选择（实测过一轮，不是拍脑袋）**
+
+| 源 | 接口 | 结果 | 用途 |
+| --- | --- | --- | --- |
+| 百度热搜 | `top.baidu.com/api/board?platform=pc&tab=realtime` | 200，50 条，带 hotScore/hotChange/desc | 展示 + 关注命中 |
+| 掘金 | `api.juejin.cn/content_api/v1/content/article_rank?category_id=1&type=hot` | 200，50 条，有 hot_rank，**ctime 恒为 0** | 展示 + 关注命中（不画变化角标） |
+| 微博 | `weibo.com/ajax/side/hotSearch` | 403 Forbidden | 不接 |
+| 知乎 | `zhihu.com/api/v3/feed/topstory/hot-lists/total` | 401 AuthenticationError | 不接 |
+| V2EX | `api/v2/topics/hot` | 超时 | 不接 |
+| IT之家 / 少数派 | `api.ithome.com/json/newslist/news` / `sspai.com/api/v1/article/...` | 200，有发布时间 | 留给 A 阶段（进公式） |
+
+**解析上的两条硬规则**（都有测试兜着）
+
+1. 链接只放行 `http(s)`：`javascript:` / `data:` 到了 `<a href>` 上就是 XSS 入口，上游一旦被污染我们不跟着走。
+2. 掘金的 `content_id` 必须是 `/^\d{6,}$/` 才拼 URL：否则一个带 `../` 的 id 能把条目指向任意站（开放跳转）。
+
+**限速就是缓存**：`CACHE_TTL_MS = 15 分钟` 是唯一的闸门。cron 每 5 分钟一轮、`getHotLists()` 不带 force，
+所以对上流实际是「最多每 15 分钟一问」；失败时缓存只留 60 秒，避免一次抖动把整块榜单钉死 15 分钟。
+
+**验收（已实测）**：本地起 `npx next start`，首屏出现「国内热议」两块；断网/关开关时整块消失而页面照常；
+`npm test` 405/405（含 4 条护栏：只许打两个已知 host、`javascript:` 被丢、cron 不带 force 且失败只 warn、`heat.ts` 里不出现榜单）。
+
 ### P2：结果分享（预计 2–3 天 + 合规确认）
 
 ```

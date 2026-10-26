@@ -291,4 +291,43 @@ test("关注只存索引：命中表里没有正文列，也没有会认人的�
   // 不认人：没有邮箱/手机号列，也没有任何推送地址。
   assert.doesNotMatch(store, /email|phone|webhook|telegram/i);
 });
+/* ------------------------- 国内热议榜单（C 期 · B 阶段） ------------------------- */
+
+test("国内榜单只许打两个已知上游，且不许认人", () => {
+  const src = readFileSync("src/lib/hotlist.ts", "utf8");
+  // 上游清单必须写死在代码里：一旦有人让它从环境变量/用户输入里取 URL，
+  // 服务端就成了 SSRF 跳板（cron 是内网唯一能出网的进程）。
+  // UA 字符串里带着我们自己的域名，那不是请求目标，先摘掉再统计。
+  const noUA = src.replace(/const UA = "[^"]*";/, "");
+  const urls = [...noUA.matchAll(/https?:\/\/[^"\s]+/g)].map((m) => m[0]);
+  const hosts = new Set(urls.map((u) => new URL(u).host));
+  assert.deepEqual([...hosts].sort(), ["api.juejin.cn", "juejin.cn", "top.baidu.com"]);
+  assert.doesNotMatch(src, /user_id|userId|username|email|phone/i);
+});
+
+test("榜单解析只放行 http(s) 链接：javascript:/data: 是 XSS 入口", () => {
+  const src = readFileSync("src/lib/hotlist.ts", "utf8");
+  const fn = src.slice(src.indexOf("function httpUrl"), src.indexOf("function httpUrl") + 400);
+  // 白名单式判断：只认 ^https?://，其余（javascript:/data:/blob:）一律返回空串。
+  assert.match(fn, /\^https\?:\\\/\\\//);
+  assert.match(fn, /return ""/);
+  assert.match(fn, /u\.protocol === "http:" \|\| u\.protocol === "https:"/);
+});
+
+test("cron 里的榜单块失败不拖垮热榜，且不吃 force", () => {
+  const cron = readFileSync("src/app/api/cron/heat/route.ts", "utf8");
+  // 不带 force：缓存就是限速闸门，每 5 分钟一轮的定时器不该把上游打成每秒一问。
+  assert.match(cron, /getHotLists\(\)/);
+  assert.doesNotMatch(cron, /getHotLists\(true\)/);
+  // 拿不到榜单只是少一块，不能把整轮 cron 变 500。
+  const block = cron.slice(cron.indexOf("getHotLists"));
+  assert.match(block, /try \{/);
+  assert.match(block, /console\.warn\("\[hotlist\]/);
+});
+
+test("榜单不进热度公式：heat.ts 里没有它", () => {
+  const heat = readFileSync("src/lib/heat.ts", "utf8");
+  assert.doesNotMatch(heat, /hotlist|baidu|juejin/i);
+});
+
 
