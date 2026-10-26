@@ -2,6 +2,7 @@ import Workspace from "@/components/Workspace";
 import { requirePageUser } from "@/lib/auth/guard";
 import { getTrending } from "@/lib/trending";
 import { getHotLists } from "@/lib/hotlist";
+import { cnTrendingEnabled, getCnTrending } from "@/lib/cn-trending";
 
 /**
  * 查询走 ?q= 而非仅 POST：结果链接可分享、可刷新重放，
@@ -27,8 +28,14 @@ export default async function Page({
    * 串行等于让首屏多等一次网络往返。国内榜单那侧自带 6s 超时与 15 分钟缓存，
    * 拿不到就返回空快照 —— 页面照常渲染，只是少一块。
    */
-  const [trending, hot] = query
-    ? [null, null]
-    : await Promise.all([getTrending(), getHotLists()]);
-  return <Workspace initialQuery={query} trending={trending} hot={hot} />;
+  /**
+   * 三块并行取：HN 热榜（含 30 天基线）、中文科技前沿（含自己的基线）、国内榜单。
+   * 三者互不依赖，串行只会让首屏多等两次往返；任何一块拿不到都返回空/null，
+   * 页面照常渲染 —— 一块挂了不该把另外两块拖下水。
+   */
+  const cnOn = cnTrendingEnabled();
+  const [trending, hot, cn] = query
+    ? [null, null, null]
+    : await Promise.all([getTrending(), getHotLists(), cnOn ? getCnTrending() : null]);
+  return <Workspace initialQuery={query} trending={trending} hot={hot} cn={cn} />;
 }

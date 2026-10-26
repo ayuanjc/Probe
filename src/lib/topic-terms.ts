@@ -81,6 +81,71 @@ export function topicType(name: string): string {
   return TYPE_OF.get(name) ?? "tech";
 }
 
+/* ------------------------------------------------------------------
+ * 中文标题的匹配（A 阶段）。
+ *
+ * 上面那套只按**英文名**匹配（\b TSMC \b），因为它的主场是 HN 的英文标题。
+ * 中文标题里写的是「台积电」，一条都命中不了 —— 直接拿去给中文源用，
+ * 榜单永远是空的，而空榜看起来像「今天没事发生」，不是「我们匹配不上」。
+ *
+ * 中文没有词边界，\b 对汉字不成立（汉字不是 \w），所以中文别名只能用
+ * includes；英文别名仍然用边界，否则 "AI" 会命中 "said"。
+ * 展示名与 topicType 跟英文那条完全一致 —— 同一个实体在两块榜上必须是同一个名字，
+ * 否则「台积电」在中文块、「TSMC」在 HN 块，读者以为是两家公司。
+ * ------------------------------------------------------------------ */
+
+const CJK_RE = /[\u4e00-\u9fa5]/;
+
+/**
+ * 中文技术名词只收「够具体」的。
+ * 为什么不是把 TECH_TERMS 全搬过来：加密 / 隐私 / 安全 在中文新闻标题里是口头禅
+ * （「安全隐患」「隐私政策」），一天能命中十几条，榜单会变成这三个词的个人秀。
+ * 中英文的泛词容忍度不一样，这里按中文语料重新挑，不是漏了。
+ */
+const ZH_TECH_WORDS = ["人工智能", "大语言模型", "欧盟"];
+
+type ZhTerm = { name: string; type: string; test: (title: string) => boolean };
+
+const ZH_TERMS: ZhTerm[] = [
+  ...ALIASES.map((a): ZhTerm => {
+    const name = CJK_RE.test(a.zh[0]) ? a.zh[0] : a.en;
+    const probes: ((title: string) => boolean)[] = [];
+    for (const alias of a.zh) {
+      if (typeof alias !== "string" || alias.length < 2) continue;
+      if (CJK_RE.test(alias)) {
+        probes.push((title) => title.includes(alias));
+      } else {
+        const re = new RegExp("\\b" + escapeRe(alias) + "\\b", "i");
+        probes.push((title) => re.test(title));
+      }
+    }
+    // 没给出可用中文别名（比如只有 en）时退回英文边界匹配。
+    if (probes.length === 0) {
+      const re = new RegExp("\\b" + escapeRe(a.en) + "\\b", "i");
+      probes.push((title) => re.test(title));
+    }
+    return { name, type: a.type, test: (title) => probes.some((p) => p(title)) };
+  }),
+  ...ZH_TECH_WORDS.map((word): ZhTerm => ({
+    name: word,
+    type: "tech",
+    test: (title) => title.includes(word),
+  })),
+];
+
+/** 中文标题命中的话题名（去重，词典优先）。与 matchTopicNames 返回同一套 name。 */
+export function matchTopicNamesZh(title: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const term of ZH_TERMS) {
+    if (seen.has(term.name)) continue;
+    if (!term.test(title)) continue;
+    seen.add(term.name);
+    out.push(term.name);
+  }
+  return out;
+}
+
 /** 一条标题命中的话题名（去重，词典优先）。 */
 export function matchTopicNames(title: string): string[] {
   const seen = new Set<string>();

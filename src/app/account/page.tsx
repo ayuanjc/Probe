@@ -54,7 +54,7 @@ export default async function AccountPage() {
       <div className="rounded-md border border-neutral-800 bg-[#0f0f0f] p-5">
         <h2 className="mb-1 text-[15px] font-semibold text-white">我的历史</h2>
         <p className="mb-4 text-[12px] leading-relaxed text-neutral-500">
-          在别的设备上也能看到自己问过什么。只存索引，不存正文，保留 90 天。
+          在别的设备上也能看到自己问过什么。只存索引，不存正文，保留 30 天。
         </p>
         <AccountHistory />
       </div>

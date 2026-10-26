@@ -4,7 +4,7 @@
  * 三条口径，写在最前面，改之前先读：
  *   1. **只存索引，不存内容**：query、面板统计、信源 URL、引文的 hash。
  *      正文与模型输出永不落库 —— 落库就等于我们变成内容托管方：要审、要删、要担责。
- *   2. **保留期是字段，不是约定**：写入时就把 expires_at 算好（默认 90 天），
+ *   2. **保留期是字段，不是约定**：写入时就把 expires_at 算好（默认 30 天），
  *      清理任务只看它，不靠「我记得要删」。
  *   3. **写库失败不能影响主流程**：历史是附加价值。调用方必须 try/catch，
  *      这里也只在真出错时抛，不吞 —— 吞了就没法在 journalctl 里看见。
@@ -72,7 +72,13 @@ export function storeQueryText(): boolean {
 }
 
 export function retentionDays(): number {
-  return readPositiveInt("PROBE_HISTORY_RETENTION_DAYS", 90, { max: 3650 });
+  /*
+   * 默认 30 天（2026-10-26 由 90 收紧）。理由是隐私口径：账号级历史里存的是「他问过什么」，
+   * 这是这套数据里最敏感的一类。90 天能多回看一些，但代价是「上个月的好奇心」长期留在一个
+   * 单机 SQLite 里；30 天足够撑住「我记得我搜过那个词」这个真实用途。
+   * 想放宽就改这个环境变量 —— 但改大之前先看 docs/OPS.md 的容量表。
+   */
+  return readPositiveInt("PROBE_HISTORY_RETENTION_DAYS", 30, { max: 3650 });
 }
 
 export function perUserCap(): number {

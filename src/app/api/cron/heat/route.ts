@@ -6,6 +6,8 @@ import { clientKey, constantTimeEqual, publicMessage } from "@/lib/request-guard
 import { historyEnabled, pruneExpired } from "@/lib/history-store";
 import { pruneHits, recordHits, watchEnabled, type StoryLite } from "@/lib/watch-store";
 import { getHotLists, hotStories } from "@/lib/hotlist";
+import { cnTrendingEnabled, getCnTrending, recentCnStories, type CnStory } from "@/lib/cn-trending";
+import { recordCnStories } from "@/lib/cn-history";
 
 /**
  * 后台热点计算（PRD Phase 3 第 1 项）。
@@ -78,6 +80,31 @@ function collectStories(snapshot: { topics: { stories: { title: string; url: str
   return out;
 }
 
+/**
+ * 中文源的 story 也丢给关注匹配：关注的是「这个实体」，不该因为它出现在
+ * IT之家 而不是 HN 就装作没看见。provider 写上游 id，前端再翻成人话。
+ * 只用 topics 里的（进入统计的那批），与 collectStories 同一个口径。
+ */
+function collectCnStories(snapshot: { topics: { stories: CnStory[] }[] }): StoryLite[] {
+  const seen = new Set<string>();
+  const out: StoryLite[] = [];
+  for (const topic of snapshot.topics) {
+    for (const story of topic.stories) {
+      if (!story.url || seen.has(story.url)) continue;
+      seen.add(story.url);
+      out.push({
+        title: story.title,
+        url: story.url,
+        host: story.host,
+        provider: story.source,
+        points: story.engagement,
+        seenAt: story.createdAt,
+      });
+    }
+  }
+  return out;
+}
+
 async function run(request: Request) {
   const guard = attempts.check(clientKey(request));
   if (!guard.ok) {
@@ -143,6 +170,42 @@ async function run(request: Request) {
       console.warn("[hotlist] 定时抓取失败：" + (err instanceof Error ? err.message : String(err)));
     }
 
+    /**
+     * 中文科技前沿：抓一轮 + 记基线。
+     *
+     * 记基线是这件事的**主要目的** —— 这两个源没有历史检索接口，30 天基线补不出来，
+     * 只能每天读一次顺手记。所以哪怕页面没人看，cron 也得跑，否则第 14 天永远是明天。
+     * 失败只记日志：基线缺一天不致命（当天少一个点），让它拖垮整轮才致命。
+     */
+    let cn = {
+      topics: 0,
+      sources: [] as { id: string; ok: boolean; count: number; coveredHours: number }[],
+      baseline: { day: null as string | null, added: 0, days: 0 },
+      inserted: 0,
+      degraded: [] as string[],
+    };
+    if (cnTrendingEnabled()) {
+      try {
+        const snap = await getCnTrending(true);
+        cn.topics = snap.topics.length;
+        cn.sources = snap.sources.map((s) => ({ id: s.id, ok: s.ok, count: s.count, coveredHours: s.coveredHours }));
+        cn.degraded = snap.degraded;
+        // recentCnStories 是这一轮真抓到的全部 story（快照里每话题只留 3 条，
+        // 拿它记基线会把计数系统性地记小）。
+        const all = recentCnStories();
+        if (all.length > 0) {
+          const rec = await recordCnStories(all.map((s) => ({ title: s.title, url: s.url })));
+          cn.baseline = { day: rec.day, added: rec.added, days: rec.days };
+        }
+        if (watchEnabled()) {
+          const lite = collectCnStories(snap);
+          if (lite.length > 0) cn.inserted = recordHits(lite).inserted;
+        }
+      } catch (err) {
+        console.warn("[cn] 定时抓取失败：" + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -157,6 +220,7 @@ async function run(request: Request) {
         historyPruned: pruned,
         watch,
         hot,
+        cn,
         trending: {
           topics: snapshot.topics.length,
           considered: snapshot.consideredStories,

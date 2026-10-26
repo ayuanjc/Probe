@@ -739,6 +739,58 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 **验收（已实测）**：本地起 `npx next start`，首屏出现「国内热议」两块；断网/关开关时整块消失而页面照常；
 `npm test` 405/405（含 4 条护栏：只许打两个已知 host、`javascript:` 被丢、cron 不带 force 且失败只 warn、`heat.ts` 里不出现榜单）。
 
+### C 期 · A 阶段：中文科技前沿（已实施 · 2026-10-26）
+
+B 阶段上线当天就接着做 A 阶段，理由是**基线越早挂越好**：这两个源没有历史检索接口，
+只能从挂上那天开始攒，攒够 14 天才出状态标签。晚一天挂就晚一天有标签。
+
+```
+新增  src/lib/cn-history.ts               mergeCnDay / cnSeries / cnHistoryMeta / readCnHistory / recordCnStories
+新增  src/lib/cn-trending.ts              fetchCnStories / getCnTrending / recentCnStories / cnTrendingEnabled
+新增  src/lib/heat-labels.ts              HEAT_STATUS_TEXT / HEAT_STATUS_CHIP / HEAT_STATUS_ORDER（两条轨共用）
+新增  src/components/CnTrendingBoard.tsx  名次 + 状态徽章 + 内联 spark + 每话题 3 条原文
+新增  tests/cn-trending.test.ts           11 条
+改    src/lib/topic-terms.ts              新增 matchTopicNamesZh（中文别名走 includes，英文走 \b 边界）
+改    src/components/TrendingBoard.tsx    状态文案改为 import 自 heat-labels（同公式就得同文案）
+改    src/app/page.tsx                    Promise.all 里加第三路（开关关掉就传 null）
+改    src/components/Workspace.tsx        props 加 cn，TrendingBoard 与 HotListBoard 之间
+改    src/app/api/cron/heat/route.ts      getCnTrending(true) → recentCnStories() → recordCnStories → recordHits
+```
+
+**必须先修的坑：`matchTopicNames()` 认不了中文。** 它只按 `a.en` 建 `\b<en>\b` 正则，
+中文别名完全不参与 —— 直接把中文源接进去，榜单会**恒为空**，而页面上看起来像「今天没什么事发生」。
+这种空不会报错、不会记 degraded，是最容易长期没人发现的一类。所以新开 `matchTopicNamesZh()`：
+CJK 别名用 `title.includes(alias)`，ASCII 别名仍走 `\b` 边界 + `i`；展示名沿用同一条规则
+（`CJK_RE.test(a.zh[0]) ? a.zh[0] : a.en`），保证同一个实体在两块榜上叫一个名字。
+四条护栏盯着这件事（含「不许退回只认英文别名的匹配」）。
+
+**为什么单独一份基线**：`seriesStats(series)` 少于 14 天直接返回 null —— 这个门槛不是拍的，
+两周不到算不出「平时是什么样」。中文源一天不到 150 条、HN 一天上千条，同一条中线放两条分布上，
+「多少条在写它」的含义完全不同。所以 `.cache/cn-history.json` 与 `hn-history.json` 各自独立，
+两套 r7 不互相污染。
+
+**日计数怎么才不假**：去重靠「当日唯一 URL 集合」（`known.has(url)`）。cron 每 30 分钟一轮，
+没有它同一篇文章会被数 20 遍，日计数变成「轮次 × 条数」。没命中实体的 URL 也要记进集合
+（否则它每轮都被重新匹配一遍，白算）。seen 只留两天（今天 + 跨零点那一轮的昨天），日计数留 45 天。
+
+**两个上游解析坑（都有测试锁定）**
+
+1. IT之家 `postdate` 是「北京时间但字符串里没有时区」（`"2026-10-26T09:13:15.287"`）。
+   直接 `Date.parse` 在 UTC 机器上会把 9 小时前的稿算成 9 小时后 —— 24 小时窗口就漏掉一半。
+   必须 `Date.parse(s + "+08:00")`。
+2. 少数派翻页 `offset += 实际返回条数`，不是 `+= limit`：`limit=20` 实际只回 10 条，
+   固定 +20 会整页跳过（50 条只能拿到 30 条）。
+
+**覆盖不满 24h 就说 24h 不够**：IT之家接口 25 条≈10h、RSS 60 条≈13h，合并去重后仍不满 24h。
+`CnSourceMeta.coveredHours` 照实算，页面写「覆盖约 N 小时」，不假装是全天。
+
+**已知取舍**：没做「关注实体的加权」（命中关注的话题不会因此排名上升，只是同样进 `recordHits`）；
+没做少数派 `content_api`（那个接口 `ctime` 恒为 0，无发布时间）；
+「加密 / 隐私 / 安全」刻意没收进中文实体表（中文新闻里的口头禅，收进来每个话题都被命中一次）。
+
+**验收（已实测）**：`npm test` 421/421（+11 条 cn 测试 + 4 条护栏）；
+`npx tsc --noEmit` 0；cron 响应体新增 `cn` 字段（`topics` / `sources` / `baseline` / `inserted` / `degraded`）。
+
 ### P2：结果分享（预计 2–3 天 + 合规确认）
 
 ```

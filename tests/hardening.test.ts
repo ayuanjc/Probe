@@ -346,3 +346,58 @@ test("榜单不进热度公式：heat.ts 里没有它", () => {
 });
 
 
+
+/* ------------------------- 中文科技前沿（A 阶段） ------------------------- */
+
+test("中文源用中文匹配器：换回英文那套等于让中文榜单永远为空", () => {
+  const cnHistory = readFileSync("src/lib/cn-history.ts", "utf8");
+  const cnTrending = readFileSync("src/lib/cn-trending.ts", "utf8");
+  // matchTopicNames 只按 _a.en_ 建正则（\b TSMC \b），中文标题一条都命中不了。
+  // 空榜在页面上看起来像「今天没事发生」—— 不是 error，所以最容易长期没人发现。
+  assert.match(cnHistory, /matchTopicNamesZh/);
+  assert.match(cnTrending, /matchTopicNamesZh/);
+  assert.doesNotMatch(cnHistory, /\bmatchTopicNames\(/, "不许退回只认英文别名的匹配");
+  assert.doesNotMatch(cnTrending, /\bmatchTopicNames\(/);
+  // 展示名必须与 HN 那条一致：同一个实体在两块榜上不能叫两个名字。
+  const terms = readFileSync("src/lib/topic-terms.ts", "utf8");
+  assert.match(terms, /export function matchTopicNamesZh/);
+  assert.match(terms, /CJK_RE\.test\(a\.zh\[0\]\) \? a\.zh\[0\] : a\.en/, "展示名规则要与英文那条相同");
+});
+
+test("基线只从今天开始攒：不许假装有历史，也不许把计数写进数据库", () => {
+  const src = readFileSync("src/lib/cn-history.ts", "utf8");
+  // 这两个源没有历史检索接口，往回补是不可能的。代码里不该出现「回溯 N 天」的抓取。
+  assert.match(src, /from "\.\/topic-terms"/, "匹配口径只在这里实现一次");
+  assert.match(src, /cn-history\.json/, "落在 .cache，与 hn-history.json 同一个位置");
+  assert.doesNotMatch(src, /user_id|username|email|phone/i, "基线里不该出现任何人的标识");
+  // 日计数的去重靠当日 URL 集合；没有它，cron 每 30 分钟一轮会把同一篇文章数 20 次。
+  assert.match(src, /known\.has\(url\)/);
+  assert.match(src, /MAX_SEEN_URLS/);
+});
+
+test("cron 记中文源基线：失败只 warn，不拖垮整轮", () => {
+  const cron = readFileSync("src/app/api/cron/heat/route.ts", "utf8");
+  assert.match(cron, /cnTrendingEnabled\(\)/);
+  assert.match(cron, /recordCnStories\(/);
+  // recentCnStories 而不是快照里的 topics：快照每话题只留 3 条，拿它记基线会把计数记小。
+  assert.match(cron, /recentCnStories\(\)/);
+  const block = cron.slice(cron.indexOf("cnTrendingEnabled()"));
+  assert.match(block, /try \{/);
+  assert.match(block, /console\.warn\("\[cn\]/);
+  // 中文源的 story 也要进关注匹配，否则「关注了台积电」在 IT之家 出现时不算命中。
+  assert.match(cron, /collectCnStories\(snap\)/);
+});
+
+test("中文源不冒充全网热点：状态标签只认自己那份基线", () => {
+  const src = readFileSync("src/lib/cn-trending.ts", "utf8");
+  // 基线来自 cn-history（readCnHistory），不是 hn-history —— 两套分布不能共用一把尺子。
+  assert.match(src, /readCnHistory/);
+  assert.doesNotMatch(src, /ensureHistory|hn-history/, "拿 HN 的基线条说中文源的事，r7 会来回抽动");
+  // 序列不够时不出状态：seriesStats 返回 null 就 continue。
+  assert.match(src, /if \(!stats\) continue;/);
+  // 上游地址必须写死 https，禁止从环境变量拼外部地址（那会变成半个 SSRF 入口）。
+  assert.doesNotMatch(src, /process\.env\.PROBE_CN_[A-Z_]*URL/);
+  assert.match(src, /const ITHOME_LIST = "https:\/\//);
+  assert.match(src, /const SSPAI_LIST = "https:\/\//);
+});
+

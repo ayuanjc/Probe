@@ -425,7 +425,21 @@ BASE=http://127.0.0.1:3215 CONCURRENCY=20 DURATION_MS=12000 /opt/node/bin/node /
 | --- | --- | --- |
 | `PROBE_HISTORY_SERVER` | `1` | 整个功能关闭：接口返回 `enabled:false`、/account 不出面板、不再写入也不再清理 |
 | `PROBE_HISTORY_STORE_QUERY` | `1` | 仍然记录（时间/信源/统计都在），只是提问原文落库为空串，界面显示「这件功能当时关着原文保存」 |
-| `PROBE_HISTORY_RETENTION_DAYS` | `90` | 过期行由 `pruneExpired()` 删除；改小之后**不会立刻少**，要等下一次清理（见下） |
+| `PROBE_HISTORY_RETENTION_DAYS` | `30` | 过期行由 `pruneExpired()` 删除；改小之后**不会立刻少**，要等下一次清理（见下）。改默认值时也要把已写入的 `expires_at` 一起收紧，否则老数据还按旧天数活着（见下） |
+
+### 把保留期从 90 收到 30 之后（一次性动作）
+
+默认值改了只影响**新写入**的行 —— `expires_at` 是写入时算好的字段，老行还按旧天数活着。
+2026-10-26 把默认从 90 改成 30 时，线上存量用这一条夹紧（幂等，可以重复跑）：
+
+```bash
+sqlite3 /opt/probe/app/.data/probe.db \
+  "update queries set expires_at = min(expires_at, created_at + 30*86400) where expires_at > created_at + 30*86400;"
+sqlite3 /opt/probe/app/.data/probe.db 'select count(*) from queries where expires_at is null or expires_at < created_at;'   # 期望 0
+```
+
+跑完不用等清理 —— 下一轮 `/api/cron/heat` 的 `pruneExpired()` 就会把已经过期的行删掉，
+`historyPruned` 会明显大一次。**别在备份期间跑**（备份脚本取快照时会短暂持锁，等它跑完）。
 
 清理时机：挂在已有的热榜定时任务里（`/api/cron/heat` 成功时顺手删一批，`historyPruned` 是这一轮删的行数）。
 没有单独起 timer —— 多一个 timer 就多一处会坏的东西。所以`probe-heat.timer` 停了，过期行也不会减少。
@@ -559,5 +573,87 @@ curl -s http://127.0.0.1:3215/ | grep -c '国内热议'
 
 ### 还没做
 
-- A 阶段：IT之家 / 少数派 接进热度公式。要单独给中文源建 14 天基线，基线没满之前不出状态标签。
+- ~~A 阶段：IT之家 / 少数派 接进热度公式~~ —— 已实施，见下一节「十三、中文科技前沿」。
 - 微博 / 知乎：公开接口 403 / 401，没有官方 key 就不接，页面上直接写清楚「未接入」，不假装有。
+
+## 十三、中文科技前沿（IT之家 / 少数派）
+
+设计稿在 `docs/DESIGN-b2.md` §17 的「A 阶段」。这一节只写值班要用的。
+
+### 它是什么
+
+首屏「中文科技前沿」那一块：IT之家（接口 25 条 + RSS 60 条）+ 少数派（翻页取最近 50 条），
+按实体聚合后**进热度公式**——名次、状态标签、r7 都算，和 Hacker News 那条是同一套公式。
+
+**为什么它不能和 HN 共用基线**：HN 一天上千条 story，这两个中文源一天不到 150 条。
+同一条中线放在两条分布上，「多少条在写它」的含义完全不同，混进一份基线 r7 会来回抽动。
+所以它有自己的一份：`.cache/cn-history.json`（和 `hn-history.json`、`feedback.jsonl` 同一个目录）。
+
+**只落索引**：进库的只有标题、链接、来源、抓取时间（走 `recordHits`，和热榜同一条路径）。正文不进库。
+
+### 开关（probe.env）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PROBE_CN_TRENDING_SERVER` | `1` | `0` = 整块不抓、页面不显示、cron 不记基线 |
+| `PROBE_CN_TRENDING_SOURCES` | `ithome,sspai` | 逗号分隔。两个都是公开接口，不要 key |
+
+缓存写死 10 分钟（`CACHE_TTL_MS`），基线没攒够时改成 60 秒（`CACHE_TTL_PENDING_MS`）——
+让它在第一天就能被 cron 反复读到、快点把基线攒起来。上游地址在代码里写死 https，
+不从环境变量拼（那会变成半个 SSRF 入口）。
+
+### 基线是怎么攒的（这条最容易踩）
+
+这两个源只给「最近 N 条」，**没有按时间检索的接口**，往回补历史是不可能的。
+所以只能**从挂上那天开始攒**：cron 每轮顺手记一次当天的日计数，跨 UTC 日界开新的一天。
+
+- 攒够 `CN_BOOTSTRAP_DAYS = 14` 天才第一次出状态标签（跟着 `heat.seriesStats()` 的门槛走：
+  序列少于 14 天它直接返回 null）。在这之前页面写「基线攒到 N/14 天，只排名次、不给状态标签」。
+- 去重靠「当日唯一 URL 集合」（`known.has(url)`）。cron 每 30 分钟一轮，没有它，
+  同一篇文章会被数 20 遍，日计数变成「轮次 × 条数」，全是假的。
+- 日计数留 45 天（够算 median_30d），seen 只留两天（今天去重 + 跨零点那一轮的昨天）。
+
+### 值班常看的几件事
+
+```bash
+# 中文源这一轮抓到了什么（响应体里的 cn 字段）
+curl -s -H "x-probe-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/api/cron/heat \
+  | tr , '\n' | grep -A12 '"cn"'
+
+# 基线攒到第几天了
+cat /opt/probe/app/.cache/cn-history.json | head -c 300
+
+# 页面那侧：直接看首屏有没有「中文科技前沿」
+curl -s http://127.0.0.1:3215/ | grep -c '中文科技前沿'
+```
+
+`cn.degraded` 里的机器名对着看：
+
+| 值 | 人话 | 处理 |
+| --- | --- | --- |
+| `ithome:list_failed` | 接口那条没连上（重试一次后仍失败） | RSS 那条可能还活着，先看页面条数是不是只剩 RSS 的量 |
+| `ithome:rss_failed` | RSS 没连上 | 接口那条够不够覆盖 24h 在页面上照实写了，不影响出数 |
+| `sspai:failed` | 首次请求失败（重试一次后仍失败） | 先 `curl -m 8` 手打那个接口；403/401 = 上游关了口子 |
+| `cn:empty` | 所有源加起来 0 条 | 通常是这台机器的出网挂了，查 `curl -I https://api.ithome.com` |
+| `cn:baseline_empty` | 基线文件还没建（第一天） | 正常。等 cron 跑过一轮就有了 |
+| `cn:baseline_partial` | 基线有但不满 14 天 | 正常。页面只排名次、不给状态标签 |
+
+### 出问题怎么退
+
+- **整块消失**：先看开关，再看 `cn.degraded`。页面是「拿不到就不渲染这一块」，所以消失 ≠ 500。
+- **状态标签全是「持平」**：先看基线攒够没有（`pending`）。第 14 天之前本来就不出标签。
+  攒够了还全是持平，就是真的没波动 —— 中文源一天不到 150 条，比 HN 安静得多，这是正常的。
+- **首屏变慢**：抓取超时 8s，两个源并行。稳定卡 8 秒说明出网在丢包（不是代码问题），
+  临时 `PROBE_CN_TRENDING_SERVER=0` 重启即可，HN 与国内热议都不受影响。
+- **基线文件坏了**：直接删掉 `.cache/cn-history.json`。它是纯派生数据，
+  丢了顶多「14 天倒计时重来」，不影响历史、关注、榜单任何一块。
+
+### 已知取舍（不是忘）
+
+- 覆盖不满 24 小时：IT之家接口 25 条≈10h、RSS 60 条≈13h，合并去重后仍不满 24h。
+  `coveredHours` **照实报**，页面写「覆盖约 N 小时」，不假装是全天。
+- 少数派 `content_api` 那个接口不给发布时间（`ctime` 恒为 0），所以只用了 `article/index/page/get`。
+- 「加密 / 隐私 / 安全」这类词刻意没收进中文实体表：在中文新闻里它们是口头禅，
+  收进来会让每个话题都被命中一次，名次变成噪声。
+- 微博 / 知乎：公开接口 403 / 401，没有官方 key 就不接。
+

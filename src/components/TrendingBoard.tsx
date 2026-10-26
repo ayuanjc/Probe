@@ -1,7 +1,7 @@
 "use client";
 
 import type { TrendingSnapshot, TrendingTopic } from "@/lib/trending";
-import type { HeatStatus } from "@/lib/schemas";
+import { HEAT_STATUS_CHIP, HEAT_STATUS_ORDER, HEAT_STATUS_TEXT } from "@/lib/heat-labels";
 import Term from "./Glossary";
 
 const TYPE_TEXT: Record<string, string> = {
@@ -13,29 +13,10 @@ const TYPE_TEXT: Record<string, string> = {
   product: "产品",
 };
 
-/**
- * 状态标签不靠边框表达层级，只靠底色深浅：
- * 爆发 / 升温是"要你看"的趋势 → 微弱蓝底；平稳 / 回落 / 长尾没有异常 → 中性灰底。
- * 蓝色只允许出现在有意义的地方（异常、趋势、可点），不能当装饰用。
- */
-const STATUS_TEXT: Record<HeatStatus, string> = {
-  burst: "爆发期",
-  rising: "升温期",
-  stable: "平稳期",
-  decaying: "回落期",
-  "long-tail": "长尾期",
-};
-
-const STATUS_CHIP: Record<HeatStatus, string> = {
-  burst: "bg-blue-500/10 text-blue-400",
-  rising: "bg-blue-500/10 text-blue-400",
-  stable: "bg-neutral-800 text-neutral-400",
-  decaying: "bg-neutral-800 text-neutral-500",
-  "long-tail": "bg-neutral-800 text-neutral-400",
-};
-
-/** 徽章与图例共用同一份顺序：爆发 → 升温 → 平稳 → 回落 → 长尾。 */
-const STATUS_ORDER: HeatStatus[] = ["burst", "rising", "stable", "decaying", "long-tail"];
+/** 徽章文案与配色在 src/lib/heat-labels.ts —— 两条轨（HN / 中文源）共用同一份。 */
+const STATUS_TEXT = HEAT_STATUS_TEXT;
+const STATUS_CHIP = HEAT_STATUS_CHIP;
+const STATUS_ORDER = HEAT_STATUS_ORDER;
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);

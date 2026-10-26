@@ -12,6 +12,7 @@ import {
 import { useProbe, type ModuleState } from "@/hooks/useProbe";
 import type { TrendingSnapshot } from "@/lib/trending";
 import type { HotListsSnapshot } from "@/lib/hotlist";
+import type { CnSnapshot } from "@/lib/cn-trending";
 import SearchBar from "./SearchBar";
 import FeedbackButton from "./FeedbackButton";
 import { VERSION_LABEL } from "@/lib/version";
@@ -25,6 +26,7 @@ import AiNotice from "./AiNotice";
 import ProbeLogo from "./ProbeLogo";
 import TrendingBoard from "./TrendingBoard";
 import HotListBoard from "./HotListBoard";
+import CnTrendingBoard from "./CnTrendingBoard";
 import Term from "./Glossary";
 import SettingsPanel from "./SettingsPanel";
 import ModuleDock from "./ModuleDock";
@@ -164,11 +166,14 @@ export default function Workspace({
   initialQuery = "",
   trending = null,
   hot = null,
+  cn = null,
 }: {
   initialQuery?: string;
   trending?: TrendingSnapshot | null;
   /** 国内榜单（百度热搜 / 掘金）；与热榜并行取，取不到就是 null，不挡首屏 */
   hot?: HotListsSnapshot | null;
+  /** 中文科技前沿（IT之家 / 少数派）；基线独立，取不到就是 null */
+  cn?: CnSnapshot | null;
 }) {
   const { state, run, reset, addModule } = useProbe();
   /**
@@ -913,8 +918,19 @@ export default function Workspace({
             </p>
           )}
           {/*
+            中文科技前沿：与 HN 同一个公式、不同源与不同基线。
+            放在 HN 之后、国内榜单之前 —— 它还是"有算法的榜"，
+            再往下的国内热议才是"只搬上游顺序"。
+          */}
+          {cn ? (
+            <div className="mt-10 border-t border-neutral-800 pt-8">
+              <CnTrendingBoard snapshot={cn} />
+            </div>
+          ) : null}
+
+          {/*
             国内热议：榜单轨。与上面的热榜之间画一条分隔线，是因为两者口径不同 ——
-            上块有 30 天基线，这块只有上游给的顺序与热度值。
+            上块有基线，这块只有上游给的顺序与热度值。
           */}
           {hot ? (
             <div className="mt-10 border-t border-neutral-800 pt-8">

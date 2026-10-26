@@ -306,7 +306,7 @@ export default function AccountHistory() {
       </div>
 
       <p className="font-mono text-[10px] leading-relaxed text-neutral-700">
-        这里只存索引：提问、时间、断言计数、读过哪些站。正文与模型输出不落库；删除即从库里消失，保留 90 天。
+        这里只存索引：提问、时间、断言计数、读过哪些站。正文与模型输出不落库；删除即从库里消失，保留 30 天。
       </p>
     </div>
   );
