@@ -82,16 +82,25 @@ type DictEntity = { key: string; name: string; kind: WatchKind; aliases: string[
 
 let dictCache: DictEntity[] | null = null;
 
+/**
+ * 太泛的别名不进实体表。判断标准不是"它是不是一个词"，而是"它出现在标题里还算不算一条情报"：
+ * "电动自行车保暖与安全如何两全"命中了"安全"，这是背景噪音，不是有人在谈安全行业。
+ */
+const GENERIC_ALIASES = new Set(["安全", "security"]);
+
 /** 词典 → 实体表。键取展示名的小写，与 watchKeyOf 对词典命名的口径保持一致。 */
 export function dictEntities(): DictEntity[] {
   if (dictCache) return dictCache;
   const out: DictEntity[] = [];
   const seen = new Set<string>();
   for (const entry of ALIASES) {
-    const zh = entry.zh.filter((z) => CJK.test(z));
-    const name = (zh[0] ?? entry.en).trim();
+    // 展示名优先用 zh[0]，但前提是它真是中文。词典里有几行 zh[0] 写的是英文
+    // （openai / anthropic），照抄就会把"欧朋艾""克劳德"这种音译当成主名 ——
+    // 读者认的是 OpenAI，不是音译。这种情况退回 en。
+    const first = String(entry.zh[0] ?? "").trim();
+    const name = (CJK.test(first) ? first : (entry.en || entry.zh.find((z) => CJK.test(z)) || "")).trim();
     const key = name.toLowerCase();
-    if (!key || seen.has(key)) continue;
+    if (!key || seen.has(key) || GENERIC_ALIASES.has(key)) continue;
     seen.add(key);
     const aliases: string[] = [];
     for (const a of [...entry.zh, entry.en]) {

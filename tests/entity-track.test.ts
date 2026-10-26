@@ -236,3 +236,20 @@ test("days 窗口按发布时刻算：旧闻今天才被抓到，不进 7 天榜
   assert.equal(topEntities({ days: 7, limit: 10 }, T0).some((e) => e.key === "台积电"), false);
   assert.equal(topEntities({ days: 0, limit: 10 }, T0).some((e) => e.key === "台积电"), true);
 });
+
+test("实体展示名用读者认的那个：词典里 zh[0] 写成英文时不要用音译", () => {
+  const all = dictEntities();
+  const openai = all.find((e) => e.key === "openai");
+  assert.ok(openai, "OpenAI 应该在实体表里");
+  assert.equal(openai.name, "OpenAI");
+  // 音译仍然作为别名参与匹配，只是不挂在门上当招牌。
+  assert.ok(openai.aliases.some((a) => a === "欧朋艾"));
+  assert.equal(all.find((e) => e.key === "anthropic")?.name, "Anthropic");
+  // 中文名本来就是 zh[0] 的，保持不变。
+  assert.equal(all.find((e) => e.key === "台积电")?.name, "台积电");
+});
+
+test("泛词不当实体：\"保暖与安全\"不该变成一条安全情报", () => {
+  assert.equal(entitiesInTitle("电动自行车保暖与安全如何两全").length, 0);
+  assert.ok(!dictEntities().some((e) => e.key === "安全"));
+});
