@@ -194,7 +194,35 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection heading="五、保存多久">
+      <LegalSection heading="五、关注的实体（只对你可见）">
+        <p>
+          你可以把某个公司、技术或人物加进「关注」。之后热榜里出现它，服务器会记一条命中，
+          在「账号」页的「我的关注」里提示你。这里的每一项同样可以对着代码核对。
+        </p>
+        <p className="text-neutral-300">会保存的（每次命中一行）：</p>
+        <LegalList
+          items={[
+            <>你关注的名字，以及由它扩展出的别名（例如「台积电」与「TSMC」算同一个关注）。</>,
+            <>命中的那条热榜标题、链接、来源站点、当时的热度分数与发布时间。</>,
+            <>这条命中是何时记下的、你是否已经读过。</>,
+          ]}
+        />
+        <p className="text-neutral-300">不会保存的：</p>
+        <LegalList
+          items={[
+            <>被命中文章的任何正文内容 —— 我们只留标题与链接，判断留给你。</>,
+            <>你的邮箱、手机号或任何推送地址（站内提示，不发邮件、不发短信、不调 Webhook）。</>,
+            <>「你为什么关注它」这类推断 —— 关注是一件明说的事，不做画像。</>,
+          ]}
+        />
+        <p className="text-neutral-500">
+          歧义词（苹果、小米、长城这类）在没有明确上下文时不推：标题里出现这个词但看不出是哪一家，
+          我们只记一次「歧义」，不入库也不提示。漏推一次可以接受，推错一次是造谣。
+          关注只对你自己可见：换一个账号访问同一个关注，服务端返回「没有这条」。
+        </p>
+      </LegalSection>
+
+      <LegalSection heading="六、保存多久">
         <LegalList
           items={[
             <>账号信息：保存到你注销账号，或运营者依约终止服务为止。</>,
@@ -208,6 +236,10 @@ export default function PrivacyPage() {
               过期记录由定时任务清理。删除即从数据库中消失，不进回收站。
               出于故障恢复需要，数据库会随全站备份打包，备份最多保留 14 份。
             </>,
+            <>
+              关注命中：保留 30 天（运营方可调），每个关注最多留 50 条，超出后最旧的先删。
+              取消关注会连同它的命中一起删除，不留孤儿记录。
+            </>,
             <>检索缓存：到期即失效，不归档、不用于训练。</>,
             <>反馈文件：保存至运营者归档或删除；写满上限后停止接收而不是无限增长。</>,
             <>
@@ -218,7 +250,7 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="六、你的权利">
+      <LegalSection heading="七、你的权利">
         <LegalList
           items={[
             <>查询与复制：可以要求提供我们保存的、与你账号相关的信息副本；
@@ -232,7 +264,7 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="七、未成年人">
+      <LegalSection heading="八、未成年人">
         <p>
           本站面向成年技术用户，不主动面向未成年人推广。不满 14 周岁的未成年人
           应在监护人同意与指导下使用；若我们发现账号属于此类情形且未获同意，
@@ -240,7 +272,7 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection heading="八、我们怎么保护它">
+      <LegalSection heading="九、我们怎么保护它">
         <LegalList
           items={[
             <>密码单向哈希（scrypt）、会话令牌只存哈希、Cookie 不可被脚本读取。</>,
@@ -251,7 +283,7 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
-      <LegalSection heading="九、政策的变更">
+      <LegalSection heading="十、政策的变更">
         <p>
           本政策如有实质性变更（新增数据用途、更换模型或检索服务商、改变保存期限），
           会在站内公告并更新本页顶部的生效日期；继续使用即视为接受变更后的版本。

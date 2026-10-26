@@ -3,6 +3,7 @@ import Link from "next/link";
 import ProbeLogo from "@/components/ProbeLogo";
 import AccountSessions from "@/components/AccountSessions";
 import AccountHistory from "@/components/AccountHistory";
+import WatchPanel from "@/components/WatchPanel";
 import { ChangePasswordPanel } from "@/components/AuthPanels";
 import { requirePageUser } from "@/lib/auth/guard";
 
@@ -56,6 +57,14 @@ export default async function AccountPage() {
           在别的设备上也能看到自己问过什么。只存索引，不存正文，保留 90 天。
         </p>
         <AccountHistory />
+      </div>
+
+      <div className="rounded-md border border-neutral-800 bg-[#0f0f0f] p-5">
+        <h2 className="mb-1 text-[15px] font-semibold text-white">我的关注</h2>
+        <p className="mb-4 text-[12px] leading-relaxed text-neutral-500">
+          关注一个实体，热榜里出现它就记一条。只在站内提示，不发邮件、不推手机。
+        </p>
+        <WatchPanel />
       </div>
 
       <nav className="text-center font-mono text-[11px] text-neutral-600">

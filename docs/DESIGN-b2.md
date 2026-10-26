@@ -668,7 +668,7 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 5. 备份文件能恢复出同样的 `count(*)`（演练一次）。
 6. `npm test` + `npx tsc --noEmit` + fuzz 全绿。
 
-### P1：关注实体回流（预计 1–1.5 天）
+### P1：关注实体回流（已实施 · 2026-10）
 
 ```
 新增  src/lib/db/migrate.ts 的 v2（watches / watch_hits）
@@ -678,11 +678,22 @@ CI 现状（`.github/workflows/ci.yml`）已在 push 跑 typecheck + build + smo
 新增  src/app/api/watch/route.ts        DELETE（?id=；P1）
 新增  src/app/api/watch/hits/route.ts   GET / POST read
 改    src/app/api/cron/heat/route.ts    末尾跑一轮 applyHits()
-改    src/components/*                 实体旁「关注」按钮 + 顶部未读条 + /account/watch
-改    src/lib/llm.ts                   L3 复核记点（新 OP_UNITS.watch = 1）
+改    src/components/*                 实体旁「关注」按钮（ResultRail 芯片）+ /account 的 WatchPanel
+删    src/lib/llm.ts                   L3 复核记点（未做，见下方实施结果）
 ```
 
 验收：关注「台积电」，构造一条含 `TSMC` 的假热榜条目 → 命中入库、未读 +1、点开后 `read_at` 置位、重复条目不重复计。
+
+**实施结果（2026-10-26 走完全流程）**
+
+- 落地文件与上面清单基本一致，两点偏差：
+  - **没有做 L3 模型复核**（`llm.ts` 未改、没有新增计费单元）。理由：歧义词表 + 上下文正则已经能把「苹果价格」这类挡在库外，为了一条提示去烧一次模型调用不划算；真要补，是 `watch-match.ts` 里加一个可选的 L3 回调，接口不用动。
+  - 「关注」按钮不只出现在 /account，`ResultRail.tsx` 的实体芯片直接可点关注（演示时最有说服力的入口是搜索结果页，不是设置页）。
+- 新增配置：`PROBE_WATCH_SERVER`（默认 1）、`PROBE_WATCH_PER_USER`（50）、`PROBE_WATCH_HITS_PER_WATCH`（50）、`PROBE_WATCH_HIT_DAYS`（30）、`PROBE_WATCH_RATE_PER_MIN`（60）、`PROBE_WATCH_WRITE_PER_MIN`（10）。
+- 开关跟历史走：历史关掉（`historyEnabled() === false`）时关注整件也关，读接口回 `enabled:false`、写接口回 404 `watch_disabled`，前端组件 `return null`。
+- 测试：`tests/watch-store.test.ts` 15 条 + `tests/hardening.test.ts` 3 条护栏，合计 391/391。
+- 端到端实测（本地 3311，auth off）：加关注「台积电」→ 种一条含 TSMC 的假条目 → `hits:1 / unread:1` → 再种一次 `inserted:0` → 点开 `changed:1 / unread:0`。设计验收全过。
+- 已知取舍：`recordHits` 只吃 `topics[].stories`（热榜里进了统计的那批），没过统计的噪音不触发命中；每关注最多留 50 条、总保留 30 天，超了删最旧（`pruneHits` 在 cron 里顺带跑）。
 
 ### P2：结果分享（预计 2–3 天 + 合规确认）
 

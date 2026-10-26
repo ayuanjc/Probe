@@ -4,6 +4,7 @@ import { getTrending } from "@/lib/trending";
 import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { clientKey, constantTimeEqual, publicMessage } from "@/lib/request-guard";
 import { historyEnabled, pruneExpired } from "@/lib/history-store";
+import { pruneHits, recordHits, watchEnabled, type StoryLite } from "@/lib/watch-store";
 
 /**
  * 后台热点计算（PRD Phase 3 第 1 项）。
@@ -52,6 +53,30 @@ function authorized(request: Request): { ok: boolean; reason?: string; disabled?
   return { ok: false, reason: "密钥不匹配。" };
 }
 
+/**
+ * 把快照里的 story 摊平成关注匹配要的形状（按 URL 去重）。
+ * 只取 topics 里的 story：那是「进入统计」的那批，rawStories 里被过滤掉的噪音不该触发关注命中。
+ */
+function collectStories(snapshot: { topics: { stories: { title: string; url: string; points: number; createdAt: string; host: string }[] }[] }): StoryLite[] {
+  const seen = new Set<string>();
+  const out: StoryLite[] = [];
+  for (const topic of snapshot.topics) {
+    for (const story of topic.stories) {
+      if (!story.url || seen.has(story.url)) continue;
+      seen.add(story.url);
+      out.push({
+        title: story.title,
+        url: story.url,
+        host: story.host,
+        provider: "hn",
+        points: story.points,
+        seenAt: story.createdAt,
+      });
+    }
+  }
+  return out;
+}
+
 async function run(request: Request) {
   const guard = attempts.check(clientKey(request));
   if (!guard.ok) {
@@ -85,6 +110,19 @@ async function run(request: Request) {
         console.warn("[history] 过期清理失败：" + (err instanceof Error ? err.message : String(err)));
       }
     }
+    // 关注命中：与快照同一次计算落库，不另起 timer。
+    // 失败只记日志 —— 关注推不出来是小事，让热点计算整体 500 是大事。
+    let watch = { inserted: 0, ambiguous: 0, pruned: 0 };
+    if (watchEnabled()) {
+      try {
+        const stories = collectStories(snapshot);
+        const hits = recordHits(stories);
+        watch = { ...hits, pruned: hits.pruned + pruneHits() };
+      } catch (err) {
+        console.warn("[watch] 命中落库失败：" + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -97,6 +135,7 @@ async function run(request: Request) {
           reason: history.reason ?? null,
         },
         historyPruned: pruned,
+        watch,
         trending: {
           topics: snapshot.topics.length,
           considered: snapshot.consideredStories,

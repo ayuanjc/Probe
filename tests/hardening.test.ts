@@ -250,3 +250,45 @@ test("计数挂在真实入口上：三条链路各记一次操作，降级原�
   const counters = readFileSync("src/lib/ops-counters.ts", "utf8");
   assert.doesNotMatch(counters, /username|user_id|userId/);
 });
+
+/* ------------------------- 关注实体（P1） ------------------------- */
+
+test("关注命中挂在 cron/heat 上，且失败不会拖垮热榜", () => {
+  const cron = readFileSync("src/app/api/cron/heat/route.ts", "utf8");
+  // 只在 watchEnabled() 时才落库：历史关掉时这个库根本不存在，去碰它就是崩。
+  assert.match(cron, /if \(watchEnabled\(\)\) \{/);
+  assert.match(cron, /recordHits\(stories\)/);
+  // 过期清理由同一次 cron 顺带跑（与历史清理同一处），否则「保留 30 天」只是文档里的一句话。
+  assert.match(cron, /pruneHits\(\)/);
+  // 关注写失败不能把热榜计算变成 500：热榜是主功能，关注是附带的。
+  assert.match(cron, /console\.warn\("\[watch\]/);
+  // 只拿「进入统计」的那批 story，不用 rawStories —— 被过滤掉的噪音不该触发命中。
+  // 注释里会提到 rawStories 这个词，所以先剥掉注释再判。
+  const cronCode = cron.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  assert.match(cronCode, /topic\.stories/);
+  assert.doesNotMatch(cronCode, /rawStories/);
+});
+
+test("watch 路由都过鉴权与跨站检查，且不落正文", () => {
+  for (const file of [
+    "src/app/api/watch/route.ts",
+    "src/app/api/watch/hits/route.ts",
+    "src/app/api/watch/read/route.ts",
+    "src/app/api/watch/suggest/route.ts",
+  ]) {
+    const src = readFileSync(file, "utf8");
+    assert.match(src, /requireUser\(request\)/, file + " 少了鉴权");
+    assert.match(src, /isCrossSite\(request\)/, file + " 少了跨站检查");
+    assert.match(src, /watchEnabled\(\)/, file + " 没走功能开关");
+  }
+});
+
+test("关注只存索引：命中表里没有正文列，也没有会认人的字段", () => {
+  const store = readFileSync("src/lib/watch-store.ts", "utf8");
+  // 正文一旦入库，我们就是内容托管方 —— 口径与 queries 表一致：只存标题与链接。
+  const hitColumns = store.slice(store.indexOf("INSERT OR IGNORE INTO watch_hits"), store.indexOf("for (const hit of matched.hits)"));
+  assert.doesNotMatch(hitColumns, /content|body|text|summary/i);
+  // 不认人：没有邮箱/手机号列，也没有任何推送地址。
+  assert.doesNotMatch(store, /email|phone|webhook|telegram/i);
+});
+

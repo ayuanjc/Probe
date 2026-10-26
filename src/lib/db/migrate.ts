@@ -48,6 +48,42 @@ CREATE TABLE query_sources (
   PRIMARY KEY (query_id, idx)
 );
   `,
+  // v2：关注实体与命中（P1 关注实体回流）
+  //
+  // 存什么的口径与 queries 一致：只存索引（标题、URL、来源 host、points、时间），
+  // 不存正文、不存模型输出。标题留着是因为「命中」这件事脱离标题就说不清 ——
+  // 用户点开要看到「它当时说的是这句」，而不是一个光秃秃的 URL。
+  //
+  // watch_hits 的 UNIQUE(watch_id, url)：同一条新闻只算一次命中，重复跑 cron 不会刷屏。
+  // 两个索引分别服务「我的未读」（user_id, read_at）与「某个关注的历史」（watch_id, created_at）。
+  `
+CREATE TABLE watches (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  aliases      TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'other',
+  created_at   INTEGER NOT NULL,
+  UNIQUE(user_id, key)
+);
+CREATE TABLE watch_hits (
+  id         TEXT PRIMARY KEY,
+  watch_id   TEXT NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL,
+  url        TEXT NOT NULL,
+  title      TEXT,
+  host       TEXT,
+  provider   TEXT,
+  points     INTEGER NOT NULL DEFAULT 0,
+  seen_at    TEXT,
+  created_at INTEGER NOT NULL,
+  read_at    INTEGER,
+  UNIQUE(watch_id, url)
+);
+CREATE INDEX idx_watch_hits_user_read ON watch_hits(user_id, read_at);
+CREATE INDEX idx_watch_hits_watch     ON watch_hits(watch_id, created_at DESC);
+  `,
 ];
 
 export function currentVersion(db: MigratableDb): number {

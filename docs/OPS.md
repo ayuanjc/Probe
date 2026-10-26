@@ -457,3 +457,55 @@ sqlite3 /opt/probe/app/.data/probe.db 'select user_id, count(*) c from queries g
 - 异地备份：和 store.json 一样，备份包目前只在同机 `/root/backups`（见第一节「还差什么」）。
 - 全站关停时的数据删除流程：现在只有按人删、按时间过期两条路。
 - 账号注销清空历史：auth 侧没有注销入口，所以没有对应清理。
+
+## 十一、关注实体（watches / watch_hits）
+
+设计稿在 `docs/DESIGN-b2.md` §9 与 §17-P1，这里只写值班要用的。
+
+### 它是什么
+
+同库（`probe.db`）里多两张表，前提是历史开着（`PROBE_HISTORY_SERVER=1`）：
+
+| 表 | 存什么 |
+| --- | --- |
+| `watches` | 一行一个关注：主体、归一后的 key、别名、类别（org/tech/person/geo/event/other） |
+| `watch_hits` | 命中：被命中的标题、链接、来源站点、热度、何时记下、`read_at` |
+
+**不存正文、不存关注理由、不发邮件不发短信。** 命中来自热榜那一轮统计（`/api/cron/heat`），
+所以热榜定时任务停了，关注也就不会再有新条目 —— 它没有自己的 timer。
+
+### 开关（probe.env）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PROBE_WATCH_SERVER` | `1` | 关掉：读接口回 `enabled:false`、写接口回 404 `watch_disabled`、/account 面板消失 |
+| `PROBE_WATCH_PER_USER` | `50` | 每人最多关注几个（上限 500） |
+| `PROBE_WATCH_HITS_PER_WATCH` | `50` | 每个关注最多留几条，超了删最旧 |
+| `PROBE_WATCH_HIT_DAYS` | `30` | 命中保留天数（上限 365） |
+
+`PROBE_HISTORY_SERVER=0` 会连关注一起关（历史是它的地基）。
+
+### 值班常看的几件事
+
+```bash
+# 有多少人在关注、命中积了多少
+sqlite3 /opt/probe/app/.data/probe.db 'select count(*) watches from watches; select count(*) hits, sum(read_at is null) unread from watch_hits;'
+
+# 谁关注了什么（只在排查「为什么他有这条」时看）
+sqlite3 /opt/probe/app/.data/probe.db 'select user_id, name, kind from watches order by created_at desc limit 20;'
+
+# 热榜那一轮的关注结果（响应体里的 watch 字段）
+curl -s -H "x-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/probe/api/cron/heat | tr , '\n' | grep -A3 watch
+```
+
+### 出问题怎么退
+
+- **命中不进来**：先看热榜那一轮有没有跑（`systemctl list-timers probe-heat.timer`），再看日志 `journalctl -u probe-web | grep \[watch\]`。
+  落库失败只 `console.warn`，不影响热榜本身，也不影响别人的页面。
+- **条目太多/太吵**：调小 `PROBE_WATCH_HITS_PER_WATCH` 与 `PROBE_WATCH_HIT_DAYS` 重启，下一轮 cron 会顺手删旧（`pruneHits`）。
+- **某人不想被记**：他自己在 /account 点删除即可；要手工清：`delete from watch_hits where user_id='...'; delete from watches where user_id='...';`（命中随关注级联删）。
+
+### 还没做
+
+- 关注命中的推送（邮件/IM）：刻意没做，站内提示是这一版的天花板。
+- 用模型复核歧义：`watch-match.ts` 现在靠歧义词表 + 上下文正则，宁可漏也不误报。

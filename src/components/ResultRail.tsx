@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Check, Clock3, Link2, Loader2, Plus, RotateCw, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { appPath } from "@/lib/base-path";
 
 /**
  * 结果页左侧栏。
@@ -145,6 +146,34 @@ export default function ResultRail(props: ResultRailProps) {
   );
   const active = useActiveSection(sections.map((s) => s.id));
   const shownEntities = props.entities.slice(0, 4);
+  /**
+   * 关注（P1）：实体芯片点一下就变成关注。
+   *
+   * 为什么不另起一个「关注」面板：这个位置就是「我们把你这句话理解成了谁」，
+   * 而「以后有人提他就告诉我」正是同一句话的下半句。多一个入口，用户就多一次找不到。
+   * 只在点击后写一次；不预读关注列表 —— 一次检索没必要多一个请求。
+   */
+  const [watched, setWatched] = useState<Set<string>>(() => new Set<string>());
+  const [watchOff, setWatchOff] = useState(false);
+  const watchEntity = async (name: string) => {
+    if (watched.has(name) || watchOff) return;
+    try {
+      const res = await fetch(appPath("/api/watch"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; enabled?: boolean } | null;
+      if (data?.enabled === false) {
+        setWatchOff(true);
+        return;
+      }
+      if (!res.ok || !data?.ok) return;
+      setWatched((prev) => new Set(prev).add(name));
+    } catch {
+      // 关注失败不该打断读结果：静默，用户再点一次即可。
+    }
+  };
   const restEntities = props.entities.length - shownEntities.length;
 
   useEffect(() => {
@@ -214,12 +243,26 @@ export default function ResultRail(props: ResultRailProps) {
       {shownEntities.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
           {shownEntities.map((name) => (
-            <span
+            <button
               key={name}
-              className="max-w-[7rem] truncate rounded bg-white/[0.04] px-1.5 py-0.5 text-neutral-400"
+              type="button"
+              onClick={() => void watchEntity(name)}
+              disabled={watchOff || watched.has(name)}
+              title={watched.has(name) ? "已在关注里" : "关注「" + name + "」：热榜里再出现它就记一条"}
+              className={
+                "flex max-w-[7rem] items-center gap-1 truncate rounded px-1.5 py-0.5 transition-colors " +
+                (watched.has(name)
+                  ? "bg-blue-500/15 text-blue-300"
+                  : "bg-white/[0.04] text-neutral-400 hover:bg-white/[0.08] hover:text-white")
+              }
             >
-              {name}
-            </span>
+              <span className="truncate">{name}</span>
+              {watched.has(name) ? (
+                <Check size={9} className="shrink-0" />
+              ) : (
+                <Plus size={9} className="shrink-0 opacity-50" />
+              )}
+            </button>
           ))}
           {restEntities > 0 && (
             <span className="px-1 py-0.5 text-neutral-600">+{restEntities}</span>
