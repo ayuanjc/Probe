@@ -41,6 +41,14 @@ const REGION_SOURCE_TEXT: Record<string, string> = {
   unknown: "未能判定来源",
 };
 
+/** 计数里的操作名：界面给中文，机器名留着（运维日志里搜的是机器名）。 */
+const OP_TEXT: Record<string, string> = {
+  search: "提问（/api/search）",
+  verify: "文档核验（/api/verify）",
+  module: "追加面板（/api/module）",
+  import: "导入旧历史",
+  export: "导出历史",
+};
 const MODEL_MODE_TEXT: Record<string, string> = {
   allowed: "放行（端点在本区域的允许列表里）",
   switched: "已切到境内兜底端点",
@@ -259,7 +267,7 @@ export default function SettingsTab({
 
 /** 只读的那一半：全是进程启动时读到的环境变量。 */
 function ReadOnly({ report, copied, onCopy }: { report: OpsReport; copied: boolean; onCopy: () => void }) {
-  const { site, model, region, retrieval, guards, quota, errors, at } = report;
+  const { site, model, region, retrieval, guards, quota, errors, counters, at } = report;
   return (
     <>
       <div className={cardClass}>
@@ -422,6 +430,70 @@ function ReadOnly({ report, copied, onCopy }: { report: OpsReport; copied: boole
               </tbody>
             </table>
           </>
+        )}
+      </div>
+
+      <div className={cardClass}>
+        <h3 className="text-xs font-semibold text-white">今天的操作（进程内存）</h3>
+        <p className="mt-1 max-w-[76ch] text-[11px] leading-relaxed text-neutral-500">
+          只数次数，不记是谁、也不记问了什么 —— 人名与提问原文在 probe.db 里，想看那些去「我的历史」或直接查库。
+          跨天自动归零、进程重启归零；这里回答的是「今天有人在用吗」「降级最多的是哪一类」。
+        </p>
+        {counters.ops.length === 0 && counters.degraded.length === 0 ? (
+          <p className={emptyClass + " mt-2"}>
+            {counters.day ? counters.day + " 还没有操作记录" : "没有读到计数"}（刚重启、或者今天还没人来）。
+          </p>
+        ) : (
+          <div className="mt-2 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="font-mono text-[10px] text-neutral-600">{counters.day || "今天"} · 次数</p>
+              <table className="mt-1 w-full border-collapse text-left text-[11px]">
+                <thead className={tableHeadClass}>
+                  <tr>
+                    <th className={thClass}>操作</th>
+                    <th className={thClass}>次数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {counters.ops.length === 0 ? (
+                    <tr>
+                      <td className={rowClass + " text-neutral-600"} colSpan={2}>
+                        还没有
+                      </td>
+                    </tr>
+                  ) : (
+                    counters.ops.map((row) => (
+                      <tr key={row.name} className={rowClass}>
+                        <td className="py-1.5 pr-2 text-neutral-300">{OP_TEXT[row.name] ?? row.name}</td>
+                        <td className="py-1.5 pr-2 font-mono tabular-nums text-neutral-400">{row.count}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <p className="font-mono text-[10px] text-neutral-600">
+                降级原因 · 共 {counters.degradedTotal} 条
+              </p>
+              {counters.degraded.length === 0 ? (
+                <p className="mt-1 text-[11px] text-neutral-600">今天没有降级。</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-[11px]">
+                  {counters.degraded.slice(0, 12).map((row) => (
+                    <li key={row.reason} className="flex items-baseline justify-between gap-2">
+                      <span className="font-mono text-neutral-400">{row.reason}</span>
+                      <span className="font-mono tabular-nums text-neutral-500">{row.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 max-w-[62ch] text-[10px] leading-relaxed text-neutral-600">
+                降级不是故障：没配检索源、额度用尽、上游拒了结构化调用都会走到本地模板，界面上照常出结果并标注原因。
+                这里某一类忽然变多，先看上面「检索源」那一栏有没有「缺」。
+              </p>
+            </div>
+          </div>
         )}
       </div>
     </>

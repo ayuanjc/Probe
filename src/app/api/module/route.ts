@@ -12,6 +12,7 @@ import {
 } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { runWithCallScope } from "@/lib/call-scope";
+import { recordOp } from "@/lib/ops-counters";
 import {
   describeDatasets,
   rulePlan,
@@ -147,6 +148,7 @@ export async function POST(request: Request) {
 async function generateFor(request: Request): Promise<Response> {
   // 生成面板也是一次操作：记 1 点（提问 1 点、核验 3 点）。
   const charged = chargeOperation(OP_UNITS.module);
+  recordOp("module");
   if (!charged.ok) {
     console.info("[quota] 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），面板生成降级为本地方案。");
   }

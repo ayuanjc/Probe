@@ -230,3 +230,23 @@ test("搜索与核验都把记录写在 finally 里，中途断开也留得下",
   // 历史是最后一步：它失败不能影响已经上屏的内容。
   assert.match(readFileSync("src/lib/history-collect.ts", "utf8"), /console\.warn\("\[history\]/);
 });
+
+/* ------------------------- 运行时计数（埋点） ------------------------- */
+
+test("计数挂在真实入口上：三条链路各记一次操作，降级原因从 trace 里取", () => {
+  // 计数是「今天有人在用吗」的唯一依据，少挂一处就等于那天的那类操作凭空消失。
+  for (const [file, op] of [
+    ["src/app/api/search/route.ts", "search"],
+    ["src/app/api/verify/route.ts", "verify"],
+    ["src/app/api/module/route.ts", "module"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    assert.match(src, new RegExp('recordOp\\x28"' + op + '"\\x29'), file + " 没有记 " + op);
+  }
+  // 降级原因来自 trace（和写历史用的是同一份数据），不能另找一份口径。
+  assert.match(readFileSync("src/app/api/search/route.ts", "utf8"), /recordDegraded\(trace\.degraded\)/);
+  assert.match(readFileSync("src/app/api/verify/route.ts", "utf8"), /recordDegraded\(trace\.degraded\)/);
+  // 计数只数次数，不认人：一旦有人往里塞用户名，面板就变成了行为记录。
+  const counters = readFileSync("src/lib/ops-counters.ts", "utf8");
+  assert.doesNotMatch(counters, /username|user_id|userId/);
+});

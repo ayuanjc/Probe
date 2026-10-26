@@ -7,6 +7,7 @@ import { clientKey, isCrossSite, jsonError, publicMessage, rateLimited, readJson
 import { requireUser } from "@/lib/auth/guard";
 import { runWithCallScope, type CallScope } from "@/lib/call-scope";
 import { chargeOperation, OP_UNITS } from "@/lib/llm";
+import { recordDegraded, recordOp } from "@/lib/ops-counters";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +80,9 @@ function sseResponse(query: string, request: Request, release: () => void, scope
           // 一次提问记 1 点（核验记 3 点）：额度按「用户点了几次」算，不按上游调用次数算。
           // 余额不足也照常跑完，只是内部会降级为本地模板并在界面上标注 —— 半路砍断更难看。
           const charged = chargeOperation(OP_UNITS.search);
+          // 计数只看量级：今天来了几次提问。把它和额度分开记 —— 额度会被上限拦住，
+          // 计数必须反映「真的有人来过」，否则面板上永远看不出额度用尽时的真实负载。
+          recordOp("search");
           if (!charged.ok) {
             console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮降级为本地模板。");
           }
@@ -96,6 +100,9 @@ function sseResponse(query: string, request: Request, release: () => void, scope
                 if (!push(encodeEvent(event))) break;
               }
             } finally {
+              // 降级原因在这里记一次：它是「这次结果为什么不如预期」的唯一线索，
+              // 和 errors 的区别是——降级是正常路径（没配检索源、额度用尽），不是故障。
+              recordDegraded(trace.degraded);
               // 写历史失败只 warn：它是附加价值，不能反过来把一次正常的提问搞成错误页。
               persistQuietly(
                 searchTraceToQuery(trace, {

@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth/guard";
 import { usageAccumulator } from "@/lib/metrics";
 import { runWithCallScope, type CallScope } from "@/lib/call-scope";
 import { chargeOperation, OP_UNITS } from "@/lib/llm";
+import { recordDegraded, recordOp } from "@/lib/ops-counters";
 import {
   newVerifyTrace,
   observeVerifyEvent,
@@ -85,7 +86,8 @@ async function jsonResponse(
   } finally {
     // 核验是几十次上游调用的长链路，账必须在收尾处落一行，否则线上没人知道烧了多少。
     console.info("[verify] usage", meter.read());
-    persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
+    recordDegraded(trace.degraded);
+        persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
   }
 
   const doc = events.find((e) => e.event === "doc.parsed");
@@ -179,7 +181,8 @@ function sseResponse(
               if (!push(encodeVerifyEvent(event))) break;
             }
           } finally {
-            persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
+            recordDegraded(trace.degraded);
+        persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
           }
         });
       } catch (err) {
@@ -236,6 +239,7 @@ async function guarded(
       // 一次核验记 3 点，而不是按它内部那二三十次上游调用记 ——
       // 否则用户会觉得「核验一次就吃掉八次提问的额度」，而且经常跑到一半被拦。
       const charged = chargeOperation(OP_UNITS.verify);
+      recordOp("verify");
       if (!charged.ok) {
         console.info("[quota] " + scope.label + " 今日额度已用尽（" + charged.used + "/" + charged.cap + " 点），本轮核验降级为本地判定。");
       }

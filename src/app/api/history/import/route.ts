@@ -3,6 +3,7 @@ import { isCrossSite, jsonError, publicMessage, rateLimited, readJsonBody } from
 import { requireUser } from "@/lib/auth/guard";
 import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/runtime-config";
 import { historyEnabled, importQueries } from "@/lib/history-store";
+import { recordOp } from "@/lib/ops-counters";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
     const cfg = await prepareRuntimeConfig(request);
     const summary = withRuntimeConfig(cfg, () => regionSummary());
     const result = importQueries(auth.user.id, cleaned, { region: summary.region, modelHost: summary.modelHost });
+    recordOp("import");
     return Response.json({ ok: true, ...result }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     return jsonError(500, "history_import_failed", publicMessage(err, "导入历史失败，请稍后重试。"));

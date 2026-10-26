@@ -27,6 +27,7 @@ import {
   setQuotaLimits,
 } from "@/lib/llm";
 import { errorCounters, errorTotal, recentErrors } from "@/lib/error-log";
+import { countersSnapshot } from "@/lib/ops-counters";
 import { buildOpsReport, type RetrievalRow } from "@/lib/ops-report";
 
 export const runtime = "nodejs";
@@ -155,6 +156,7 @@ async function snapshot(request: Request) {
       guards: { authMode: authMode() },
       // 错误账本是进程内存环：这里不做二次聚合，交给 buildOpsReport 夹形状。
       errors: { total: errorTotal(), byCode: errorCounters(), recent: recentErrors(40) },
+    counters: countersSnapshot(),
     });
   });
 }

@@ -71,6 +71,17 @@ export type OpsReport = {
     byCode: { code: string; count: number }[];
     recent: { at: number; scope: string; status: number; code: string; message: string }[];
   };
+  /**
+   * 今天各类操作的次数与降级原因（进程内存，重启归零）。
+   * 和 errors 一样是「先看这里再决定要不要 ssh」的东西：
+   * 提问数正常、降级原因里全是 region_blocked，说明是检索源没配，不是代码坏了。
+   */
+  counters: {
+    day: string;
+    ops: { name: string; count: number }[];
+    degraded: { reason: string; count: number }[];
+    degradedTotal: number;
+  };
 };
 
 function clampRatio(used: number, cap: number): number {
@@ -107,6 +118,8 @@ export function buildOpsReport(input: {
   guards: { authMode: string };
   /** 可省略：老调用方（测试）不传时面板显示「还没有错误」，不报错。 */
   errors?: OpsReport["errors"];
+  /** 可省略：不传时计数区显示空。 */
+  counters?: OpsReport["counters"];
 }): OpsReport {
   const globalCap = safeCount(input.quota.globalCap);
   const globalUsed = safeCount(input.quota.globalUsed);
@@ -163,6 +176,20 @@ export function buildOpsReport(input: {
       })),
   };
 
+  // 计数也夹一遍：脏的 name/count 只该让那一行消失，不该让面板 500。
+  const counters: OpsReport["counters"] = {
+    day: typeof input.counters?.day === "string" ? input.counters.day.slice(0, 10) : "",
+    ops: (input.counters?.ops ?? [])
+      .filter((r) => r && typeof r.name === "string")
+      .map((r) => ({ name: r.name.slice(0, 20), count: safeCount(r.count) }))
+      .slice(0, 20),
+    degraded: (input.counters?.degraded ?? [])
+      .filter((r) => r && typeof r.reason === "string")
+      .map((r) => ({ reason: r.reason.slice(0, 40), count: safeCount(r.count) }))
+      .slice(0, 40),
+    degradedTotal: safeCount(input.counters?.degradedTotal),
+  };
+
   return {
     at: input.now,
     day: input.day,
@@ -185,6 +212,7 @@ export function buildOpsReport(input: {
     region: { ...input.region, retrieval: [...input.region.retrieval] },
     retrieval: input.retrieval,
     errors,
+    counters,
     site: input.site,
     guards: input.guards,
   };

@@ -2,6 +2,7 @@ import { createLimiter, readPositiveInt } from "@/lib/rate-limit";
 import { isCrossSite, jsonError, publicMessage, rateLimited } from "@/lib/request-guard";
 import { requireUser } from "@/lib/auth/guard";
 import { historyEnabled, listQueries } from "@/lib/history-store";
+import { recordOp } from "@/lib/ops-counters";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export async function GET(request: Request) {
       if (!chunk.next) break;
       before = chunk.next;
     }
+    recordOp("export");
     return new Response(JSON.stringify({ ok: true, exportedAt: Date.now(), items: all }, null, 2), {
       headers: {
         "content-type": "application/json; charset=utf-8",
