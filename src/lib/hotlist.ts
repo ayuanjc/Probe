@@ -165,6 +165,25 @@ export function parseBaiduBoard(json: unknown): HotEntry[] {
   return out;
 }
 
+/**
+ * 百度榜单**自己**的刷新时间：`data.cards[*].updateTime`，秒级 unix 时间戳
+ * （实测 1792975301 → 2026-10-26）。这不是我们的抓取时间 —— 榜单可能十分钟没动过，
+ * 而我们的缓存五分钟抓一次，混用就等于把「我刚抓的」冒充成「榜单刚更新」。
+ */
+export function parseBaiduUpdatedAt(json: unknown): string | undefined {
+  const cards = (json as { data?: { cards?: unknown } } | null)?.data?.cards;
+  if (!Array.isArray(cards)) return undefined;
+  for (const card of cards) {
+    if (!card || typeof card !== "object") continue;
+    const raw = num((card as Record<string, unknown>).updateTime);
+    if (raw === null || raw <= 0) continue;
+    // 秒和毫秒都认：上游哪天改成毫秒，这里不该跟着错成 1970。
+    const date = new Date(raw < 1e12 ? raw * 1000 : raw);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return undefined;
+}
+
 /** 掘金热榜：`data[]`，每条 `content.content_id/title` + `content_counter`。 */
 export function parseJuejinRank(json: unknown): HotEntry[] {
   const rows = (json as { data?: unknown } | null)?.data;
@@ -221,12 +240,23 @@ function sources(): ("baidu" | "juejin")[] {
   return out;
 }
 
-const LABELS: Record<"baidu" | "juejin", { label: string; note: string; endpoint: string; parse: (j: unknown) => HotEntry[] }> = {
+const LABELS: Record<
+  "baidu" | "juejin",
+  {
+    label: string;
+    note: string;
+    endpoint: string;
+    parse: (j: unknown) => HotEntry[];
+    /** 上游自己的刷新时间；没有就不填，前端退回「抓取于」。 */
+    updatedAt?: (j: unknown) => string | undefined;
+  }
+> = {
   baidu: {
     label: "百度热搜",
     note: "百度热搜榜原始条目与热度值，按榜单顺序展示；热度是百度给的，不是我们算的。",
     endpoint: BAIDU_ENDPOINT,
     parse: parseBaiduBoard,
+    updatedAt: parseBaiduUpdatedAt,
   },
   juejin: {
     label: "掘金热榜",
@@ -263,20 +293,24 @@ async function build(now: number): Promise<HotListsSnapshot> {
       // 一次重试：实测同分钟里前一次成功、后一次超时，直接判死会把整块榜单清空 15 分钟。
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const entries = def.parse(await fetchJson(def.endpoint));
+          // 一次抓取喂两个解析器：parse 出条目，updatedAt 出榜单自己的刷新时间。
+          // 分两次 fetchJson 等于让上游在两秒里回两份不一致的数据。
+          const json = await fetchJson(def.endpoint);
+          const entries = def.parse(json);
           if (entries.length === 0) throw new Error("empty");
-          return { provider, entries, error: null as string | null };
+          return { provider, entries, updatedAt: def.updatedAt?.(json), error: null as string | null };
         } catch (err) {
           if (attempt === 1) {
             return {
               provider,
               entries: [] as HotEntry[],
+              updatedAt: undefined as string | undefined,
               error: provider + ":" + (err instanceof Error && err.message === "empty" ? "empty" : "failed"),
             };
           }
         }
       }
-      return { provider, entries: [] as HotEntry[], error: provider + ":failed" };
+      return { provider, entries: [] as HotEntry[], updatedAt: undefined as string | undefined, error: provider + ":failed" };
     }),
   );
 
@@ -291,6 +325,7 @@ async function build(now: number): Promise<HotListsSnapshot> {
       provider: r.provider,
       label: def.label,
       note: def.note,
+      updatedAt: r.updatedAt,
       fetchedAt,
       entries: r.entries,
     });

@@ -48,6 +48,10 @@ const POST_PATHS = [
   "/api/admin/invites",
   "/api/admin/users",
   "/api/cron/heat",
+  // 关注实体（P1）：POST 加关注、POST 标记已读。
+  // 写接口有 10/min 的限流，撞上 429 也算通过（回的是结构化 JSON）。
+  "/api/watch",
+  "/api/watch/read",
 ];
 const BODIES = [
   ["empty", ""],
@@ -66,7 +70,7 @@ const BODIES = [
 for (const p of POST_PATHS) for (const [name, body] of BODIES) add("POST", p, body);
 
 // —— GET 端点：畸形 query ——
-const GETS = ["/api/history", "/api/history/export", "/api/search", "/api/verify", "/api/metrics", "/api/dossier", "/api/evidence", "/api/calibration", "/api/version", "/api/region", "/api/consent", "/api/auth/me", "/api/auth/sessions", "/api/admin/invites", "/api/admin/users", "/api/admin/sessions", "/api/admin/audit", "/api/cron/heat"];
+const GETS = ["/api/history", "/api/history/export", "/api/search", "/api/verify", "/api/metrics", "/api/dossier", "/api/evidence", "/api/calibration", "/api/version", "/api/region", "/api/consent", "/api/auth/me", "/api/auth/sessions", "/api/admin/invites", "/api/admin/users", "/api/admin/sessions", "/api/admin/audit", "/api/cron/heat", "/api/watch", "/api/watch/hits", "/api/watch/suggest"];
 const QUERIES = [
   "",
   "?q=",
@@ -80,6 +84,9 @@ const QUERIES = [
   "?q=" + "a".repeat(8000),
   "?q=%E4%B8%AD&q=%E6%96%87",
   "?__proto__[polluted]=1",
+  // 关注命中列表的查询参数：watch 是关注 id，before 是游标，unread 是开关。
+  "?watch=../../etc/passwd&limit=-1",
+  "?before=999999999999999999999&unread=maybe",
 ];
 for (const p of GETS) for (const q of QUERIES) add("GET", p + q);
 
@@ -89,6 +96,15 @@ add("PUT", "/api/search", "{}");
 add("POST", "/api/version", "{}");
 add("GET", "/api/auth/logout");
 add("OPTIONS", "/api/search");
+// —— 清空关注必须带确认词：这几条打的就是「畸形 DELETE 会不会把用户的关注全清了」——
+// 空体 / 错误确认词 / 往 id 里塞路径，都必须 400，一条都不许删。
+add("DELETE", "/api/watch", "");
+add("DELETE", "/api/watch", "{}");
+add("DELETE", "/api/watch", JSON.stringify({ confirm: "nope" }));
+add("DELETE", "/api/watch", JSON.stringify({ confirmno: "DELETE" }));
+add("DELETE", "/api/watch?id=../../etc/passwd", "");
+add("DELETE", "/api/watch?id=" + encodeURIComponent("' OR 1=1 --"), "");
+add("DELETE", "/api/watch/read", "{}");
 
 let idx = 0, bad = [], fivexx = [], nonJson = [], slow = [], known = [];
 const stats = new Map();

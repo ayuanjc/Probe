@@ -582,6 +582,10 @@ sqlite3 /opt/probe/app/.data/probe.db 'select user_id, count(*) c from queries g
 **不存正文、不存关注理由、不发邮件不发短信。** 命中来自热榜那一轮统计（`/api/cron/heat`），
 所以热榜定时任务停了，关注也就不会再有新条目 —— 它没有自己的 timer。
 
+**`provider` 存的是上游 id**（`hn` / `ithome` / `sspai` / `baidu` / `juejin`），不是中文名。
+改展示文案只动 `src/lib/provider-label.ts`，不要回头改历史数据；没有映射的 id 原样显示 ——
+显示一个陌生 id 好过把不认识的源硬翻成某个中文名。
+
 ### 开关（probe.env）
 
 | 变量 | 默认 | 说明 |
@@ -656,6 +660,17 @@ curl -s http://127.0.0.1:3215/ | grep -c '国内热议'
 | `baidu:empty` / `juejin:empty` | 连上了但解析出 0 条 | 上游结构变了 → 看 `parse*` 的字段假设，改解析而不是加源 |
 | `hotlist:empty` | 所有源都空 | 通常是这台机器的出网挂了，查 `curl -I https://top.baidu.com` |
 | `hotlist:disabled` | 开关关了 | 正常，不是故障 |
+
+### 页面上那两个时间不是一回事
+
+卡片头部会写「榜单更新于 X · 抓取于 Y」：
+
+- **抓取于** = 我们这台机器上 `fetch` 回来的时刻（`list.fetchedAt`，缓存 5 分钟）。
+- **榜单更新于** = 百度自己给的 `data.cards[*].updateTime`（秒级 unix 时间戳 → `parseBaiduUpdatedAt`）。
+
+为什么要分开：榜单可能十分钟没动过，我们却每分钟都在抓。只写「更新于抓取时间」等于把「我刚抓的」
+冒充成「榜单刚更新的」——这是最容易被截图抓住的那种假。某个源没给这个字段（掘金就没有），
+那就只显示「抓取于」，**不编一个时间出来**。
 
 ### 出问题怎么退
 

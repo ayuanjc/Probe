@@ -69,7 +69,8 @@ function Card({ list }: { list: HotList }) {
       <header className="flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold text-white">{list.label}</h3>
         <span className="font-mono text-[10px] tabular-nums text-neutral-600">
-          {list.entries.length} 条 · 抓取于 {fmtTime(list.fetchedAt)}
+          {list.entries.length} 条 ·{" "}
+          {list.updatedAt ? "榜单更新于 " + fmtTime(list.updatedAt) + " · 抓取于 " + fmtTime(list.fetchedAt) : "抓取于 " + fmtTime(list.fetchedAt)}
         </span>
       </header>
 

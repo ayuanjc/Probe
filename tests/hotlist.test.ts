@@ -18,6 +18,7 @@ import {
   hotStories,
   hotlistEnabled,
   parseBaiduBoard,
+  parseBaiduUpdatedAt,
   parseJuejinRank,
 } from "@/lib/hotlist";
 
@@ -248,3 +249,36 @@ test("上游返回空列表：记 empty 而不是当成成功（空榜单会被�
     __testResetHotlist();
   }
 });
+
+test("百度榜单自己的刷新时间：秒级时间戳要认，不能拿抓取时间冒充", () => {
+  assert.equal(parseBaiduUpdatedAt(BAIDU), new Date(1792975301 * 1000).toISOString());
+  // 上游哪天改成毫秒，这里不该跟着错成 1970。
+  assert.equal(parseBaiduUpdatedAt({ data: { cards: [{ updateTime: 1792975301123 }] } }), new Date(1792975301123).toISOString());
+  // 没有、0、非数字、结构不对 —— 一律 undefined，前端退回「抓取于」，不编一个时间。
+  assert.equal(parseBaiduUpdatedAt({ data: { cards: [{ content: [] }] } }), undefined);
+  assert.equal(parseBaiduUpdatedAt({ data: { cards: [{ updateTime: 0 }] } }), undefined);
+  assert.equal(parseBaiduUpdatedAt({ data: { cards: [{ updateTime: "not-a-time" }] } }), undefined);
+  assert.equal(parseBaiduUpdatedAt(null), undefined);
+  assert.equal(parseBaiduUpdatedAt({ data: {} }), undefined);
+});
+
+test("榜单快照带上 updatedAt，且和抓取时间是两个字段", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    return new Response(JSON.stringify(url.includes("baidu") ? BAIDU : JUEJIN), { status: 200 });
+  }) as typeof fetch;
+  __testResetHotlist();
+  try {
+    const snap = await getHotLists(true);
+    const baidu = snap.lists.find((l) => l.provider === "baidu");
+    const juejin = snap.lists.find((l) => l.provider === "juejin");
+    assert.equal(baidu?.updatedAt, new Date(1792975301 * 1000).toISOString());
+    assert.notEqual(baidu?.updatedAt, baidu?.fetchedAt, "榜单时间与抓取时间不能是同一个值");
+    assert.equal(juejin?.updatedAt, undefined, "掘金没给就不编");
+  } finally {
+    globalThis.fetch = realFetch;
+    __testResetHotlist();
+  }
+});
+

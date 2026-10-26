@@ -401,3 +401,23 @@ test("中文源不冒充全网热点：状态标签只认自己那份基线", ()
   assert.match(src, /const SSPAI_LIST = "https:\/\//);
 });
 
+test("上游 id 不许直接印在界面上：WatchPanel 必须过 providerLabel", () => {
+  const panel = readFileSync("src/components/WatchPanel.tsx", "utf8");
+  assert.match(panel, /from "@\/lib\/provider-label"/);
+  assert.match(panel, /providerLabel\(h\.provider\)/);
+  // 直接拼 h.provider 就是把 hn / ithome / baidu 这些库字段漏到用户脸上。
+  assert.doesNotMatch(panel, /\+ h\.provider(?!\s*\))/);
+});
+
+test("榜单时间与抓取时间分开：百度自己的 updateTime 不许被丢掉", () => {
+  const src = readFileSync("src/lib/hotlist.ts", "utf8");
+  assert.match(src, /export function parseBaiduUpdatedAt/);
+  assert.match(src, /updatedAt: parseBaiduUpdatedAt/);
+  // 一次抓取喂两个解析器：分两次 fetchJson 等于让上游在两秒里回两份不一致的数据。
+  assert.match(src, /const json = await fetchJson\(def\.endpoint\);/);
+  assert.match(src, /updatedAt: def\.updatedAt\?\.\(json\)/);
+  // 没有 updatedAt 的源（掘金）不许编一个出来：失败分支统一给 undefined。
+  const board = readFileSync("src/components/HotListBoard.tsx", "utf8");
+  assert.match(board, /list\.updatedAt \?/);
+});
+

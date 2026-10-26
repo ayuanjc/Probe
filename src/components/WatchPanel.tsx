@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { appPath } from "@/lib/base-path";
+import { providerLabel } from "@/lib/provider-label";
 import { time, type Notice } from "./admin/shared";
 
 /**
@@ -343,7 +344,7 @@ export default function WatchPanel() {
                   </a>
                   <span className="font-mono text-[10px] text-neutral-600">
                     {h.watchName} · {h.host ?? "未知来源"}
-                    {h.provider ? " · " + h.provider : ""}
+                    {h.provider ? " · " + providerLabel(h.provider) : ""}
                     {h.points > 0 ? " · " + h.points + " 分" : ""} · {time(h.at)}
                   </span>
                 </li>
