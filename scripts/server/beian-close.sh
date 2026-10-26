@@ -20,7 +20,7 @@ restore() { rm -f "$EN"/*; cp -a "$SNAP"/. "$EN"/; systemctl reload nginx || tru
 trap "echo 失败，回滚; restore; exit 1" ERR
 
 echo "== 2. 只留 probe-block（default_server 444）"
-rm -f "$EN"/probe-temp-open "$EN"/probe-root "$EN"/probe-block "$EN"/probe-closed
+rm -f "$EN"/probe-temp-open "$EN"/probe-temp-ip "$EN"/probe-root "$EN"/probe-block "$EN"/probe-closed
 ln -sfn "$AV/probe-block" "$EN/probe-block"
 ls -l "$EN"
 
@@ -40,6 +40,7 @@ check() { # check <host|->
   case "$c" in 000|444) return 0;; *) echo "  意外：$h 仍返回 $c"; return 1;; esac
 }
 check "-"
+check 106.52.116.164
 check ayuanjc.online
 check www.ayuanjc.online
 check not-my-domain.example
