@@ -8,6 +8,7 @@ import { pruneHits, recordHits, watchEnabled, type StoryLite } from "@/lib/watch
 import { getHotLists, hotStories } from "@/lib/hotlist";
 import { cnTrendingEnabled, getCnTrending, recentCnStories, type CnStory } from "@/lib/cn-trending";
 import { recordCnStories } from "@/lib/cn-history";
+import { entityEnabled, pruneEntityHits, recordEntityHits, type EntityStory } from "@/lib/entity-track";
 
 /**
  * 后台热点计算（PRD Phase 3 第 1 项）。
@@ -140,12 +141,18 @@ async function run(request: Request) {
     }
     // 关注命中：与快照同一次计算落库，不另起 timer。
     // 失败只记日志 —— 关注推不出来是小事，让热点计算整体 500 是大事。
+    // 关注命中与实体追踪吃同一批 story：谁要就都从这里拿，避免抓两次。
+    // 实体追踪是公开时间线，与「有没有人关注」无关，所以两个开关各自独立判断。
+    const entityStories: EntityStory[] = [];
     let watch = { inserted: 0, ambiguous: 0, pruned: 0 };
-    if (watchEnabled()) {
+    if (watchEnabled() || entityEnabled()) {
       try {
         const stories = collectStories(snapshot);
-        const hits = recordHits(stories);
-        watch = { ...hits, pruned: hits.pruned + pruneHits() };
+        entityStories.push(...stories);
+        if (watchEnabled()) {
+          const hits = recordHits(stories);
+          watch = { ...hits, pruned: hits.pruned + pruneHits() };
+        }
       } catch (err) {
         console.warn("[watch] 命中落库失败：" + (err instanceof Error ? err.message : String(err)));
       }
@@ -163,8 +170,9 @@ async function run(request: Request) {
       hot.lists = snapshotHot.lists.length;
       hot.entries = hotList.length;
       hot.degraded = snapshotHot.degraded;
-      if (watchEnabled() && hotList.length > 0) {
-        hot.inserted = recordHits(hotList).inserted;
+      if (hotList.length > 0) {
+        entityStories.push(...hotList);
+        if (watchEnabled()) hot.inserted = recordHits(hotList).inserted;
       }
     } catch (err) {
       console.warn("[hotlist] 定时抓取失败：" + (err instanceof Error ? err.message : String(err)));
@@ -197,12 +205,27 @@ async function run(request: Request) {
           const rec = await recordCnStories(all.map((s) => ({ title: s.title, url: s.url })));
           cn.baseline = { day: rec.day, added: rec.added, days: rec.days };
         }
-        if (watchEnabled()) {
-          const lite = collectCnStories(snap);
-          if (lite.length > 0) cn.inserted = recordHits(lite).inserted;
+        const lite = collectCnStories(snap);
+        if (lite.length > 0) {
+          entityStories.push(...lite);
+          if (watchEnabled()) cn.inserted = recordHits(lite).inserted;
         }
       } catch (err) {
         console.warn("[cn] 定时抓取失败：" + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+
+    /**
+     * 实体追踪（公开时间线）：把这一轮所有源的标题过一遍词典，命中的落库。
+     * 与关注命中同一个 try 口径：写库失败只记日志，不能让热点计算整体失败。
+     */
+    let entities = { inserted: 0, matched: 0, pruned: 0 };
+    if (entityEnabled() && entityStories.length > 0) {
+      try {
+        const rec = recordEntityHits(entityStories);
+        entities = { ...rec, pruned: rec.pruned + pruneEntityHits() };
+      } catch (err) {
+        console.warn("[entity] 命中落库失败：" + (err instanceof Error ? err.message : String(err)));
       }
     }
 
@@ -219,6 +242,7 @@ async function run(request: Request) {
         },
         historyPruned: pruned,
         watch,
+        entities,
         hot,
         cn,
         trending: {

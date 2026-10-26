@@ -21,6 +21,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority,
   });
   return [
+    page("/check", "monthly", 0.9),
+    page("/entities", "daily", 0.8),
     page("/login", "monthly", 1),
     page("/signup", "monthly", 0.8),
     page("/privacy", "yearly", 0.4),

@@ -879,3 +879,138 @@ CJK 别名用 `title.includes(alias)`，ASCII 别名仍走 `\b` 边界 + `i`；�
    那就变成只存 hash —— 代价是历史列表里点开只有统计，没有那句提问。
 3. **保留期**：90 天（默认）还是 30 天？后者更干净，但要接受「上个月问的看不到了」。
 4. **要不要把 auth 也搬进 SQLite**：我建议**不搬**（第 3.3 节）。如果你希望「只有一个存储」，那也是一次独立的重构，别和 b2 混在一起。
+---
+
+## 22. 实体追踪与公开核验（已实施 · 2026-10-26）
+
+用户原话（m04848）：「增加公司或实体追踪」；m04862 追加：「热点事件追踪时间线
+根据不同的消息来源和可信度在时间线上创造分支」；m04891：「两个都做」。
+这一节记**实际做了什么、为什么这么做、哪些地方我故意没做**。
+
+### 22.1 两件事，一套底座
+
+| 交付 | 页面 | 数据 | 用不用登录 |
+| --- | --- | --- | --- |
+| 实体追踪 | `/entities`（7 天榜）、`/e/<key>`（单实体时间线） | `entity_hits` 表 | 不用，公开只读 |
+| 公开核验 | `/check` | 无（不落库） | 不用，只收正文 |
+
+它们共用的东西其实只有一个：**「先给证据，再给结论」的写法**。数据上完全不相干 ——
+一个往库里写索引，一个连历史都不写（`if (ctx.userId) persistQuietly(...)`），
+关掉任一不影响另一。
+
+### 22.2 文件清单
+
+新增：
+
+- `src/lib/entity-track.ts`（约 326 行）：词典实体、命中落库、分页读、概览、7 天榜、统计。
+- `src/lib/entity-timeline.ts`（168 行）：`titleTokens` / `similarity` / `buildTimeline`。
+- `src/lib/source-tier.ts`（140 行）：来源分档（1 官方 / 2 主流 / 3 行业 / 4 聚合）。
+- `src/app/api/entity/route.ts`：公开只读接口（无 key 给 7 天榜，带 key 给时间线）。
+- `src/components/EntityTimeline.tsx`：主干 + 分支的渲染（server component）。
+- `src/app/e/[key]/page.tsx`、`src/app/entities/page.tsx`：公开页。
+- `src/components/CheckPanel.tsx`、`src/app/check/page.tsx`：公开核验。
+- `tests/entity-track.test.ts`（17 条）、`tests/entity-timeline.test.ts`（14 条）、
+  `tests/source-tier.test.ts`（10 条）。
+
+改动：
+
+- `src/lib/db/migrate.ts` 追加 v3：`entity_hits` + 两个索引。
+- `src/app/api/cron/heat/route.ts`：三条来源的 story 汇到 `entityStories`，末尾统一落库。
+- `src/app/api/verify/route.ts`：新增匿名分支（`x-probe-anon: 1`）。
+- `src/app/sitemap.ts` 加 `/check` 与 `/entities`；`src/components/SiteFooter.tsx` 加两条导航。
+- `tests/hardening.test.ts`：+7 条护栏。
+
+### 22.3 时间线怎么分叉（这是这块的核心算法，没有模型）
+
+```
+titleTokens(title)  → ascii 词（长度≥3 或纯数字）+ 中文 2-gram，去停用词
+similarity(a, b)    → 两个 token 集合的 Jaccard 相似度
+buildTimeline(hits) → 逐条与每个簇的「第一条」比：
+                      相似度 ≥ threshold(0.5) 且 时间差 ≤ windowHours(48) → 进同一簇
+                      否则开新簇
+                    每簇：主干 = 档位最高者（同档取更早），其余按档位排前 maxBranches 当分支
+```
+
+三个刻意的选择：
+
+1. **和簇的第一条比，不和簇的质心比** —— 质心会让「同一件事的第 5 篇」漂得越来越远，
+   最后把两件事缝在一起。和第一条比，簇的边界永远由最早那条定义，可复现。
+2. **没有模型参与**。相似度和档位都是纯函数，同样的输入永远同样的输出。
+   加模型意味着「同一批数据刷新两次，分叉结果不同」—— 时间线一旦会变，它就不可引用。
+3. **档位只由 `host` / `provider` 决定，域名优先**。ithome 的链接无论从哪条管线来都是 3 档；
+   未收录的域名一律 4 档（「未分级来源，按最低档处理」）。
+
+页面上「说法不一致」的判据是分支相似度 < 0.55（刚过 0.5 门槛那一档），
+「档位差 N」是主干与分支的档位差 ≥ 2。**两者都是提示，不是判决** ——
+同一件事 Reuters 与某聚合站的标题本来就该不一样。
+
+### 22.4 匿名核验的边界（为什么这么抠）
+
+- **必须显式带头**：`x-probe-anon: 1`。不能让「cookie 过期」静默掉进匿名路径 ——
+  那会让每个掉登录的用户都在花全站额度，而且彼此看不见。
+- **只收正文**：给 `url` 直接 422 `anon_text_only`。代抓链接 = 给陌生人开免费代理
+  （出口 IP 共享 + 任意内网地址），这条没有折中。
+- **不落历史**：`persistQuietly` 两处（json / sse）都套了 `if (ctx.userId)`。
+  只改一处的话，匿名核验照样会往 `queries` 表写 `user_id=""` 的行 —— 测试里断言了「恰好 2 处」。
+- **两道闸**：每 IP 1 次/分（`createLimiter`）+ 全站 40 次/天（`anonDaily`，按 UTC 日界）。
+  前者防一个人刷，后者防一群人刷。额度按 `anon:<sha256(ip)[:12]>` 记账，
+  和登录用户的 `u:<id>` 分在两个桶里，互不侵占。
+
+### 22.5 验收（实测）
+
+- `npx tsc --noEmit` 0；`npm test` **462/462 PASS**（起点 421，+41 新）。
+- 新建的 41 条里，最有价值的三条是：`PRAGMA table_info(entity_hits)` 不含 user_id；
+  `if (ctx.userId) persistQuietly` 恰好 2 处；`source-tier.ts` 不含任何 llm 调用。
+  这三条都是「以后有人顺手加功能时会踩」的坑，不是形式主义。
+
+### 22.6 我故意没做
+
+- **不做实体详情页的「综合结论」**：那需要模型读多篇正文并归纳，等于替读者下判断，
+  与「每个数字点得回原文」直接冲突。页面只列事实与来源。
+- **不做搜索框、不做关注实体的公开主页**：公开 + 可搜索 + 可订阅 = 社区，
+  备案口径会从「工具」变成「UGC 平台」。
+- **不把 `entity_hits` 和 `watches` 合并**：关注是**某人的**（有 user_id），
+  时间线是**所有人的**（没有）。合并那一刻，公开数据就开始携带私有语义。
+- **匿名核验不给 SSE**：只有 `format:"json"`。流式意味着长连接，
+  匿名 + 长连接 + 40 次/天，是三个互相矛盾的东西。
+
+### 22.7 v4 迁移：把「发布时刻」和「抓取时刻」拆开（当天补的）
+
+第一版把 `at` 直接取 `created_at`（落库时刻），本地一冒烟就露馅：同一轮抓到的
+Reuters / IT之家 / 百度三条落库时间戳逐字节相同，页面上「跨度」恒为 0h，
+跨来源顺序其实是插入顺序；一篇三天前的旧闻今天被抓到，也会被算进「24 小时」。
+
+所以加了 v4：
+
+```sql
+ALTER TABLE entity_hits ADD COLUMN pub_at INTEGER;
+UPDATE entity_hits SET pub_at = created_at WHERE pub_at IS NULL OR pub_at <= 0;
+CREATE INDEX idx_entity_hits_key_pub ON entity_hits(entity_key, pub_at DESC);
+```
+
+- 读路径：`at = pub_at || created_at`，排序与分页按 `pub_at`，24h/7d 与 7 天榜都按 `pub_at`。
+- 写路径：`pubMsOf(story, now)` 解析 `seenAt`；解析不出来、未来时间、非正数 → 退回 `now`。
+  宁可退回抓取时间，也不让一条脏数据把时间线拉到 1969 年。
+- `created_at` 仍然保留，用途只剩两个：每实体条数上限的裁剪顺序、保留期清理。
+- 迁移**不重建表**（只 ALTER + 回填），因为自动部署每 5 分钟就会用新代码打开旧库。
+
+同一轮验证里还修了两件事：
+
+1. **匿名核验其实一直在写历史**。`guarded()` 里 `userId: scope.key.replace(/^u:/, "")`
+   会把 `anon:<hash>` 整串当成 userId（它不以 `u:` 开头，replace 什么也没剥掉），
+   于是「匿名不落历史」的守卫根本不成立，库里留下 `user_id="anon:3e48ef9d22e0"`。
+   改成 `scope.key.startsWith("u:") ? slice(2) : ""`，并加了护栏测试。
+   这条只有真的发一次匿名请求、再去看库才会发现 —— 单测里都是 mock 的身份。
+2. **最小字数两套标准**。匿名入口写「至少 60 字」，而 `verify-doc` 的正文门槛是 120 字，
+   于是 60–119 字之间用户会拿到后端那句「正文不足 120 字」。统一成 `ANON_MIN_CHARS = 120`，
+   前端 `MIN_CHARS` 跟同一个数。
+
+### 22.8 已知局限（当天实测到的，不是设计意图）
+
+- **中文近似标题不一定并簇**。Reuters「台积电 3nm 产能满载，苹果包下首批」与
+  IT之家「台积电 3nm 产能已满 苹果拿下首批」的 token Jaccard 约 0.47，低于 0.5 门槛，
+  于是同一件事被拆成两条事件。这个方向我选择**宁可少并**：误并会把两家不同的事说成
+  「同一事件的两个说法」，那是替读者下结论；漏并只是少一条分支，页面上还有原文可点。
+  `/e/*` 的「这一页怎么读」已经把这条写明。
+- **分页游标按 `pub_at` 严格小于**，同一毫秒的多条在翻页边界可能被跳过。
+  公开页一次读 120 条、接口上限 200 条，实际不会触发；真要修就得换成 (pub_at, id) 复合游标。

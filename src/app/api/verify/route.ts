@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { prepareRuntimeConfig, regionSummary, withRuntimeConfig } from "@/lib/runtime-config";
 import { encodeVerifyEvent, type VerifyEvent } from "@/lib/verify-events";
@@ -46,6 +47,53 @@ const gate = createGate(readPositiveInt("PROBE_VERIFY_CONCURRENCY", 2));
 /** 正文上限 80_000 字，中文按 3 字节/字算约 240KB，留余量到 400KB。 */
 const MAX_BODY_BYTES = 400_000;
 
+/**
+ * 匿名核验（/check 公开页）。
+ *
+ * 为什么单独一套闸：登录态的额度是「按人记账」，这里的成本是「按次烧钱」——
+ * 一个陌生人不登录就能让服务端起一轮几十次上游调用。所以：
+ *   - 只收正文，不代抓链接（抓链接等于给任何人一个免费代理）；
+ *   - 一次最多 2000 字（够核一条说法，不够核一整篇稿）；
+ *   - 每 IP 每分钟 1 次、全进程每天 N 次（默认 40）—— 用完就明天再来，不是"关站"；
+ *   - 必须显式带 x-probe-anon: 1，否则照旧 401：让"想匿名"是一个主动动作，
+ *     而不是任何漏了 cookie 的请求都自动掉进这条更贵的路径。
+ */
+const ANON_MAX_CHARS = 2_000;
+/**
+ * 匿名最少多少字。与 verify-doc 的 120 对齐，而不是自己定 60：
+ * 两道门槛不一致时，用户会在 60–119 字之间拿到「正文不足 120 字」，
+ * 而页面上写的是「至少 60 字」—— 自己的文案和自己的校验互相打脸。
+ */
+const ANON_MIN_CHARS = 120;
+
+const anonClient = createLimiter({
+  name: "verify-anon",
+  limit: readPositiveInt("PROBE_ANON_VERIFY_PER_MIN", 1),
+});
+
+const anonDaily = { day: "", used: 0 };
+
+function anonEnabled(): boolean {
+  return (process.env.PROBE_ANON_VERIFY ?? "1").trim() !== "0";
+}
+
+function anonDailyCap(): number {
+  return readPositiveInt("PROBE_ANON_VERIFY_PER_DAY", 40, { max: 10_000 });
+}
+
+function takeAnonDaily(): { ok: boolean; used: number; cap: number } {
+  // 按 UTC 日期翻页：跨时区时"今天"会各有各的定义，用 UTC 是为了全天一致。
+  const day = new Date().toISOString().slice(0, 10);
+  if (anonDaily.day !== day) {
+    anonDaily.day = day;
+    anonDaily.used = 0;
+  }
+  const cap = anonDailyCap();
+  if (anonDaily.used >= cap) return { ok: false, used: anonDaily.used, cap };
+  anonDaily.used += 1;
+  return { ok: true, used: anonDaily.used, cap };
+}
+
 const Body = z.object({
   /** 4 万字上限在 verify-doc 里再收一次：这里放宽到 8 万字只为给出更好的报错。 */
   text: z.string().max(80_000).optional(),
@@ -87,7 +135,8 @@ async function jsonResponse(
     // 核验是几十次上游调用的长链路，账必须在收尾处落一行，否则线上没人知道烧了多少。
     console.info("[verify] usage", meter.read());
     recordDegraded(trace.degraded);
-        persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
+    // 匿名请求不落历史：history 是按账号存的，塞一条 user_id="" 进去只会污染表。
+    if (ctx.userId) persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
   }
 
   const doc = events.find((e) => e.event === "doc.parsed");
@@ -182,7 +231,8 @@ function sseResponse(
             }
           } finally {
             recordDegraded(trace.degraded);
-        persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
+    // 匿名请求不落历史：history 是按账号存的，塞一条 user_id="" 进去只会污染表。
+    if (ctx.userId) persistQuietly(verifyTraceToQuery(trace, { ...ctx, body: input.text }), "verify");
           }
         });
       } catch (err) {
@@ -217,7 +267,12 @@ async function guarded(
   format: "sse" | "json" = "sse",
   scope: CallScope,
 ): Promise<Response> {
-  const ctx: RecordContext = { userId: scope.key.replace(/^u:/, ""), query: "", region: "cn", modelHost: "" };
+  // 只有 "u:<id>" 这种 scope 才代表一个真实账号。匿名 scope 是 "anon:<hash>"，
+  // 用 replace 会把整串当成 userId，结果匿名核验照样往 queries 表里写一行 —— 而且
+  // user_id 就写着那个内存哈希。所以这里必须显式判断前缀，不能靠剥字符串。
+  // 空串 = 没有账号，后面那两处 if (ctx.userId) 才会真的挡住它。
+  const uid = scope.key.startsWith("u:") ? scope.key.slice(2) : "";
+  const ctx: RecordContext = { userId: uid, query: "", region: "cn", modelHost: "" };
   if (isCrossSite(request)) return jsonError(403, "cross_site", "拒绝跨站调用。");
 
   const per = perClient.check(clientKey(request));
@@ -265,10 +320,44 @@ async function guarded(
   }
 }
 
+/**
+ * 匿名核验：只收正文、限长、限频、限日总量，且不落历史。
+ *
+ * 刻意不给匿名用户「代抓链接」：那等于开一个免费代理，而且抓取目标由请求方指定。
+ */
+async function anonVerify(request: Request, input: { text?: string; url?: string }): Promise<Response> {
+  if (!anonEnabled()) {
+    return jsonError(403, "anon_disabled", "未登录的核验已关闭，请登录后使用。");
+  }
+  if (input.url) {
+    return jsonError(422, "anon_text_only", "未登录只能用正文核验，不代抓链接。登录后可以用链接。");
+  }
+  const text = (input.text ?? "").trim();
+  if (text.length < ANON_MIN_CHARS) {
+    return jsonError(422, "text_too_short", "至少贴 " + ANON_MIN_CHARS + " 字：太短的片段里没有可被外部证实的断言。");
+  }
+  if (text.length > ANON_MAX_CHARS) {
+    return jsonError(422, "text_too_long", "未登录一次最多 " + ANON_MAX_CHARS + " 字，登录后支持 4 万字长文。");
+  }
+  const per = anonClient.check(clientKey(request));
+  if (!per.ok) {
+    return rateLimited(per.retryAfterSeconds, "未登录每分钟只能核验 1 次，请 " + per.retryAfterSeconds + " 秒后再试。");
+  }
+  const daily = takeAnonDaily();
+  if (!daily.ok) {
+    return rateLimited(3600, "今天公开核验的额度已用完（服务端每天限量，避免被刷成账单）。登录后用自己的额度。");
+  }
+  // 身份只用于额度与限流：一个不可逆的短哈希，不落盘、不进历史、不进日志。
+  const digest = createHash("sha256").update(clientKey(request)).digest("hex").slice(0, 12);
+  return guarded(request, { text }, "json", { key: "anon:" + digest, label: "匿名访客" });
+}
+
 export async function POST(request: Request) {
   if (isCrossSite(request)) return jsonError(403, "cross_site", "拒绝跨站调用。");
+  // 匿名是一条**主动**路径：必须显式声明，避免任何丢了 cookie 的请求自动掉进来。
+  const wantsAnon = request.headers.get("x-probe-anon") === "1";
   const auth = await requireUser(request);
-  if (!auth.ok) return auth.response;
+  if (!auth.ok && !wantsAnon) return auth.response;
 
   // 限长读体：先挡住超大请求，再谈形状。
   const body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -284,6 +373,7 @@ export async function POST(request: Request) {
     );
   }
   const { text, url } = parsed.data;
+  if (!auth.ok) return anonVerify(request, { text, url });
   const format = parsed.data.format ?? "sse";
   if (!text && !url) {
     return jsonError(422, "no_input", "要给正文，或给一个文章链接。");

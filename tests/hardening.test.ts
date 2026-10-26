@@ -421,3 +421,88 @@ test("榜单时间与抓取时间分开：百度自己的 updateTime 不许被�
   assert.match(board, /list\.updatedAt \?/);
 });
 
+
+/* ---------------------- 公开核验（匿名）与公开时间线 ---------------------- */
+
+test("匿名核验必须显式声明：没有 x-probe-anon 的请求照旧 401", () => {
+  const src = readFileSync("src/app/api/verify/route.ts", "utf8");
+  assert.match(src, /request.headers.get\("x-probe-anon"\) === "1"/);
+  // 关键：不能写成「auth 失败就走匿名」—— 那样任何丢了 cookie 的请求都会掉进更贵的路径。
+  assert.match(src, /if \(!auth\.ok && !wantsAnon\) return auth\.response;/);
+  assert.match(src, /const ANON_MAX_CHARS = 2_000;/);
+  // 只收正文：代抓链接等于开免费代理，抓取目标由请求方指定。
+  assert.match(src, /return jsonError\(422, "anon_text_only"/);
+  assert.match(src, /takeAnonDaily\(\)/);
+});
+
+test("匿名核验不落历史、不推进用户额度：scope 用 anon 前缀，历史按 ctx.userId 挡住", () => {
+  const src = readFileSync("src/app/api/verify/route.ts", "utf8");
+  assert.match(src, /\{ key: "anon:" \+ digest, label: "匿名访客" \}/);
+  // 两处 persist（json 与 sse）都要挡住：只改一处，匿名核验照样会往 queries 表里写行。
+  const guards = src.match(/if \(ctx\.userId\) persistQuietly/g) ?? [];
+  assert.equal(guards.length, 2, "json 与 sse 两处都必须按 ctx.userId 挡住，实际 " + guards.length);
+  assert.doesNotMatch(src, /anonDefault|anon_disabled.*requireUser/);
+});
+
+test("实体命中落库只吃标题：表里不许出现 user_id，INSERT 不许带正文", () => {
+  const migrate = readFileSync("src/lib/db/migrate.ts", "utf8");
+  const start = migrate.indexOf("CREATE TABLE entity_hits");
+  assert.ok(start > 0, "migrate 里应有 entity_hits");
+  // 只看 CREATE TABLE 的列定义：注释里写着「没有 user_id」是口径说明，不算违规。
+  const table = migrate.slice(start, migrate.indexOf(");", start));
+  assert.doesNotMatch(table, /user_id/, "公开时间线一旦带 user_id 就能反推谁看过");
+  const store = readFileSync("src/lib/entity-track.ts", "utf8");
+  const insert = store.slice(store.indexOf("INSERT OR IGNORE INTO entity_hits"));
+  assert.match(insert.slice(0, 300), /title|url/);
+  assert.doesNotMatch(insert.slice(0, 300), /content|summary|body/, "正文不落库");
+});
+
+test("实体追踪在 cron 里是可选段：开关关掉不跑、失败只 warn", () => {
+  const cron = readFileSync("src/app/api/cron/heat/route.ts", "utf8");
+  assert.match(cron, /import \{ entityEnabled, pruneEntityHits, recordEntityHits/);
+  assert.match(cron, /if \(entityEnabled\(\) && entityStories\.length > 0\)/);
+  assert.match(cron, /recordEntityHits\(entityStories\)/);
+  assert.match(cron, /pruneEntityHits\(\)/);
+  const block = cron.slice(cron.indexOf("entityEnabled() && entityStories"));
+  assert.match(block, /try \{/);
+  assert.match(block, /console\.warn\("\[entity\]/);
+});
+
+test("公开实体接口是只读的：只有 GET，不认人", () => {
+  const src = readFileSync("src/app/api/entity/route.ts", "utf8");
+  assert.match(src, /export async function GET\(request: Request\)/);
+  assert.doesNotMatch(src, /export async function (POST|PUT|PATCH|DELETE)/);
+  assert.doesNotMatch(src, /requireUser|getSession|currentUser/, "公开接口不该 import 任何用户态");
+  assert.match(src, /createLimiter\(\{[\s\S]{0,80}PROBE_ENTITY_RATE_PER_MIN/);
+});
+
+test("公开页不 import 用户态：/check 与 /e/*、/entities 陌生人能直接看到", () => {
+  for (const file of ["src/app/check/page.tsx", "src/app/entities/page.tsx", "src/app/e/[key]/page.tsx"]) {
+    const src = readFileSync(file, "utf8");
+    assert.doesNotMatch(src, /requirePageUser|requireUser|cookies\(/, file + " 不该依赖登录态");
+    assert.match(src, /export const dynamic = "force-dynamic";/, file + " 需要现算");
+  }
+});
+
+test("来源分档不许调模型：档位是来源类型，不是真伪判定", () => {
+  const src = readFileSync("src/lib/source-tier.ts", "utf8");
+  assert.doesNotMatch(src, /generateText|generateObject|\bllm\b/, "一旦引入模型打分就是在替读者下结论");
+  assert.match(src, /未分级来源，按最低档处理/);
+});
+
+test("匿名 scope 不能当账号用：userId 只从 \"u:\" 前缀里取", () => {
+  const src = readFileSync("src/app/api/verify/route.ts", "utf8");
+  // replace(/^u:/, "") 这种写法会把 "anon:<hash>" 整串当成 userId，
+  // 于是匿名核验照样往 queries 表写一行，user_id 还带着那份内存哈希。
+  assert.doesNotMatch(src, /userId: scope\.key\.replace/);
+  assert.match(src, /scope\.key\.startsWith\("u:"\) \? scope\.key\.slice\(2\) : ""/);
+});
+
+test("匿名核验的最小字数与正文门槛一致：别让页面写 60、后端要 120", () => {
+  const route = readFileSync("src/app/api/verify/route.ts", "utf8");
+  const doc = readFileSync("src/lib/verify-doc.ts", "utf8");
+  assert.match(route, /const ANON_MIN_CHARS = 120;/);
+  assert.match(doc, /body\.length < 120/);
+  const panel = readFileSync("src/components/CheckPanel.tsx", "utf8");
+  assert.match(panel, /const MIN_CHARS = 120;/);
+});

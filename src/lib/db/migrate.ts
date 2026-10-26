@@ -84,6 +84,45 @@ CREATE TABLE watch_hits (
 CREATE INDEX idx_watch_hits_user_read ON watch_hits(user_id, read_at);
 CREATE INDEX idx_watch_hits_watch     ON watch_hits(watch_id, created_at DESC);
   `,
+  // v3：实体追踪（公司 / 技术在热榜里的时间线，公开可看）
+  //
+  // 与 watch_hits 的区别：watch_hits 是「某个人关注了谁」（一行绑一个 user_id），
+  // entity_hits 是「词典里的实体今天被谁提到」（没有人，全公开）。所以这里**没有 user_id**，
+  // 也不能从它反推任何人的行为。
+  //
+  // 只存索引：标题 + 链接 + 来源 + 热度 + 时间。正文不存。
+  // UNIQUE(entity_key, url)：同一条新闻只算一次，cron 每半小时跑一遍不会把时间线刷满。
+  `
+CREATE TABLE entity_hits (
+  id         TEXT PRIMARY KEY,
+  entity_key TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'other',
+  url        TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  host       TEXT,
+  provider   TEXT,
+  points     INTEGER NOT NULL DEFAULT 0,
+  seen_at    TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE(entity_key, url)
+);
+CREATE INDEX idx_entity_hits_key_time ON entity_hits(entity_key, created_at DESC);
+CREATE INDEX idx_entity_hits_time     ON entity_hits(created_at DESC);
+  `,
+  // v4：把「事件发生/发布的时间」和「我们什么时候抓到」分开。
+  //
+  // 为什么要分开：时间线是按时间读的。原来 at 取 created_at（cron 落库那一刻），
+  // 于是同一轮抓到的三条 HN / 百度 / IT之家 全都同一个时间戳 —— 跨度恒为 0，
+  // 排出来的顺序其实是插入顺序。三天前的旧闻今天才被抓到，也会被排在今天。
+  //
+  // 上游给了发布时间就用它（pub_at），没给（掘金、少数派以外的榜单）就退回 created_at。
+  // 两条都留着，不覆盖任何一个：事后能分辨「这是旧闻」还是「这是新发现」。
+  `
+ALTER TABLE entity_hits ADD COLUMN pub_at INTEGER;
+UPDATE entity_hits SET pub_at = created_at WHERE pub_at IS NULL OR pub_at <= 0;
+CREATE INDEX idx_entity_hits_key_pub ON entity_hits(entity_key, pub_at DESC);
+  `,
 ];
 
 export function currentVersion(db: MigratableDb): number {

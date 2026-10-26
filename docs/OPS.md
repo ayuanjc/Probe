@@ -797,3 +797,98 @@ curl -s http://127.0.0.1:3215/ | grep -c '中文科技前沿'
   收进来会让每个话题都被命中一次，名次变成噪声。
 - 微博 / 知乎：公开接口 403 / 401，没有官方 key 就不接。
 
+
+## 十四、实体追踪与公开核验
+
+设计稿在 `docs/DESIGN-b2.md` §22。这一节只写值班要用的。
+
+### 它是什么（两件互不依赖的事，共用同一套底座）
+
+1. **实体追踪（公开时间线）**：cron 每轮把三条热度来源（HN / 国内热议 / 中文科技前沿）的
+   标题过一遍实体词典，命中的写进 `entity_hits`。页面是 `/entities`（7 天榜）与
+   `/e/<实体key>`（单个实体的时间线：同一事件按来源聚成一簇，**档位最高的当主干，
+   其余是分支**）。相关库函数在 `src/lib/entity-track.ts`、`src/lib/entity-timeline.ts`、
+   `src/lib/source-tier.ts`。
+2. **公开核验（不登录也能用）**：`/check` 页打 `POST /api/verify` 时带
+   `x-probe-anon: 1`。**只收正文 60–2000 字，不收链接**；不落历史；不占任何人的额度；
+   判定走与登录后完全相同的一条流水线（同一套 claims / 引文核验 / 分数）。
+
+### 两张口径（写死在代码注释里，改之前先想清楚）
+
+- **没有 user_id。** `entity_hits` 刻意不存任何用户字段：公开数据一旦能反推「谁看过」，
+  它就不再是公开数据。`PRAGMA table_info(entity_hits)` 里出现 user_id 就是错。
+- **档位不是真伪。** `sourceTier()` 分的是**来源类型**（1 官方/一手、2 主流媒体、
+  3 行业媒体、4 聚合/社区），不是「谁说得对」。页面上的「说法不一致」也只是标题 token
+  Jaccard < 0.55 的提示，模型没有参与判断，也不该参与。
+
+### 开关（probe.env）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `PROBE_ENTITY_SERVER` | `1` | `0` = cron 不记、`/entities` 与 `/e/*` 仍能打开但渲染空态且 `noindex` |
+| `PROBE_ENTITY_HITS_PER_KEY` | `200` | 每个实体留多少条（上限 1000），超了丢最旧 |
+| `PROBE_ENTITY_HIT_DAYS` | `30` | 保留天数（上限 365），过期由 cron 的 `pruneEntityHits()` 清 |
+| `PROBE_ENTITY_RATE_PER_MIN` | `300` | `GET /api/entity` 按 IP 限流（它无身份、只读，所以放得宽） |
+| `PROBE_ANON_VERIFY` | `1` | `0` = 匿名核验一律 403 `anon_disabled` |
+| `PROBE_ANON_VERIFY_PER_MIN` | `1` | 匿名按 IP 每分钟次数 |
+| `PROBE_ANON_VERIFY_PER_DAY` | `40` | 匿名全站每日上限（按 UTC 日界翻页）。它保护的是模型账单 |
+
+### 值班常看的几件事
+
+```bash
+# cron 这一轮实体记了多少（响应体实体的字段名是 entities）
+curl -s -H "x-probe-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/api/cron/heat \
+  | tr , '\n' | grep -A5 '"entities"'
+
+# 库里有多少命中、覆盖多少实体、最老一条是什么时候
+sqlite3 /opt/probe/app/.data/probe.db 'select count(*) hits, count(distinct entity_key) entities, datetime(min(created_at)/1000,'"'"'unixepoch'"'"') oldest from entity_hits;'
+
+# 某个实体最近 5 条（key 是中文名小写，比如 台积电 就是 台积电）
+sqlite3 /opt/probe/app/.data/probe.db "select datetime(created_at/1000,'unixepoch'), provider, substr(title,1,40) from entity_hits where entity_key='台积电' order by created_at desc limit 5;"
+
+# 公开接口（不需要 cookie）：7 天榜 / 单个实体
+curl -s 'http://127.0.0.1:3215/api/entity?days=7&limit=10' | head -c 400
+curl -s 'http://127.0.0.1:3215/api/entity?key=%E5%8F%B0%E7%A7%AF%E7%94%B5' | head -c 600
+```
+
+### 出问题怎么退
+
+- **`/entities` 是空的**：先看 cron 响应里的 `entities.matched`。
+  `matched=0` 且 `inserted=0` 说明**没有标题命中词典**（词典在 `src/lib/entities.ts`，
+  只认表里那 40 来个实体），不是库坏了。`matched>0` 但 `inserted=0` 说明全是重复 URL
+  （`UNIQUE(entity_key, url)`），也正常。
+- **时间线全是单条、没有分支**：一个事件要**同时被两家以上写**才会分叉。
+  只有 HN 一家在写某件事时，它就是一个点。这不是 bug，是数据现实。
+- **分支的档位看着不对**：`source-tier.ts` 先认域名再认 provider，未收录的域名一律 4 档。
+  要加源就加进 `TIER1_HOSTS` / `TIER2_HOSTS` / `TIER3_HOSTS`，别在现场改数据。
+- **匿名核验报 `anon_disabled`**：`PROBE_ANON_VERIFY=0` 或环境没加载。
+  报「今天公开核验的额度已用完」是当日 40 次打满了 —— 这是设计行为，第二天 UTC 零点恢复。
+- **整块关掉**：`PROBE_ENTITY_SERVER=0`（时间线）或 `PROBE_ANON_VERIFY=0`（公开核验）后
+  `systemctl restart probe-web`。两者都只影响自己，不动历史 / 关注 / 热榜。
+
+### 已知取舍（不是忘）
+
+- **只吃标题**：实体命中靠标题匹配，正文里提到但标题没写的实体记不到。
+  换成读正文就等于把第三方内容抓进库，那是另一种承诺（和「只落索引」冲突）。
+- **歧义词只计数不入库**：「苹果价格涨了两成」不会记到苹果公司头上
+  （`matchStory` 判歧义），代价是那条真的苹果新闻也可能被漏掉。
+- **词典是白名单**：不在 `entities.ts` 里的公司名不会出现。加词要重跑测试，
+  因为 `tests/entity-track.test.ts` 断言了具体别名与 key。
+- **匿名核验不给链接**：代抓链接等于给陌生人开免费代理（SSRF + 出口 IP 共享），
+  所以 `url` 参数在匿名分支直接 422 `anon_text_only`。登录后才有。
+
+### 时间口径（v4 起：pub_at）
+
+`entity_hits` 有两个时间列，别混：
+
+| 列 | 含义 | 用在哪 |
+| --- | --- | --- |
+| `pub_at` | 上游给的**发布/出现时间**；上游不给就用抓取时间 | 时间线排序、24h/7d 计数、7 天榜 |
+| `created_at` | 我们**抓到它的时刻** | 每实体条数上限的裁剪、保留期清理、运维统计 |
+
+为什么必须分开：cron 一轮抓到的所有 story 落库时间戳完全相同。只用 `created_at` 的话，
+同一轮的 HN / 百度 / IT之家 三条会并成「跨度 0 小时」，顺序等于插入顺序；
+一篇三天前的旧闻今天才被抓到，还会被算成「24 小时内的热点」。
+
+翻库时想看「这条是旧闻还是新发现」：`select title, datetime(pub_at/1000,'unixepoch') pub, datetime(created_at/1000,'unixepoch') got from entity_hits order by created_at desc limit 20;`
+两者差得远（几小时以上）就是旧闻被抓得晚。

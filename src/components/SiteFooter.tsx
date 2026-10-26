@@ -45,6 +45,13 @@ export default function SiteFooter() {
           <Link href="/terms" className="transition-colors hover:text-neutral-300">
             用户协议
           </Link>
+          {/* 这两个是不需要登录就能看的页：放在页脚，陌生人与爬虫都能找到。 */}
+          <Link href="/entities" className="transition-colors hover:text-neutral-300">
+            实体追踪
+          </Link>
+          <Link href="/check" className="transition-colors hover:text-neutral-300">
+            公开核验
+          </Link>
           <a
             href="https://beian.miit.gov.cn/"
             target="_blank"
