@@ -72,60 +72,73 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Host: ayuanjc.onlin
 
 ---
 
-## 零之一、临时对外开放（2026-10-25，应 YG 要求「先放开」）
+## 零之一、2026-10-26 形态：只留 IP 一条通道
 
-### 现状：域名打不开，但 IP 能打开
+备案开审前把「未备案也对外提供服务」这条彻底掐掉，但保留自测与给朋友看的 IP 入口。
+现在 `sites-enabled` 里只有两份，`probe-root` 与旧的 `probe-temp-open` 都已撤下：
 
-实测结论（2026-10-25 19:55 从外网真实探测）：
-
-| 访问方式 | 结果 | 原因 |
+| 服务器文件 | 内容 | 作用 |
 | --- | --- | --- |
-| `http://ayuanjc.online/` | `302 → dnspod.qcloud.com/static/webblock.html?d=ayuanjc.online` | 腾讯云**按 Host 头**拦截未备案域名，请求到不了这台 nginx |
-| `-H 'Host: ayuanjc.online' http://106.52.116.164/` | 同样 302 到 webblock | 同上，阻断看 Host 不看 IP |
-| `http://106.52.116.164/` | `307 → /login`，`200` | 裸 IP 不在拦截范围，现在走 `probe-temp-open` |
-| `http://106.52.116.164/login` | `200`，页面含新首屏说明 | 同上 |
+| `probe-block` | `listen 80 default_server` + `server_name _` + `return 444` | 陌生 Host、伪造成 `ayuanjc.online` 的请求一律断连 |
+| `probe-temp-ip` | `listen 80` + `server_name 106.52.116.164` + `limit_req zone=probe_rl burst=40 nodelay` + `limit_conn probe_conn 12` | 只认 IP 字面量的入口；压测发现的「裸 IP 零限流」一并补上 |
 
-也就是说：**域名通道不由我们控制**，改 nginx 无效；备案通过（或换一家不做域名阻断的接入商）之前，域名就是打不开。
-想让别人现在就能看，只有 IP 这条通道。
-
-### 三份配置（都已入库 `scripts/server/nginx/`）
-
-| 服务器文件 | 作用 | 何时用 |
-| --- | --- | --- |
-| `/etc/nginx/sites-available/probe-root` | `server_name ayuanjc.online www.ayuanjc.online`，域名根代理应用 + geoip 国家头注入 + `/probe` 301 | 一直保留（备案通过后就是它干活） |
-| `/etc/nginx/sites-available/probe-temp-open` | `listen 80 default_server`，裸 IP / 任意 Host 直接代理应用 | **只有现在**，临时 |
-| `/etc/nginx/sites-available/probe-block` | `listen 80 default_server`，`return 444` | 备案提交/审核期，以及以后正式上线时替换 `probe-temp-open` |
-
-> `probe-temp-open` 与 `probe-block` 都是 80 的 `default_server`，**同时只能开一个**，
+> 旧 `probe-temp-open` 是 `server_name _` + `default_server`，**任意 Host 都能拿到站点** ——
+> 审核员撤掉解析后换个 Host 再访问仍然 200，这在首次备案里是明确的驳回理由。
+> 换成 `probe-temp-ip` 后：`Host: 106.52.116.164` 正常，`Host: ayuanjc.online` 与任何陌生 Host 都是 444。
+>
+> `probe-block` 与 `probe-temp-open` 都是 80 的 `default_server`，**同时只能开一个**，
 > 否则 `nginx -t` 报 `a duplicate default server for 0.0.0.0:80`。
-> `probe-root` 里原来那段 444 兜底已经拆成 `probe-block`，就是为了这个。
 
-### 备案开审前撤回
-
-```bash
-rm -f /etc/nginx/sites-enabled/probe-temp-open
-ln -sfn /etc/nginx/sites-available/probe-block /etc/nginx/sites-enabled/probe-block
-rm -f /etc/nginx/sites-enabled/probe-root        # 审核期不许对公网提供站点
-nginx -t && systemctl reload nginx
-curl -s -o /dev/null -w 'ip:%{http_code}\n' http://106.52.116.164/   # 期望连不上
-```
-
-恢复临时的反操作：
+### 现在的实测结果（2026-10-26 12:40）
 
 ```bash
-rm -f /etc/nginx/sites-enabled/probe-block
-ln -sfn /etc/nginx/sites-available/probe-temp-open /etc/nginx/sites-enabled/probe-temp-open
-ln -sfn /etc/nginx/sites-available/probe-root /etc/nginx/sites-enabled/probe-root
-nginx -t && systemctl reload nginx
+# 服务器本机回环（绕过腾讯云的边缘阻断）
+curl -s -o /dev/null -w "%{http_code}\n" -H "Host: 106.52.116.164" http://127.0.0.1/login   # 200
+curl -s -o /dev/null -w "%{http_code}\n" -H "Host: ayuanjc.online"    http://127.0.0.1/      # 000（444 断连）
+curl -s -o /dev/null -w "%{http_code}\n" -H "Host: not-my-domain.example" http://127.0.0.1/ # 000
+
+# 外网
+http://106.52.116.164/login   → 200    （IP 通道还在，给朋友看用这个）
+http://ayuanjc.online/login   → 302 → dnspod.qcloud.com/static/webblock.html （腾讯云阻断，与我们的配置无关）
 ```
+
+### 三个运维脚本（都已入库 `scripts/server/`，并在服务器 `/opt/probe/bin/`）
+
+| 脚本 | 做什么 | 什么时候跑 |
+| --- | --- | --- |
+| `beian-preflight.sh` | 只读体检 8 节，输出 PASS/WARN/FAIL，有 FAIL 时 `exit 1` | 每次改完 nginx、每次去备案系统点提交之前 |
+| `beian-close.sh --yes` | 切「全关」形态：只留 `probe-block`，域名与裸 IP 都进不来；备份 + `nginx -t` + 自检，失败自动回滚 | 审核员可能要探测、你希望彻底干净时 |
+| `beian-reopen.sh --yes` | 备案通过后恢复：启用 `probe-root`，撤掉 block/ip，自检 domain `/login=200` 与裸 IP 444 | 备案号下来那天 |
+
+```bash
+ssh ayuanjc-1 "bash /opt/probe/bin/beian-preflight.sh"        # 体检
+ssh ayuanjc-1 "bash /opt/probe/bin/beian-close.sh --yes"      # 全关（域名 + 裸 IP 都断）
+ssh ayuanjc-1 "bash /opt/probe/bin/beian-reopen.sh --yes"     # 备案通过后恢复
+```
+
+两个切形态的脚本都会先把 `sites-enabled` 拷到 `/root/nginx-snap-<时间戳>/`，并在任何一步失败时自动回滚，
+手工回滚也就一行：`rm -f /etc/nginx/sites-enabled/* && cp -a /root/nginx-snap-<时间戳>/. /etc/nginx/sites-enabled/ && systemctl reload nginx`。
+
+### 当前体检结果：FAIL=0，还剩 6 条 WARN
+
+| WARN | 什么时候能消 |
+| --- | --- |
+| `ayuanjc.online` 仍解析到 106.52.116.164 | 提交后、审核员探测前，在 DNSPod 把这条 A 记录**停用**（不是删除，留着方便恢复） |
+| `PROBE_ICP_LICENSE` 未填 | 备案号下来后写进 `/opt/probe/probe.env` 并 `systemctl restart probe-web`，页脚立刻出号码 |
+| `PROBE_POLICE_LICENSE` 未填 | 公安联网备案通过后 |
+| `PROBE_CONTACT_EMAIL` 未填 | 现在就能填，隐私政策里的联系邮箱，审核会看 |
+| 443 未监听 | 备案通过后签证书（`scripts/server/issue-cert-dns.sh`） |
 
 ### 代价说清楚
 
-审核员探测时如果从**裸 IP** 也能打开站点，看到的正是「未备案的互联网信息服务已经对外提供」，
-这在首次备案里是明确的驳回理由（本手册第一节第 2 条就是它）。所以：**临时开放可以，开审前必须撤回。**
+全关形态（`beian-close.sh`）下裸 IP 也访问不了，只能在服务器上用
+`curl -H "Host: 106.52.116.164" http://127.0.0.1:3215/login` 自测。
+当前形态保留了 IP 通道 —— 它不构成驳回点（备案只管域名），但审核员如果主动去解析域名、
+再拿 IP 访问，仍然能看到站点。要绝对干净就跑 `beian-close.sh --yes`。
+
 ---
 
-## 一、先修三个必被驳回的问题（1、2 已改，现为临时放开状态，见上一节）
+## 一、三个必被驳回的问题（第 1 条已修；第 2 条已收敛到「只认 IP 字面量」）
 
 备案审核会做两件事：查主体材料，以及**探测 80 端口**。以下三点是实测出来的硬伤：
 
@@ -141,8 +154,9 @@ curl -s -o /dev/null -w '%{http_code} %{size_download}\n' -H 'Host: not-my-domai
 
 ### 2. 裸 IP 直接可访问
 
-同上，`http://106.52.116.164/` 返回 200。裸 IP 访问同样要求整改 —— 备案只针对域名，
-裸 IP 上跑着可访问的站点，审核员看到的是「未备案的互联网信息服务」。
+`http://106.52.116.164/` 返回 200。这条的现实口径是：备案只管域名，裸 IP 不构成独立驳回点，
+但**任意 Host 都能拿到站点**构成。2026-10-26 起的做法是把「默认放行」改成「只认 IP 字面量」
+（`probe-temp-ip`），陌生 Host 与伪造 Host 一律 444，见上一节。要彻底干净再跑 `beian-close.sh --yes`。
 
 ### 3. 443 未监听
 
