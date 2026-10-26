@@ -13,7 +13,7 @@
 公网 :80  nginx（站点 /etc/nginx/sites-enabled/yunying，default_server）
   ├─ location /       → /opt/yunying/web（原有项目）
   ├─ location /api/   → 127.0.0.1:8100（原有项目 uvicorn）
-  └─ location /probe  → 127.0.0.1:3215（本项目，basePath=/probe，proxy_buffering off）
+  └─ location /       → 127.0.0.1:3215（本项目**现在跑在根**；旧的 /probe/* 由 probe-root 里两条 rewrite 308 到根，只有一个 308 不留）
 
 systemd probe-web.service    next start -H 127.0.0.1 -p 3215（Restart=always, MemoryMax=1200M）
 systemd probe-update.timer   每 5 分钟 → probe-update.service → /opt/probe/update.sh
@@ -30,7 +30,7 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 | `/opt/probe/deployed-sha` | 线上是哪个 commit（`update.sh` 写，`git` 不在场） |
 | `/opt/probe/update.sh` | 自动更新脚本 |
 | `/opt/probe/stage` | 解压临时目录（更新完即删） |
-| `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次） |
+| `/opt/probe/heat-cron.sh` | 带着口令打一次 `/api/cron/heat`（失败重试 3 次）。**源文件在仓库 `scripts/server/heat-cron.sh`**，改完用 `ssh_upload` 覆盖并 `chmod +x` —— 服务器上那份不受自动更新管 |
 | `/etc/nginx/geoip/dbip-country-lite.mmdb` | 区域判定用的国家库（8.0 MB，每月换一份） |
 | `/root/nginx-backup/` | nginx 配置改动前的原件（带时间戳） |
 | `/etc/nginx/sites-available/probe-root` | 当前生效站点：域名根跑探针，未匹配 Host → 444 |
@@ -45,8 +45,8 @@ systemd probe-heat.timer     每 30 分钟 → probe-heat.service → /opt/probe
 ## 环境变量（`/opt/probe/probe.env`）
 
 ```
-PROBE_BASE_PATH=/probe              # 构建与运行时都要，否则路由注册成 / 而不是 /probe
-NEXT_PUBLIC_PROBE_BASE_PATH=/probe  # 打进前端的 basePath，客户端 fetch 靠它
+# 站点已搬到根：PROBE_BASE_PATH 与 NEXT_PUBLIC_PROBE_BASE_PATH 都已从 probe.env 删除。
+# 若哪天要挪回子路径，两者必须同时设置（构建期 + 运行期），否则路由注册在 / 而前端 fetch 打到子路径。
 PROBE_RATE_LIMIT_PER_MIN=20         # 每 IP 检索限流，默认 3 对预览来说太低
 PROBE_TRANSLATE_RATE_LIMIT_PER_MIN=40
 PROBE_MODULE_RATE_LIMIT_PER_MIN=20
@@ -156,7 +156,7 @@ tail -n 5 /opt/probe/app/.cache/feedback.jsonl   # 最近的反馈
 systemctl start probe-heat.service              # 立刻算一次热榜（约 3~19 秒）
 tail -n 5 /var/log/probe-heat.log
 systemctl list-timers probe-heat.timer --no-pager
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3215/probe/api/cron/heat  # 期望 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3215/api/cron/heat  # 期望 401
 ```
 
 ### 回滚到上一个构建

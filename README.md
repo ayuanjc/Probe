@@ -858,7 +858,7 @@ curl -s -H "Authorization: Bearer $PROBE_CRON_SECRET" http://127.0.0.1:3211/api/
 端点是端点，定时器是定时器。预览站上两者都装好了，所以热榜在没人访问时也在更新：
 
 ```
-/opt/probe/heat-cron.sh              # 从 probe.env 读 secret，curl 打 127.0.0.1:3215/probe/api/cron/heat
+/opt/probe/heat-cron.sh              # 从 probe.env 读 secret，curl 打 127.0.0.1:3215/api/cron/heat
 /etc/systemd/system/probe-heat.service   # oneshot，失败重试 3 次（间隔 10s）
 /etc/systemd/system/probe-heat.timer     # OnBootSec=2min、OnUnitActiveSec=30min
 ```
@@ -872,7 +872,7 @@ curl -s -H "Authorization: Bearer $PROBE_CRON_SECRET" http://127.0.0.1:3211/api/
 
 三件当时必须弄明白的事：
 
-1. **先证伪"口令没生效"**：不带密钥打 `POST /probe/api/cron/heat` 必须回 **401**，
+1. **先证伪"口令没生效"**：不带密钥打 `POST /api/cron/heat` 必须回 **401**，
    而不是 200 带一份空数据。401 出来才说明这条路是通的、只是没带钥匙。
 2. **定时器跑在谁的时间上**：`OnUnitActiveSec=30min` 从「上次跑完」算起，不是墙钟整点 ——
    一次重建 19 秒不会让下一次被挤掉。`list-timers` 看下次触发时间就够了。

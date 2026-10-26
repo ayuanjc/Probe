@@ -97,7 +97,7 @@ SSE 事件序：intent → [intent.clarify] → module.plan×N → module.ready�
 | 进程 | systemd `probe-web.service` → `next start -H 127.0.0.1 -p 3215`，`EnvironmentFile=/opt/probe/probe.env` |
 | nginx | `/etc/nginx/sites-enabled/yunying`，新增 `location /probe { proxy_pass http://127.0.0.1:3215; … proxy_buffering off; proxy_read_timeout 300s; }`（**proxy_pass 不能带 URI**，带了会剥前缀） |
 | 自动更新 | `/opt/probe/update.sh` + `probe-update.timer`（5 分钟）→ 取 `api.github.com` 的 sha → `codeload.github.com` 下 tarball（**服务器 `git clone` 不通**：`GnuTLS recv error`）→ 覆盖源码 → lock 变了才 `npm ci` → `PROBE_DIST_DIR=.next-staging` 构建 → 换目录 → 重启 → 自检失败回滚 |
-| 热度定时 | `probe-heat.timer`（30 分钟）→ `/opt/probe/heat-cron.sh` → `POST /probe/api/cron/heat`（带 `x-probe-cron-secret`，不配 secret 直接 503） |
+| 热度定时 | `probe-heat.timer`（30 分钟）→ `/opt/probe/heat-cron.sh` → `POST /api/cron/heat`（带 `x-probe-cron-secret`，不配 secret 直接 503） |
 | 日志 | `/var/log/probe-update.log`、`/var/log/probe-heat.log`、`journalctl -u probe-web` |
 | env | `PROBE_BASE_PATH=/probe`、`NEXT_PUBLIC_PROBE_BASE_PATH=/probe`、`PROBE_SITE_URL=http://106.52.116.164`、三条限流、`PROBE_CRON_SECRET`、`NODE_ENV=production` |
 | npm | `registry=https://registry.npmmirror.com`（npmjs 要 14s，镜像 1.7s） |

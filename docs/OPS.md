@@ -495,7 +495,7 @@ sqlite3 /opt/probe/app/.data/probe.db 'select count(*) watches from watches; sel
 sqlite3 /opt/probe/app/.data/probe.db 'select user_id, name, kind from watches order by created_at desc limit 20;'
 
 # 热榜那一轮的关注结果（响应体里的 watch 字段）
-curl -s -H "x-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/probe/api/cron/heat | tr , '\n' | grep -A3 watch
+curl -s -H "x-probe-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/api/cron/heat | tr , '\n' | grep -A3 watch
 ```
 
 ### 出问题怎么退
@@ -534,7 +534,7 @@ curl -s -H "x-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/probe/api/c
 
 ```bash
 # 榜单这一轮抓到了什么（响应体里的 hot 字段）
-curl -s -H "x-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/api/cron/heat | tr , '\n' | grep -A6 '"hot"'
+curl -s -H "x-probe-cron-secret: $PROBE_CRON_SECRET" http://127.0.0.1:3215/api/cron/heat | tr , '\n' | grep -A6 '"hot"'
 
 # 页面那侧：直接看首屏有没有「国内热议」
 curl -s http://127.0.0.1:3215/ | grep -c '国内热议'

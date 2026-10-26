@@ -325,6 +325,21 @@ test("cron 里的榜单块失败不拖垮热榜，且不吃 force", () => {
   assert.match(block, /console\.warn\("\[hotlist\]/);
 });
 
+test("热榜 cron 打的是根路径，不是搬家前的 /probe 前缀", () => {
+  const sh = readFileSync("scripts/server/heat-cron.sh", "utf8");
+  // 2026-10-26 的真实事故：站点搬到根之后脚本还打 /probe/api/cron/heat，
+  // 每 30 分钟回 404 连挂 18 小时，热榜快照与关注命中全停，而日志里只有一行 http=404。
+  // 注释里会提到这个旧地址，先剥掉 bash 注释再判。
+  const code = sh
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  assert.doesNotMatch(code, /\/probe\/api\//, "改回旧的 /probe 前缀就等于把 cron 打瞎");
+  assert.match(code, /127\.0\.0\.1:3215\/api\/cron\/heat/);
+  // 请求头名字与路由里读的那个必须一致，否则每次都是 401 —— 同样是「跑着但什么都没做」。
+  assert.match(code, /x-probe-cron-secret/);
+});
+
 test("榜单不进热度公式：heat.ts 里没有它", () => {
   const heat = readFileSync("src/lib/heat.ts", "utf8");
   assert.doesNotMatch(heat, /hotlist|baidu|juejin/i);
